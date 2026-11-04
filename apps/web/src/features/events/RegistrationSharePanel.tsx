@@ -4,7 +4,7 @@ import { readFirebaseConfig } from '../../services/firebase/config';
 import { publicRegistrationUrl, qrFilename, registrationQr, registrationSharingState } from './registrationSharing';
 import type { EventRecord } from './types';
 
-export function RegistrationSharePanel({ event }: { event: EventRecord }) {
+export function RegistrationSharePanel({ event, now: parentNow }: { event: EventRecord; now?: number }) {
   const config = readFirebaseConfig();
   const url = publicRegistrationUrl(event.id, { projectId: config.options.projectId ?? '', useEmulators: config.useEmulators }, window.location.origin);
   const [now, setNow] = useState(Date.now);
@@ -13,7 +13,7 @@ export function RegistrationSharePanel({ event }: { event: EventRecord }) {
   const [pending, setPending] = useState(false);
   const text = useRef<HTMLTextAreaElement>(null);
   const dialog = useRef<HTMLDialogElement>(null);
-  const state = registrationSharingState(event, now);
+  const state = registrationSharingState(event, parentNow ?? now);
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 15000); return () => window.clearInterval(timer); }, []);
   useEffect(() => {
     if (!qr) return;

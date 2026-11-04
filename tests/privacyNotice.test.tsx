@@ -28,3 +28,16 @@ test('registration links privacy before submit and keeps the existing payload wi
   expect(submit).toHaveBeenCalledWith(values);
   await act(async () => root.unmount());
 });
+
+test('physical-person controller and ninety-day contact retention remain an unapproved proposal', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  const host = document.createElement('div'), root = createRoot(host);
+  await act(async () => root.render(<PrivacyPage />));
+  expect(host.textContent).toContain('správcem bude fyzická osoba');
+  expect(host.textContent).toContain('90 dnů po skončení akce');
+  expect(host.textContent).toContain('nikoliv schválenou právní lhůtu');
+  expect(host.textContent).toContain('WAITING_FOR_OWNER');
+  expect(host.textContent).toContain('odděleně od nepotřebných e-mailů');
+  expect(host.querySelector('a[href^="mailto:"]')).toBeNull();
+  await act(async () => root.unmount());
+});

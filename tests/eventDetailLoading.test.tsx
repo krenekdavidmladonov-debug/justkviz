@@ -8,6 +8,8 @@ import { getEvent } from '../apps/web/src/features/events/eventRepository';
 import { listQuizzes } from '../apps/web/src/features/quizzes/quizRepository';
 import { getEditorQuiz } from '../apps/web/src/features/editor/editorRepository';
 import { lockEventQuiz } from '../apps/web/src/features/events/eventApi';
+import { setEventPublication } from '../apps/web/src/features/events/registrationApi';
+import { registrationSharingState } from '../apps/web/src/features/events/registrationSharing';
 import type { EditorQuiz } from '../apps/web/src/features/editor/types';
 import type { EventRecord } from '../apps/web/src/features/events/types';
 import type { QuizSummary } from '../apps/web/src/features/quizzes/types';
@@ -19,11 +21,12 @@ vi.mock('../apps/web/src/features/events/eventRepository', () => ({ getEvent: vi
 vi.mock('../apps/web/src/features/quizzes/quizRepository', () => ({ listQuizzes: vi.fn() }));
 vi.mock('../apps/web/src/features/editor/editorRepository', () => ({ getEditorQuiz: vi.fn() }));
 vi.mock('../apps/web/src/features/events/eventApi', () => ({ eventActionError: () => 'Chyba', lockEventQuiz: vi.fn(), updateEvent: vi.fn() }));
+vi.mock('../apps/web/src/features/events/registrationApi', () => ({ setEventPublication: vi.fn() }));
 vi.mock('../apps/web/src/features/events/EventActions', () => ({ EventActions: () => null, lifecycleLabels: {} }));
 vi.mock('../apps/web/src/features/leaderboard/EventLiveButton', () => ({ EventLiveButton: () => null }));
 vi.mock('../apps/web/src/features/referee/RefereeAccessPanel', () => ({ RefereeAccessPanel: () => null }));
 vi.mock('../apps/web/src/features/events/ManualTeamDialog', () => ({ ManualTeamDialog: () => null }));
-vi.mock('../apps/web/src/features/events/RegistrationSharePanel', () => ({ RegistrationSharePanel: () => null }));
+vi.mock('../apps/web/src/features/events/RegistrationSharePanel', () => ({ RegistrationSharePanel: ({ event, now }: { event: EventRecord; now: number }) => <p data-testid="registration-sharing-state">{registrationSharingState(event, now).message}</p> }));
 let host: HTMLDivElement, root: Root;
 const assignment = { quizId: 'quiz', quizRevision: 1, snapshotId: 'snapshot', quizTitle: 'Připravený kvíz', roundCount: 1, questionCount: 1, lockedAt: new Date() };
 const summary: QuizSummary = { id: 'quiz', title: 'Nabídka kvízu', description: '', status: 'draft', roundCount: 1, questionCount: 1,
@@ -35,13 +38,45 @@ beforeEach(() => {
   vi.mocked(listQuizzes).mockReset().mockResolvedValue([summary]);
   vi.mocked(getEditorQuiz).mockReset().mockResolvedValue({ id: 'quiz', title: 'Prázdný kvíz', description: '', revision: 1, slideCount: 0, roundCount: 0, questionCount: 0, slides: [] });
   vi.mocked(lockEventQuiz).mockReset().mockResolvedValue({ eventId: record().id, revision: 3, lifecycleStatus: 'ready', registrationStatus: 'closed' });
+  vi.mocked(setEventPublication).mockReset();
+  HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  HTMLDialogElement.prototype.close = function () { this.open = false; };
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
-afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 async function render() {
   const router = createMemoryRouter([{ path: '/admin/events/:eventId', element: <AdminEventDetailPage /> }], { initialEntries: ['/admin/events/' + record().id] });
   await act(async () => root.render(<RouterProvider router={router} />)); return router;
 }
+it.each([false, true])('updates registration summary and sharing immediately after opening, full=%s', async full => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2030-10-01T10:00:00Z'));
+  vi.mocked(getEvent).mockResolvedValue(record({ acceptedTeams: full ? 20 : 0 }));
+  let resolve!: (value: Awaited<ReturnType<typeof setEventPublication>>) => void;
+  vi.mocked(setEventPublication).mockImplementation(() => new Promise(done => { resolve = done; }));
+  await render();
+  await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Zveřejnit a otevřít registrace')!.click());
+  await act(async () => host.querySelector<HTMLButtonElement>('dialog .primary-button')!.click());
+  await act(async () => {
+    vi.advanceTimersByTime(1000);
+    resolve({ eventId: record().id, revision: 3, registrationPublished: true, registrationStatus: full ? 'full' : 'open', lifecycleStatus: 'draft', registrationOpensAt: new Date(Date.now()).toISOString(), registrationClosesAt: record().startsAt.toISOString() });
+  });
+  expect(host.querySelector('.event-evening-summary')?.textContent).toContain(full ? 'Obsazeno' : 'Registrace otevřené');
+  expect(host.querySelector('.event-evening-summary')?.textContent).not.toContain('Registrace se otevřou později');
+  expect(host.querySelector('[data-testid="registration-sharing-state"]')?.textContent).toBe(full ? 'Stránka je dostupná, přihlášky jsou nyní uzavřené.' : 'Přihlášky jsou otevřené.');
+  expect(host.querySelector('dialog')).toBeNull();
+});
+it('uses current time when a delayed event read arrives', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2030-10-01T10:00:00Z'));
+  let resolve!: (value: EventRecord) => void;
+  vi.mocked(getEvent).mockImplementation(() => new Promise(done => { resolve = done; }));
+  await render();
+  await act(async () => {
+    vi.advanceTimersByTime(2000);
+    resolve(record({ registrationPublished: true, registrationStatus: 'open', registrationOpensAt: new Date('2030-10-01T10:00:01Z'), registrationClosesAt: new Date('2030-10-20T17:00:00Z') }));
+  });
+  expect(host.querySelector('.event-evening-summary')?.textContent).toContain('Registrace otevřené');
+  expect(host.querySelector('[data-testid="registration-sharing-state"]')?.textContent).toBe('Přihlášky jsou otevřené.');
+});
 it('offers referee access from the evening summary and the separate organizer answer key', async () => {
   await render();
   expect(host.querySelector('.event-evening-summary a[href="#event-referee"]')?.textContent).toBe('Přístup pro rozhodčího');

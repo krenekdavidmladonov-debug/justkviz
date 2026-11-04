@@ -2,7 +2,7 @@
 export function PrivacyPage() {
   return <article className="panel stack" aria-labelledby="privacy-title">
     <h1 id="privacy-title">Ochrana osobních údajů</h1>
-    <p role="status"><strong>Návrh k doplnění před veřejným spuštěním.</strong> Provozovatel, kontakt, právní důvody a doby uchování čekají na potvrzení. Tento text zatím není úplnou informací o zpracování.</p>
+    <p role="status"><strong>Návrh k doplnění před veřejným spuštěním.</strong> Provozovatelem a zamýšleným správcem bude fyzická osoba. Její jméno, kontakt, právní důvody a doby uchování čekají na doplnění a potvrzení. Tento text zatím není úplnou informací o zpracování.</p>
     <h2>Registrace týmu</h2>
     <p>Formulář požaduje název týmu, počet členů a kontaktní e-mail. Aplikace je používá pro evidenci účasti, kapacitu, správu přihlášky a registrační komunikaci, pokud je odesílání zapnuté. Pro přihlášení týmu není potřeba účet.</p>
     <p>Kontaktní e-mail není veřejný. Vidí jej oprávnění pořadatelé. Název týmu a jeho výsledky mohou být zveřejněny při vyhlášení. Do názvu proto nevkládejte soukromé údaje.</p>
@@ -15,8 +15,9 @@ export function PrivacyPage() {
     <p>Požadavky mohou zahrnovat také provozní údaje, například IP adresu a čas. Přesný rozsah služeb, umístění, příjemce, případná předání mimo EHP a související záruky musí provozovatel potvrdit podle skutečného nastavení.</p>
     <h2>Co ještě doplnit</h2>
     <dl>
-      <dt>Správce a kontakt pro žádosti</dt><dd>ČEKÁ NA DOPLNĚNÍ VLASTNÍKEM.</dd>
-      <dt>Právní důvody a doba uchování</dt><dd>ČEKÁ NA POTVRZENÍ pro registrace, výsledky, účty obsluhy, provozní záznamy a zálohy. Tato verze aplikace automatický výmaz registrací nezajišťuje.</dd>
+      <dt>Správce a kontakt pro žádosti</dt><dd>Fyzická osoba. Jméno a veřejný kontakt: ČEKÁ NA DOPLNĚNÍ VLASTNÍKEM (WAITING_FOR_OWNER).</dd>
+      <dt>Navrhované právní důvody</dt><dd>Pro přihlášení a zajištění účasti navrhujeme plnění smlouvy nebo kroky před jejím uzavřením. Pro přiměřené zabezpečení a provoz navrhujeme oprávněný zájem. Použitelnost a rozsah musí správce potvrdit podle skutečného pořádání akcí (WAITING_FOR_OWNER).</dd>
+      <dt>Návrh doby uchování</dt><dd>Pro kontaktní e-maily navrhujeme 90 dnů po skončení akce. Jde o návrh, nikoliv schválenou právní lhůtu. Historii výsledků navrhujeme uchovávat odděleně od nepotřebných e-mailů. Doby pro účty obsluhy, bezpečnostní otisky, provozní záznamy a zálohy čekají na potvrzení (WAITING_FOR_OWNER). Tato verze aplikace automatický výmaz registrací nezajišťuje.</dd>
       <dt>Žádost o opravu nebo výmaz</dt><dd>Před spuštěním zde bude schválený kontakt a postup ověření žadatele. Do žádosti neposílejte heslo ani soukromý odkaz pro správu registrace.</dd>
     </dl>
     <h2>Vaše práva</h2>

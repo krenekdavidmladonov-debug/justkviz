@@ -18,9 +18,9 @@ vi.mock('../apps/web/src/features/final-reveal/fanfare', () => ({ Fanfare: class
 let root: Root, host: HTMLDivElement, state: LiveControlState;
 const navigation = createRef<EventNightNavigation>();
 const slides: LiveControlSlide[] = ['recap', 'end'].map((kind, index) => ({ id: 's' + index, position: index + 1, kind, isQuestion: false, title: '', text: '', options: [], media: [], presentation: {} }));
-async function render(patch: Partial<LiveControlState> = {}, sourceSlides: readonly LiveControlSlide[] = slides) {
+async function render(patch: Partial<LiveControlState> = {}, sourceSlides: readonly LiveControlSlide[] = slides, busy: boolean | null = false) {
   state = { ...state, ...patch };
-  const coordinator: ShowCommandCoordinator = { busy: false, enabled: true, execute: action => action(state, state.revision), prepareAudio: () => 0, playAudio: async () => {}, stopAudio: vi.fn() };
+  const coordinator: ShowCommandCoordinator | null = busy === null ? null : { busy, enabled: true, execute: action => action(state, state.revision), prepareAudio: () => 0, playAudio: async () => {}, stopAudio: vi.fn() };
   await act(async () => root.render(<ShowCommandContext.Provider value={coordinator}><EventNightControls session={state} slides={sourceSlides} navigation={navigation} /></ShowCommandContext.Provider>));
 }
 beforeEach(async () => {
@@ -59,6 +59,94 @@ test('one button publishes current saved scores, then closes without round setti
   await render({ revision: 11, interimResults: { versionId: 'a'.repeat(64), roundNumber: 2, page: 0, pageCount: 1, presentationStyle: 'show', pageSize: 6 } });
   await act(async () => host.querySelector('button')!.click());
   expect(calls.invoke).toHaveBeenLastCalledWith('controlInterimResults', expect.objectContaining({ action: 'hide', expectedRevision: 11 }));
+});
+
+const interimPage = { versionId: 'a'.repeat(64), roundNumber: 2, page: 0, pageCount: 2, presentationStyle: 'show' as const, pageSize: 6 as const };
+async function publishInterim() {
+  await act(async () => host.querySelector('button')!.click());
+  await render({ revision: 11, interimResults: { ...interimPage } });
+}
+async function pollInterim(milliseconds: number) {
+  await act(async () => { vi.advanceTimersByTime(milliseconds); });
+  // The real private watcher maps a new session and slides array every 2s,
+  // and the parent creates a fresh command coordinator on each render.
+  await render({ interimResults: { ...state.interimResults! } }, slides.map(slide => ({ ...slide })));
+}
+test('interim pages advance every seven seconds despite two-second parent polls', async () => {
+  await publishInterim();
+  for (let index = 0; index < 3; index++) await pollInterim(2000);
+  expect(calls.invoke).toHaveBeenCalledTimes(1);
+  calls.invoke.mockResolvedValue({ data: { revision: 12 } });
+  await act(async () => { vi.advanceTimersByTime(1000); });
+  expect(calls.invoke).toHaveBeenCalledTimes(2);
+  expect(calls.invoke).toHaveBeenLastCalledWith('controlInterimResults', expect.objectContaining({ action: 'page', page: 1, expectedRevision: 11 }));
+  await render({ revision: 12, interimResults: { ...interimPage, page: 1 } });
+  for (let index = 0; index < 3; index++) await pollInterim(2000);
+  expect(calls.invoke).toHaveBeenCalledTimes(2);
+  calls.invoke.mockResolvedValue({ data: { revision: 13 } });
+  await act(async () => { vi.advanceTimersByTime(1000); });
+  expect(calls.invoke).toHaveBeenCalledTimes(3);
+  expect(calls.invoke).toHaveBeenLastCalledWith('controlInterimResults', expect.objectContaining({ action: 'page', page: 0, expectedRevision: 12 }));
+});
+test('only the initiating operator with an acknowledged revision advances interim pages', async () => {
+  await render({ revision: 11, interimResults: { ...interimPage } });
+  await act(async () => { vi.advanceTimersByTime(14000); });
+  expect(calls.invoke).not.toHaveBeenCalled();
+  await render({ revision: 10, interimResults: undefined });
+  await publishInterim();
+  await pollInterim(4000);
+  await render({ revision: 12 });
+  calls.invoke.mockClear();
+  await act(async () => { vi.advanceTimersByTime(14000); });
+  expect(calls.invoke).not.toHaveBeenCalled();
+});
+test('pending acknowledgement, shared commands and ended sessions block automatic interim pages', async () => {
+  let acknowledge!: (value: unknown) => void;
+  calls.invoke.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
+  await act(async () => host.querySelector('button')!.click());
+  await render({ revision: 11, interimResults: { ...interimPage } });
+  await act(async () => { vi.advanceTimersByTime(14000); });
+  expect(calls.invoke).toHaveBeenCalledTimes(1);
+  await act(async () => { acknowledge({ data: { revision: 11 } }); });
+  await pollInterim(4000);
+  await render({}, slides, true);
+  await act(async () => { vi.advanceTimersByTime(14000); });
+  expect(calls.invoke).toHaveBeenCalledTimes(1);
+  await render();
+  await pollInterim(4000);
+  await render({ status: 'ended' });
+  await act(async () => { vi.advanceTimersByTime(14000); });
+  expect(calls.invoke).toHaveBeenCalledTimes(1);
+});
+test('interim page failure stops retries and leaves the operator able to close results', async () => {
+  await publishInterim();
+  calls.invoke.mockRejectedValue(new Error('offline'));
+  await act(async () => { vi.advanceTimersByTime(7000); });
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('zavřete výsledky a znovu je otevřete');
+  expect(host.querySelector('button')!.disabled).toBe(false);
+  await pollInterim(14000);
+  expect(calls.invoke).toHaveBeenCalledTimes(2);
+  calls.invoke.mockResolvedValue({ data: { revision: 12 } });
+  await act(async () => host.querySelector('button')!.click());
+  expect(calls.invoke).toHaveBeenLastCalledWith('controlInterimResults', expect.objectContaining({ action: 'hide', expectedRevision: 11 }));
+});
+test.each<Partial<LiveControlState>>([
+  { sessionId: 'another-session' },
+  { interimResults: undefined },
+  { interimResults: { ...interimPage, pageCount: 1 } },
+])('a new session, hidden results or a single page cancels the pending timer: %j', async patch => {
+  await publishInterim();
+  await pollInterim(4000);
+  await render(patch);
+  await act(async () => { vi.advanceTimersByTime(14000); });
+  expect(calls.invoke).toHaveBeenCalledTimes(1);
+});
+test('removing the command coordinator cancels pending automatic pagination', async () => {
+  await publishInterim();
+  await pollInterim(4000);
+  await render({}, slides, null);
+  await act(async () => { vi.advanceTimersByTime(14000); });
+  expect(calls.invoke).toHaveBeenCalledTimes(1);
 });
 test('incomplete final scores block finale and do not skip into closing slide', async () => {
   calls.invoke.mockResolvedValue({ data: { complete: false, rows: [{ teamName: 'Team' }] } });

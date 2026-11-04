@@ -30,7 +30,7 @@ export function EventNightControls({ session, slides, navigation }: Props) {
   const [demoOpen, setDemoOpen] = useState(false);
   const acknowledged = useRef(-1);
   const [pending, setPending] = useState(false), [error, setError] = useState('');
-  const [interimOwner, setInterimOwner] = useState(false);
+  const [interimOwner, setInterimOwner] = useState<string | null>(null);
   const final = session.finalReveal;
   const busy = pending || show?.busy === true;
 
@@ -45,15 +45,15 @@ export function EventNightControls({ session, slides, navigation }: Props) {
     if (winnerVersion && !pending && !locked.current && session.revision > acknowledged.current) setWinnerVersion(null);
   }, [session.revision, winnerVersion, pending]);
 
-  async function perform(work: () => Promise<void>): Promise<boolean> {
+  async function perform(work: () => Promise<void>, failureMessage = 'Výsledky se nepodařilo potvrdit. Zkontrolujte spojení a zkuste tlačítko znovu.'): Promise<boolean> {
     if (locked.current || show?.busy) return false;
     locked.current = true; setPending(true); setError('');
     try { await work(); return true; }
     catch (cause) {
-      setInterimOwner(false); setWinnerVersion(null);
+      setInterimOwner(null); setWinnerVersion(null);
       if (mounted.current) setError(cause instanceof Error && cause.message.startsWith('Finále:') ? cause.message
         : (cause as { code?: string })?.code === 'functions/failed-precondition' ? 'Výsledky zatím nejsou připravené. Zkontrolujte uložené body rozhodčího.'
-          : 'Výsledky se nepodařilo potvrdit. Zkontrolujte spojení a zkuste tlačítko znovu.');
+          : failureMessage);
       return false;
     } finally { locked.current = false; if (mounted.current) setPending(false); }
   }
@@ -66,8 +66,8 @@ export function EventNightControls({ session, slides, navigation }: Props) {
         requestId: crypto.randomUUID(), action, ...(page === undefined ? {} : { page }),
       }).then(response => response.data));
       acknowledged.current = result.revision;
-      setInterimOwner(action !== 'hide');
-    });
+      setInterimOwner(action === 'hide' ? null : session.sessionId);
+    }, action === 'page' ? 'Stránku průběžných výsledků se nepodařilo přepnout. Zkontrolujte spojení, zavřete výsledky a znovu je otevřete.' : undefined);
   }
   async function finalCommand(action: 'hide' | 'page' | 'reveal' | 'table', page?: number) {
     if (!show) return false;
@@ -105,7 +105,7 @@ export function EventNightControls({ session, slides, navigation }: Props) {
         requestId: crypto.randomUUID(), versionId: preview.publishedVersionId, sourceFingerprint: preview.sourceFingerprint,
         action: preview.publishedVersionId ? 'replace' : 'start', presentationStyle: 'show', motion: 'animate',
       }).then(response => response.data));
-      acknowledged.current = result.revision; setInterimOwner(false);
+      acknowledged.current = result.revision; setInterimOwner(null);
     });
   }
 
@@ -143,12 +143,20 @@ export function EventNightControls({ session, slides, navigation }: Props) {
     } };
   });
 
+  // Polling replaces session/slide objects and the command coordinator. Only an
+  // actual publication change should restart the page's seven-second interval.
+  const interimCommand = useRef(interim); interimCommand.current = interim;
+  const interimVersion = session.interimResults?.versionId;
+  const interimPage = session.interimResults?.page;
+  const interimPageCount = session.interimResults?.pageCount;
+  const canControlInterim = show !== null;
   useEffect(() => {
-    const result = session.interimResults;
-    if (!interimOwner || busy || !result || result.pageCount < 2 || session.revision !== acknowledged.current) return;
-    const timer = window.setTimeout(() => { void interim('page', (result.page + 1) % result.pageCount); }, 7000);
+    if (interimOwner !== session.sessionId || !canControlInterim || busy || session.status !== 'active'
+      || interimPage === undefined || interimPageCount === undefined || interimPageCount < 2
+      || session.revision !== acknowledged.current) return;
+    const timer = window.setTimeout(() => { void interimCommand.current('page', (interimPage + 1) % interimPageCount); }, 7000);
     return () => window.clearTimeout(timer);
-  });
+  }, [interimOwner, canControlInterim, busy, session.sessionId, session.status, session.revision, interimVersion, interimPage, interimPageCount]);
   useEffect(() => {
     if (!session.interimResults) return;
     const close = (event: KeyboardEvent) => { if (event.key === 'Escape' && !busy) { event.preventDefault(); void interim('hide'); } };

@@ -20,3 +20,15 @@ test('recovery gate has an actual demo-only recovery job and current browser cam
   assert(source.includes('node tools/event-night/restart-acceptance.mjs --powershell'));
   assert(source.includes('--config tests/browser/extraordinary-stress.config.ts'));
 });
+
+test('zero-cost workflows use standard public runners without artifact uploads or package caches',()=>{
+  for(const name of ['ci.yml','owner-takeover.yml']){
+    const yaml=readFileSync(new URL('../.github/workflows/'+name,import.meta.url),'utf8').replaceAll('\r\n','\n');
+    assert(!/uses: (?:actions\/(?:upload-artifact|cache)|.*cache-save)@/u.test(yaml));
+    assert(!/^\s+cache: /mu.test(yaml));
+    const versions=[...yaml.matchAll(/node-version: 22\n([^\n]*)/gu)];
+    assert(versions.length>0);
+    for(const match of versions)assert(match[1].trim()==='package-manager-cache: false');
+    for(const label of yaml.matchAll(/runs-on: (.+)/gu))assert(['ubuntu-latest','windows-latest'].includes(label[1].trim()));
+  }
+});

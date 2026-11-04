@@ -98,6 +98,7 @@ export function AdminEventDetailPage() {
       const loadedEvent = await getEvent(eventId);
       if (version !== loadVersion.current) return;
       setEvent(loadedEvent);
+      setNow(Date.now());
       setValues(loadedEvent ? formValues(loadedEvent) : null);
       if (loadedEvent?.quizAssignment) {
         setSelectedQuizId((current) => current === '' ? loadedEvent.quizAssignment?.quizId ?? '' : current);
@@ -235,7 +236,7 @@ export function AdminEventDetailPage() {
         {admin && !hidden && !['archived', 'cancelled', 'completed'].includes(event.lifecycleStatus) && <a className="secondary-link" href="#event-referee">Přístup pro rozhodčího</a>}
       </section>
 
-      {!hidden && <section className="event-section"><h2>Veřejná viditelnost</h2><p>Zveřejnění umožní přihlašování týmů do začátku akce podle volné kapacity. Připravenost kvízu se nastavuje samostatně.</p><EventPublicationButton event={event} disabled={pending} onChanged={updated => { setEvent(updated); setNotice(updated.registrationPublished ? updated.registrationStatus === 'full' ? "Akce je zveřejněná. Kapacita je naplněná; další tým se může přihlásit až po jejím uvolnění." : "Akce je zveřejněná a registrace jsou otevřené do začátku akce." : "Akce byla skryta z veřejného webu."); }} /></section>}
+      {!hidden && <section className="event-section"><h2>Veřejná viditelnost</h2><p>Zveřejnění umožní přihlašování týmů do začátku akce podle volné kapacity. Připravenost kvízu se nastavuje samostatně.</p><EventPublicationButton event={event} disabled={pending} onChanged={updated => { setEvent(updated); setNow(Date.now()); setNotice(updated.registrationPublished ? updated.registrationStatus === 'full' ? "Akce je zveřejněná. Kapacita je naplněná; další tým se může přihlásit až po jejím uvolnění." : "Akce je zveřejněná a registrace jsou otevřené do začátku akce." : "Akce byla skryta z veřejného webu."); }} /></section>}
 
       {!hidden && can('event.export') && <section className="event-section" aria-labelledby="event-materials-title">
         <div className="event-section-heading"><div><p className="eyebrow">Dokumenty na večer</p><h2 id="event-materials-title">Tisk a materiály</h2></div>{locked && <span>Kvíz připraven</span>}</div>
@@ -267,7 +268,7 @@ export function AdminEventDetailPage() {
         {can('event.export') && can('event.answers.read') && can('event.answers.export') && <p className="event-muted"><Link to={`/admin/events/${event.id}/print`}>Připravit správné odpovědi pro rozhodčího</Link> — v tiskovém centru zvolte organizační arch nebo klíč odpovědí.</p>}
       </div>}
       {admin && can('event.contacts') && EventTeamMessagePanel && <Suspense fallback={null}><EventTeamMessagePanel key={event.id + ':' + currentUser?.uid} eventId={event.id} actorId={currentUser!.uid} canCreate={['draft', 'scheduled', 'ready', 'live'].includes(event.lifecycleStatus)} /></Suspense>}
-      {!hidden && <RegistrationSharePanel event={event} />}
+      {!hidden && <RegistrationSharePanel event={event} now={now} />}
       {admin && addingTeam && <ManualTeamDialog event={event} onClose={() => setAddingTeam(false)} onSaved={async (id, name) => { setAddedTeam({ id, name }); setEvent(await getEvent(event.id)); }} />}
 
       <section className="event-section" id="event-edit">

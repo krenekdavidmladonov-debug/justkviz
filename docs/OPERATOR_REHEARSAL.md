@@ -1,5 +1,7 @@
 # JustKvíz — generálka před akcí
 
+Rozpočet: 0 Kč navíc. Použít již dostupné vybavení; nic nekupovat ani neobjednávat.
+
 Datum: __________ Obsluha: __________ Akce/demo: __________ Verze: __________
 Použijte demo nebo schválenou soukromou generálku; žádné skutečné kontakty ani testovací emaily účastníkům. U každého kroku zapište PASS/FAIL, poznámku a jméno; nezaškrtnuté = NEOVĚŘENO.
 
@@ -21,3 +23,5 @@ Doloženo vlastníkem: notebook fungoval, externí monitor fungoval, zvuk z note
 | 12 | Ověřte postup výpadku: Stop médií, papírové bodování, obnovení z chráněné kopie v izolaci. Před ostrým návratem porovnejte poslední potvrzený stav a rozhodněte obsluhou. | |
 
 Pokud selže projekce/zvuk/tisk/obnova nebo se objeví soukromá odpověď/kontakt na veřejném výstupu, ostrý večer není přijat. Lokální browser test není náhradou tohoto fyzického ověření.
+
+Vyhodnocení: obsluha u každého kroku uvede PASS/FAIL/NEOVĚŘENO, datum a jméno. Jakýkoliv FAIL v soukromí odpovědí, bodování, projekci nebo povinném fyzickém tisku znamená NO-GO pro ostrý večer, dokud není závada opravena a stejný krok zopakován. Neověřený projektor/tisk nelze přeznačit z počítačových testů.
