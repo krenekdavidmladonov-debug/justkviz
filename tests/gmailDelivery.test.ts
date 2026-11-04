@@ -1,6 +1,7 @@
 /* eslint @typescript-eslint/require-await: off -- HTTP fakes intentionally return immediate async results without network IO. */
 import { randomBytes } from 'node:crypto';
 import { afterEach, describe, expect, test, vi } from 'vitest';
+import { brand } from '../packages/quiz-domain/src/index';
 
 import { cloudGmailTransport, keyringVault, registrationTokenVault } from '../functions/src/email/config';
 import { EmailDeliveryError } from '../functions/src/email/errors';
@@ -21,13 +22,27 @@ describe('Gmail MIME', () => {
     const encoded = gmailRawMessage(message, config), mime = raw();
     expect(encoded).toMatch(/^[A-Za-z0-9_-]+$/u);
     expect(mime).toContain('Content-Type: multipart/alternative;');
-    expect(mime).toContain('From: sender@example.test\r\nTo: team@example.test\r\nReply-To: reply@example.test');
+    const from = mime.split('\r\n')[0]!;
+    const decodedFrom = from.replace(/=\?UTF-8\?B\?([^?]+)\?=/gu, (_, data: string) => Buffer.from(data, 'base64').toString('utf8'));
+    expect(decodedFrom).toBe(`From: ${brand.name} <sender@example.test>`);
+    expect(mime).toContain('\r\nTo: team@example.test\r\nReply-To: reply@example.test');
     const subject = mime.split('Subject: ')[1]!.split('\r\nDate:')[0]!.replace(/=\?UTF-8\?B\?([^?]+)\?=/gu, (_, data: string) => Buffer.from(data, 'base64').toString('utf8')).replace(/\r\n /gu, '');
     expect(subject).toBe(message.subject);
     const bodies = [...mime.matchAll(/Content-Transfer-Encoding: base64\r\n\r\n([\s\S]*?)\r\n--/gu)].map(match => Buffer.from(match[1]!.replace(/\r\n/gu, ''), 'base64').toString('utf8'));
     expect(bodies).toEqual([message.text.replace(/\n/gu, '\r\n'), message.html]);
     expect(mime.replace(/\r\n/gu, '')).not.toMatch(/[\r\n]/u);
     expect(mime.split('\r\n').every(line => line.length < 998)).toBe(true);
+  });
+  test('uses an RFC 2046 boundary of at most 70 characters and exactly two alternatives', () => {
+    const mime = raw();
+    const boundary = /Content-Type: multipart\/alternative; boundary="([^"]+)"/u.exec(mime)![1]!;
+    expect(boundary.length).toBeLessThanOrEqual(70);
+    expect(boundary).toMatch(/^[A-Za-z0-9_]+$/u);
+    const parts = mime.split('\r\n--' + boundary);
+    expect(parts).toHaveLength(4);
+    expect(parts[1]).toMatch(/^\r\nContent-Type: text\/plain; charset=UTF-8\r\n/u);
+    expect(parts[2]).toMatch(/^\r\nContent-Type: text\/html; charset=UTF-8\r\n/u);
+    expect(parts[3]).toBe('--\r\n');
   });
   test('keeps Message-ID stable for retries, distinct across intent and project', () => {
     const id = (value: string) => /Message-ID: (.+)/u.exec(Buffer.from(value, 'base64url').toString())![1];

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 // can be tested without opening credentials or making a request.
 export async function connectPauseStore(plan, cli) {
   assert.equal(plan.approval.projectId, 'filmovy-kviz-v2-staging');
-  assert.equal(cli('package').version, '15.28.2', 'Review Firebase CLI adapter before changing its version');
+  assert.equal(cli('package').version, '15.34.2', 'Review Firebase CLI adapter before changing its version');
   const account = cli('auth').getGlobalDefaultAccount();
   assert.equal(account?.user?.email, plan.approval.operatorEmail, 'Operator account differs from reviewed approval');
   const authenticatedEmail = await cli('requireAuth').requireAuth({ project: plan.approval.projectId, ...account, nonInteractive: true }, true);

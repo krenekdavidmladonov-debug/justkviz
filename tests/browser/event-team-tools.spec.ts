@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import jsQR from 'jsqr';
-import { mkdirSync } from 'node:fs';
+
+async function localOnly(context: import('@playwright/test').BrowserContext) { await context.route('**/*', route => { const url = new URL(route.request().url()); return ['http:', 'https:'].includes(url.protocol) && ['127.0.0.1', 'localhost'].includes(url.hostname) ? route.continue() : route.abort(); }); }
+test.beforeEach(async ({ context }) => { await localOnly(context); });
 
 for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 844 }]) {
   test(`manual teams, retry, edit/cancel, public sharing and decoded PNG/SVG at ${viewport.width}`, async ({ page, context, baseURL }) => {
@@ -27,8 +29,6 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 844 
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByLabel('Název týmu')).toBeFocused();
     await dialog.getByLabel('Název týmu').fill('Ruční QA tým');
-    mkdirSync('.local-data/event-team-tools/screenshots', { recursive: true });
-    await page.screenshot({ path: `.local-data/event-team-tools/screenshots/manual-${viewport.width}.png`, fullPage: true });
     // Simulate a lost server response: the first request commits, the retry must not duplicate.
     let dropped = false;
     await page.route('**/adminAddEventTeam', async route => {
@@ -48,19 +48,20 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 844 
     await dialog.getByLabel('Počet členů').fill('3');
     await dialog.getByRole('button', { name: 'Uložit tým' }).click();
     row = page.getByRole('row').filter({ hasText: 'Opravený QA tým' });
-    await expect(row).toHaveClass('team-selected'); await expect(page.getByText(/1 \/ 20 týmů · 3 \/ 120 osob/u)).toBeVisible();
+    await expect(row).toHaveClass('team-selected'); await expect(page.getByText('1 / 20 týmů', { exact: true })).toBeVisible(); await expect(row.getByRole('cell').nth(1)).toHaveText('3');
     await page.getByLabel('Otevření').fill('2020-01-01T00:00');
     await page.getByLabel('Uzavření').fill('2030-01-01T00:00');
-    await page.getByLabel('Zveřejnit registraci').check();
     await page.getByRole('button', { name: 'Uložit nastavení' }).click();
     await expect(page.getByText('Nastavení registrací bylo uloženo.')).toBeVisible();
     await page.goto(detailUrl);
+    await page.getByRole('button', { name: 'Zveřejnit a otevřít registrace', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Zveřejnit a otevřít registrace', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
     const url = `${baseURL}/events/${eventId}`;
     await expect(page.getByLabel('Veřejný odkaz')).toHaveValue(url);
     await page.getByRole('button', { name: 'Kopírovat odkaz' }).click();
     await expect(page.getByText('Odkaz zkopírován')).toBeVisible();
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(url);
-    await page.screenshot({ path: `.local-data/event-team-tools/screenshots/detail-${viewport.width}.png`, fullPage: true });
     await page.getByRole('button', { name: 'Zobrazit QR' }).click();
     await expect(dialog.getByRole('img')).toBeVisible();
     for (const kind of ['PNG', 'SVG']) {
@@ -75,19 +76,20 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 844 
       const download = page.waitForEvent('download'); await link.click();
       expect((await download).suggestedFilename()).toMatch(new RegExp(`^registrace-[A-Za-z0-9_-]+\\.${kind.toLowerCase()}$`, 'u'));
     }
-    await page.screenshot({ path: `.local-data/event-team-tools/screenshots/qr-${viewport.width}.png`, fullPage: true });
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false);
     await page.keyboard.press('Escape');
     await expect(page.getByText('Přihlášky jsou otevřené.')).toBeVisible();
     const publicContext = await context.browser()!.newContext();
+    await localOnly(publicContext);
     const publicPage = await publicContext.newPage(); await publicPage.goto(url);
-    await expect(publicPage.getByRole('heading', { name: 'Registrace je otevřená' })).toBeVisible();
+    await expect(publicPage.getByRole('heading', { name: 'Přihlásit tým', exact: true })).toBeVisible();
     await expect(publicPage.getByLabel('E-mail')).toHaveAttribute('required', ''); await publicContext.close();
     await page.goto(`${detailUrl}/registrations`);
     row = page.getByRole('row').filter({ hasText: 'Opravený QA tým' });
     page.once('dialog', d => d.accept()); await row.getByRole('button', { name: 'Zrušit', exact: true }).click();
     await expect(row).toContainText('Zrušený');
-    await expect(page.getByText(/0 \/ 20 týmů · 0 \/ 120 osob/u)).toBeVisible();
+    await expect(page.getByText('0 / 20 týmů', { exact: true })).toBeVisible();
+    await expect(page.locator('.registration-table tbody tr').filter({ hasText: 'Přijatý' })).toHaveCount(0);
     expect(errors).toEqual([]);
   });
 }

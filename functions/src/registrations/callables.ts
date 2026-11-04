@@ -1,4 +1,4 @@
-import { assertCapability, assertEventOperational } from '../events/guards.js';
+import { assertCapability, assertEventOperational, isCompletedEventHide } from '../events/guards.js';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 
 import { getApps, initializeApp } from 'firebase-admin/app';
@@ -6,11 +6,14 @@ import { getFirestore, Timestamp, type DocumentSnapshot } from 'firebase-admin/f
 import { HttpsError, onCall, type CallableRequest } from 'firebase-functions/v2/https';
 import { accessActor, securedOnCall, runAccessTransaction } from '../access/authorization.js';
 
-import { buildPublicEventProjection } from '../events/model.js';
+import { buildPublicEventProjection, isEventLifecycleStatus, maximumTeamMembers } from '../events/model.js';
+import { requestedEventConfiguration } from '../events/validation.js';
 import { enqueueRegistrationEmail } from '../email/intent.js';
+import { enqueueRegistrationOwnerNotification } from '../email/organizer.js';
 import { emulatorTokenVault, type TokenEnvelope } from '../email/token-vault.js';
 import { emailEmulatorRuntime, registrationEmailActivation, registrationEmailRecipientEligible, registrationEmailSecrets } from '../email/runtime.js';
 import { capacityAfter, effectiveRegistrationStatus, hasCapacity } from './domain.js';
+import { consumeRegistrationBudget, reportRegistrationThrottle } from './abuse.js';
 import type { RegistrationCapacity, RegistrationInput } from './types.js';
 import { manualTeamInput, registrationInput, registrationWindow, requestId, requestToken } from './validation.js';
 
@@ -42,10 +45,10 @@ function integer(value: unknown, minimum: number, message: string): number {
   return value as number;
 }
 
-function eventState(snapshot: DocumentSnapshot): EventState {
+function eventState(snapshot: DocumentSnapshot, publicationRequest?: unknown): EventState {
   if (!snapshot.exists) throw new HttpsError('not-found', 'Event was not found.');
   const data = record(snapshot.data(), 'Event is malformed.');
-  assertEventOperational(data);
+  if (!isCompletedEventHide(data, publicationRequest)) assertEventOperational(data);
   const teamCapacity = integer(data.teamCapacity, 1, 'Event capacity is malformed.');
   const peopleCapacity = integer(data.peopleCapacity, 1, 'Event capacity is malformed.');
   const acceptedTeams = data.acceptedTeams === undefined ? 0 : integer(data.acceptedTeams, 0, 'Event counters are malformed.');
@@ -92,7 +95,10 @@ function publicProjection(event: EventState, status: 'scheduled' | 'open' | 'ful
     throw new HttpsError('failed-precondition', 'Event public data is malformed.');
   }
   return buildPublicEventProjection({
+    pricing: event.data.pricing,
     title: event.data.title,
+    ...(typeof event.data.description === 'string' ? { description: event.data.description } : {}),
+    ...(isEventLifecycleStatus(event.lifecycleStatus) ? { lifecycleStatus: event.lifecycleStatus } : {}),
     startsAt: event.data.startsAt,
     timeZone: event.data.timeZone,
     venue: { name: venue.name, publicLocation: venue.publicLocation },
@@ -119,8 +125,9 @@ function assertWindowOpen(event: EventState, now: Timestamp, allowFull = false):
 }
 
 function assertTeamSize(event: EventState, input: Pick<RegistrationInput, 'memberCount'>): void {
-  if (input.memberCount < event.teamSizeMin || input.memberCount > event.teamSizeMax) {
-    throw new HttpsError('invalid-argument', `Team size must be between ${event.teamSizeMin} and ${event.teamSizeMax}.`);
+  const maximum = Math.min(event.teamSizeMax, maximumTeamMembers);
+  if (input.memberCount < event.teamSizeMin || input.memberCount > maximum) {
+    throw new HttpsError('invalid-argument', `Team size must be between ${event.teamSizeMin} and ${maximum}.`);
   }
 }
 
@@ -164,20 +171,33 @@ export const configureEventRegistration = securedOnCall('configureEventRegistrat
   const eventRef = db.collection('events').doc(eventId);
   const publicRef = db.collection('publicEvents').doc(eventId);
   return runAccessTransaction(db, async (transaction) => {
-    const current = eventState(await transaction.get(eventRef));
+    const current = eventState(await transaction.get(eventRef), request.data);
     if (current.revision !== expectedRevision) throw new HttpsError('aborted', 'Event changed. Reload and try again.');
+    const published = window.published ?? current.published;
+    if (published) {
+      // Publication validates only public event configuration, never quiz readiness.
+      if (!(current.data.startsAt instanceof Timestamp)) throw new HttpsError('failed-precondition', 'Event start is invalid.');
+      try {
+        requestedEventConfiguration({ event: { ...current.data, startsAt: current.data.startsAt.toDate().toISOString() } }, { allowLegacyTeamSize: true });
+      } catch {
+        throw new HttpsError('failed-precondition', 'Doplňte platný název, termín, místo a kapacity před zveřejněním akce.');
+      }
+    }
     const now = Timestamp.now();
+    if (window.openRegistrationsNow && (!(current.data.startsAt instanceof Timestamp) || current.data.startsAt.toMillis() <= now.toMillis())) {
+      throw new HttpsError('failed-precondition', 'Registrace lze otevřít pouze pro budoucí akci.');
+    }
     const revision = current.revision + 1;
     const next: EventState = {
       ...current,
       revision,
-      published: window.published,
-      opensAt: Timestamp.fromDate(window.opensAt),
-      closesAt: Timestamp.fromDate(window.closesAt),
+      published,
+      opensAt: window.openRegistrationsNow ? now : window.opensAt === undefined ? current.opensAt : Timestamp.fromDate(window.opensAt),
+      closesAt: window.openRegistrationsNow ? current.data.startsAt as Timestamp : window.closesAt === undefined ? current.closesAt : Timestamp.fromDate(window.closesAt),
     };
     const registrationStatus = statusAt(next, now);
     transaction.update(eventRef, {
-      registrationPublished: window.published,
+      registrationPublished: published,
       registrationOpensAt: next.opensAt,
       registrationClosesAt: next.closesAt,
       registrationStatus,
@@ -186,7 +206,11 @@ export const configureEventRegistration = securedOnCall('configureEventRegistrat
       updatedBy: uid,
     });
     transaction.set(publicRef, publicProjection(next, registrationStatus, now));
-    return { eventId, revision, registrationStatus };
+    return {
+      eventId, revision, registrationStatus, registrationPublished: published, lifecycleStatus: current.lifecycleStatus,
+      registrationOpensAt: next.opensAt?.toDate().toISOString() ?? null,
+      registrationClosesAt: next.closesAt?.toDate().toISOString() ?? null,
+    };
   });
 });
 
@@ -244,6 +268,7 @@ export const createEventRegistration = onCall({ ...callableOptions, secrets: reg
     if (!hasCapacity(event.capacity, 1, input.memberCount)) {
       throw new HttpsError('resource-exhausted', 'Registration capacity is full.');
     }
+    await consumeRegistrationBudget(transaction, eventRef, input.contactEmail);
     const capacity = capacityAfter(event.capacity, 1, input.memberCount);
     const next = { ...event, capacity };
     const registrationStatus = statusAt(next, now);
@@ -264,6 +289,7 @@ export const createEventRegistration = onCall({ ...callableOptions, secrets: reg
     };
     transaction.create(registrationRef, registrationData);
     const emailCreated = enqueueRegistrationEmail(transaction, eventRef, registrationRef, intentId, 'registration-confirmed', event.data, registrationData, now);
+    enqueueRegistrationOwnerNotification(transaction, eventRef, registrationRef, event.data, registrationData, now);
     if (emailCreated && envelope) transaction.create(eventRef.collection('emailSecrets').doc(intentId), { envelope, createdAt: now });
     if (operationRef) transaction.create(operationRef, { kind: 'create', fingerprint, registrationId: registrationRef.id, intentId, createdAt: now });
     transaction.create(nameRef, { registrationId: registrationRef.id, createdAt: now });
@@ -275,7 +301,7 @@ export const createEventRegistration = onCall({ ...callableOptions, secrets: reg
     });
     transaction.set(publicRef, publicProjection(next, registrationStatus, now));
     return safeResponse(registrationRef.id, registrationData, rawToken);
-  });
+  }).catch(reportRegistrationThrottle);
 });
 
 export const getEventRegistration = onCall(callableOptions, async (request) => {
@@ -334,7 +360,7 @@ export const updateEventRegistration = onCall({ ...callableOptions, secrets: reg
     }
     if (newNameSnapshot?.exists) throw new HttpsError('already-exists', 'A team with this name is already registered.');
     const peopleDelta = input.memberCount - oldMemberCount;
-    if (!hasCapacity(event.capacity, 0, peopleDelta)) throw new HttpsError('resource-exhausted', 'People capacity is full.');
+    if (!hasCapacity(event.capacity, 0, peopleDelta)) throw new HttpsError('failed-precondition', 'Event counters are malformed.');
     const capacity = capacityAfter(event.capacity, 0, peopleDelta);
     const next = { ...event, capacity };
     const registrationStatus = statusAt(next, now);
@@ -511,7 +537,7 @@ export const adminUpdateEventTeam = securedOnCall('adminUpdateEventTeam', callab
     const reserved = await transaction.get(newNameRef);
     if (reserved.exists && reserved.data()?.registrationId !== registrationId) throw new HttpsError('already-exists', 'A team with this name is already registered.');
     const delta = input.memberCount - integer(current.memberCount, 1, 'Registration is malformed.');
-    if (!hasCapacity(event.capacity, 0, delta)) throw new HttpsError('resource-exhausted', 'People capacity is full.');
+    if (!hasCapacity(event.capacity, 0, delta)) throw new HttpsError('failed-precondition', 'Event counters are malformed.');
     const capacity = capacityAfter(event.capacity, 0, delta);
     const now = Timestamp.now();
     const next = { ...event, capacity };

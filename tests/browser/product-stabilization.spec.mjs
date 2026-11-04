@@ -25,6 +25,11 @@ async function localOnly(context, baseURL) {
   const video = await readFile('tests/fixtures/media/synthetic.webm');
   await context.route('**/stabilization.webm', route => route.fulfill({ contentType: 'video/webm', body: video }));
 }
+async function openEditorRounds(page) {
+  await page.locator('.outline-round').first().waitFor();
+  const collapsed = page.locator('.outline-collapse[aria-expanded=false]');
+  while (await collapsed.count()) await collapsed.first().click();
+}
 async function removeOwnTree(reference, deadline) {
   if (Date.now() > deadline) throw new Error('Own fixture cleanup deadline exceeded');
   for (const collection of await reference.listCollections()) {
@@ -56,7 +61,7 @@ test('one complete evening: saved editor, registration, real materials, media, S
     const frame = page.getByTitle('Náhled PDF', { exact: true });
     if (previousSource) await expect(frame).not.toHaveAttribute('src', previousSource);
     await expect(frame).toHaveAttribute('src', /^blob:/);
-    const link = page.getByRole('link', { name: 'Stáhnout PDF', exact: true });
+    const link = page.getByRole('link', { name: kind === 'answer-key' ? 'Stáhnout PDF se správnými odpověďmi' : 'Stáhnout PDF', exact: true });
     await expect(link).toHaveAttribute('href', (await frame.getAttribute('src')).split('#')[0]);
     const [download] = await Promise.all([page.waitForEvent('download'), link.click()]);
     const file = output + '/' + kind + '.pdf';
@@ -99,17 +104,17 @@ test('one complete evening: saved editor, registration, real materials, media, S
     checkpoint('editor actual save and reload');
     await page.goto('/admin/login'); await page.getByLabel('E-mail').fill(identity.email); await page.getByLabel('Heslo').fill(identity.password);
     await page.getByRole('button', { name: 'Přihlásit se', exact: true }).click(); await expect(page).toHaveURL(/\/admin$/);
-    await page.goto('/admin/quizzes/' + quizId + '/edit'); await expect(page.locator('.outline-question')).toHaveCount(5);
+    await page.goto('/admin/quizzes/' + quizId + '/edit'); await openEditorRounds(page); await expect(page.locator('.outline-question')).toHaveCount(5);
     await page.locator('.outline-question').filter({ hasText: 'Otázka free' }).click();
     await page.getByLabel('Otázka *', { exact: true }).fill('Uložená otázka s diakritikou'); await save();
-    await page.reload(); await page.locator('.outline-question').filter({ hasText: 'Uložená otázka s diakritikou' }).click();
+    await page.reload(); await openEditorRounds(page); await page.locator('.outline-question').filter({ hasText: 'Uložená otázka s diakritikou' }).click();
     await expect(page.getByLabel('Otázka *', { exact: true })).toHaveValue('Uložená otázka s diakritikou');
     expect((await slides()).find(s => s.text === 'Uložená otázka s diakritikou').correctAnswer).toBe(answer);
 
     checkpoint('own event and frozen quiz');
     eventId = (await identity.call('createEvent', { expectedRevision: 0, event: {
       title: 'Filmový večer ' + suffix, startsAt: '2031-11-20T18:00:00Z', timeZone: 'Europe/Prague', venue: { name: 'Syntetický sál', publicLocation: 'Praha' },
-      teamCapacity: 10, peopleCapacity: 40, teamSizeMin: 2, teamSizeMax: 6,
+      teamCapacity: 10, peopleCapacity: 40, teamSizeMin: 2, teamSizeMax: 4,
     } })).eventId;
     await identity.call('configureEventRegistration', { eventId, expectedRevision: (await event()).revision, published: true, registrationOpensAt: '2020-01-01T00:00:00Z', registrationClosesAt: '2030-01-01T00:00:00Z' });
     await identity.call('lockEventQuiz', { eventId, quizId, expectedRevision: (await event()).revision, expectedQuizRevision: (await quiz()).revision, acknowledgeWarnings: true });
@@ -118,7 +123,11 @@ test('one complete evening: saved editor, registration, real materials, media, S
 
     checkpoint('one actual public registration, email off');
     audience = await browser.newContext({ baseURL }); await localOnly(audience, baseURL); const player = await audience.newPage();
-    await player.goto('/events/' + eventId); await expect(player.getByRole('heading', { name: 'Registrace je otevřená', exact: true })).toBeVisible();
+    await player.goto('/events/' + eventId);
+    const registration = player.getByRole('region', { name: 'Přihlásit tým', exact: true });
+    await expect(registration).toBeVisible();
+    await expect(registration.getByText('Registrace otevřené', { exact: true })).toBeVisible();
+    await expect(registration.getByRole('button', { name: 'Přihlásit tým', exact: true })).toBeEnabled();
     await player.getByLabel('Název týmu').fill(teamName); await player.getByLabel('Počet členů').fill('3');
     await player.getByLabel('E-mail').fill('stabilization-' + suffix + '@example.test');
     await player.getByRole('button', { name: 'Přihlásit tým', exact: true }).click();
@@ -132,23 +141,22 @@ test('one complete evening: saved editor, registration, real materials, media, S
     checkpoint('event materials actual downloaded PDFs');
     await page.goto('/admin/events/' + eventId); await expect(page.getByRole('heading', { name: 'Tisk a materiály', exact: true })).toBeVisible();
     await page.getByRole('link', { name: 'Otevřít tisk a materiály', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Tisk a materiály', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Tiskové centrum', exact: true })).toBeVisible();
     await expect(page.getByText('Přijaté týmy: 2', { exact: true })).toBeVisible();
     await expect(page.locator('.print-advanced')).not.toHaveAttribute('open'); await downloadPdf('team-sheets');
     for (const width of [1920, 390]) {
       await page.setViewportSize({ width, height: width === 390 ? 844 : 1080 });
       await page.getByTitle('Náhled PDF', { exact: true }).scrollIntoViewIfNeeded();
       await expect.poll(() => page.frames().some(frame => frame.url().startsWith('chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/'))).toBe(true);
-      // Chromium's native lazy PDF guest needs to paint after entering the viewport.
-      // This fixed delay affects screenshots only, never application readiness or assertions.
-      await page.waitForTimeout(750);
-      await page.screenshot({ path: output + '/materials-' + width + '.png', mask: [page.locator('.admin-account > strong')] });
     }
     await page.setViewportSize({ width: 1366, height: 768 });
     let previousPdf = await page.getByTitle('Náhled PDF', { exact: true }).getAttribute('src');
     await page.getByRole('button', { name: /^Bodovací tabulka/ }).click(); await downloadPdf('score-table', previousPdf);
     previousPdf = await page.getByTitle('Náhled PDF', { exact: true }).getAttribute('src');
-    await page.getByRole('button', { name: /^Klíč správných odpovědí/ }).click(); await downloadPdf('answer-key', previousPdf);
+    await page.getByRole('button', { name: /^Klíč správných odpovědí/ }).click();
+    await expect(page.getByTitle('Náhled PDF', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Otevřít dokument se správnými odpověďmi', exact: true }).click();
+    await downloadPdf('answer-key', previousPdf);
 
     checkpoint('moderation media and explicit answer publication');
     sessionId = (await identity.call('createEventLiveSession', { eventId, expectedRevision: (await event()).revision })).sessionId;
@@ -163,7 +171,12 @@ test('one complete evening: saved editor, registration, real materials, media, S
       const media = kind === 'audio' ? page.locator('.moderator-audio-player audio') : projector.locator('video');
       await expect.poll(() => media.evaluate(element => element.currentTime)).toBeGreaterThan(0.2);
       await page.getByRole('button', { name: 'Stop', exact: true }).click(); await expect.poll(async () => (await session()).mediaCommand).toBe('stop');
-      if (kind === 'audio') await expect.poll(() => media.evaluate(element => element.paused)).toBe(true); else await expect(projector.locator('video')).toHaveCount(0);
+      await expect.poll(() => media.evaluate(element => element.paused)).toBe(true);
+      if (kind === 'video') {
+        await expect(projector.locator('.video-media-frame')).toHaveAttribute('aria-hidden', 'true');
+        await expect(projector.locator('.video-question-copy')).toBeVisible();
+        await expect(projector.locator('video,audio,iframe')).toHaveCount(1);
+      }
     }
     await navigate('image'); expect(JSON.stringify(await published())).not.toContain(answer);
     expect(JSON.stringify(await published())).not.toContain('correctAnswer');
@@ -173,23 +186,49 @@ test('one complete evening: saved editor, registration, real materials, media, S
     checkpoint('score, SHOW publication, finale and history');
     const rounds = (await identity.db.collection('quizSnapshots/' + snapshotId + '/rounds').orderBy('position').get()).docs;
     for (let index = 0; index < teamIds.length; index++) for (const round of rounds) await identity.call('saveEventScore', { eventId, snapshotId, teamId: teamIds[index], roundId: round.id, expectedRevision: 0, halfPoints: index === 0 ? 6 : 2, reason: '', requestId: randomUUID() });
-    await page.getByRole('checkbox', { name: 'SHOW MODE', exact: true }).check();
-    await expect(page.getByRole('region', { name: 'Zvuk show mode', exact: true })).toHaveAttribute('data-save-state', /ready|saved/);
-    const interim = page.getByRole('region', { name: 'Ovládání průběžných výsledků', exact: true });
-    await interim.getByRole('button', { name: 'Načíst náhled výsledků', exact: true }).click();
-    await expect(interim.getByRole('heading', { name: 'Interní náhled — zatím nezveřejněno', exact: true })).toBeVisible(); expect((await published()).interimResults).toBeUndefined();
-    await interim.getByRole('button', { name: 'Zobrazit výsledky', exact: true }).click(); await expect(projector.locator('.sm-scene-interim .sm-table .sm-row')).toHaveCount(2);
-    expect((await published()).interimResults.presentationStyle).toBe('show'); await interim.getByRole('button', { name: 'Skrýt výsledky a vrátit prezentaci', exact: true }).click(); await expect(projector.locator('.slide-renderer')).toBeVisible();
-    const final = page.getByRole('region', { name: 'Ovládání finálního vyhlášení', exact: true });
-    await final.getByRole('button', { name: 'Načíst konečný náhled', exact: true }).click();
-    await expect(final.getByRole('heading', { name: 'Konečný náhled — zatím nepotvrzeno', exact: true })).toBeVisible(); expect((await published()).finalReveal).toBeUndefined();
-    await final.getByRole('button', { name: 'Zahájit vyhlášení', exact: true }).click(); await expect(projector.locator('.sm-intro')).toBeVisible();
-    for (const rank of [2, 1]) { await final.getByRole('button', { name: /^(Odhalit další umístění|Odhalit vítěze)$/ }).click(); await expect.poll(async () => (await published()).finalReveal.rank).toBe(rank); }
+    const results = page.getByRole('region', { name: 'Výsledky akce', exact: true });
+    await expect(results).toBeVisible();
+    expect((await published()).interimResults).toBeUndefined();
+    await expect(projector.locator('.sm-scene-interim')).toHaveCount(0);
+    await results.getByRole('button', { name: 'Průběžné výsledky', exact: true }).click();
+    await expect(projector.locator('.sm-scene-interim .sm-table .sm-row')).toHaveCount(2);
+    expect((await published()).interimResults.presentationStyle).toBe('show');
+    await results.getByRole('button', { name: 'Zavřít průběžné výsledky', exact: true }).click();
+    await expect.poll(async () => Boolean((await published()).interimResults)).toBe(false);
+    await expect(results.getByRole('button', { name: 'Průběžné výsledky', exact: true })).toBeEnabled();
+    await expect(projector.locator('.slide-renderer')).toBeVisible();
+    // The current UI offers a sample-only rehearsal, not the removed real-data preview panel.
+    const beforeDemo = await published();
+    expect(beforeDemo.finalReveal).toBeUndefined();
+    await results.getByRole('button', { name: 'Náhled závěrečné show', exact: true }).click();
+    const demo = page.getByRole('dialog', { name: 'Ukázka finální show', exact: true });
+    await expect(demo).toBeVisible();
+    expect(await published()).toEqual(beforeDemo);
+    await demo.getByRole('button', { name: 'Zavřít náhled', exact: true }).click();
+    await page.getByRole('button', { name: 'Přejít na otázku', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Přejít na otázku', exact: true }).getByRole('button', { name: 'Finální výsledky', exact: true }).click();
+    await expect(projector.locator('.sm-intro')).toBeVisible();
+    for (const rank of [2, 1]) {
+      await results.getByRole('button', { name: 'Odhalit další místo', exact: true }).click();
+      await expect.poll(async () => (await published()).finalReveal.rank).toBe(rank);
+    }
     await expect(projector.locator('.sm-winner-names h1')).toHaveText([teamName]);
-    await final.getByRole('button', { name: 'Zobrazit celé konečné pořadí', exact: true }).click(); await expect(projector.locator('.sm-final-table .sm-row')).toHaveCount(2);
+    await results.getByRole('button', { name: 'Zobrazit konečné pořadí', exact: true }).click(); await expect(projector.locator('.sm-final-table .sm-row')).toHaveCount(2);
     const confirmed = (await published()).finalReveal; expect(confirmed.rows.map(row => row.halfPoints)).toEqual([12, 4]);
+    await page.getByText('Další možnosti', { exact: true }).click();
     page.once('dialog', dialog => dialog.accept()); await page.getByRole('button', { name: 'Ukončit kvíz', exact: true }).click();
     await expect(projector.getByRole('heading', { name: 'Kvíz skončil', exact: true })).toBeVisible();
+    const ended = await session();
+    expect(ended.status).toBe('ended');
+    expect(ended.finalReveal.versionId).toBe(confirmed.versionId);
+    expect(ended.finalReveal.visible).toBe(false);
+    expect((await published()).finalReveal).toBeUndefined();
+    await page.goto('/admin/events/' + eventId);
+    await page.locator('.event-actions > summary').click();
+    await page.getByRole('button', { name: 'Ukončit akci', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Ukončit akci', exact: true }).getByRole('button', { name: 'Ukončit akci', exact: true }).click();
+    await expect.poll(async () => (await event()).lifecycleStatus).toBe('completed');
+    expect((await session()).finalReveal.versionId).toBe(confirmed.versionId);
     await page.goto('/admin/events/' + eventId + '/results'); await expect(page.getByRole('table', { name: 'Konečné pořadí', exact: true }).locator('tbody tr')).toHaveCount(2);
     await page.reload(); await expect(page.getByRole('table', { name: 'Konečné pořadí', exact: true })).toContainText(teamName);
     expect((await identity.db.doc('sessions/' + sessionId + '/finalVersions/' + confirmed.versionId).get()).get('rows')).toEqual(confirmed.rows);

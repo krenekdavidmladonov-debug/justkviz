@@ -190,7 +190,7 @@ export function QuizRepairPage() {
       setSaveError(null);
       return loaded;
     } catch {
-      setLoadError('Opravárenskou frontu se nepodařilo načíst. Zkontrolujte lokální připojení a zkuste to znovu.');
+      setLoadError('Seznam oprav se nepodařilo načíst. Zkontrolujte připojení a zkuste to znovu.');
       return null;
     } finally {
       setLoading(false);
@@ -308,10 +308,10 @@ export function QuizRepairPage() {
       data-initial-load-ms={initialLoadMs === null ? undefined : initialLoadMs.toFixed(1)}
       data-last-revalidate-ms={lastRevalidateMs === null ? undefined : lastRevalidateMs.toFixed(1)}
     >
-      <Link className="back-link" to={`/admin/quizzes/${encodeURIComponent(quiz.id)}/readiness`}>← Připravenost kvízu</Link>
+      <Link className="back-link" to={`/admin/quizzes/${encodeURIComponent(quiz.id)}/readiness`}>← Kontrola kvízu</Link>
       <header className="repair-header">
         <div>
-          <p className="eyebrow">Příprava kvízu na večer</p>
+          <p className="eyebrow">Dobrovolná kontrola obsahu</p>
           <h1>{quiz.title}</h1>
           <p>{result.blockerCount} {result.blockerCount === 1 ? 'problém zbývá' : 'problémů zbývá'}</p>
         </div>
@@ -352,14 +352,14 @@ export function QuizRepairPage() {
 
       {result.blockerCount === 0 ? (
         <section className="repair-complete" aria-live="polite">
-          <p className="eyebrow">Kvíz nemá blokující problémy</p>
-          <h2>Technická obsahová kontrola dokončena.</h2>
+          <p className="eyebrow">Kontrola nenašla další nedostatky</p>
+          <h2>Obsahová kontrola dokončena.</h2>
           <p>Před večerem proveďte fyzický test projektoru a zvuku.</p>
           <p>{result.warningCount} upozornění zůstává k ruční kontrole. YouTube, HDMI ani fyzický zvuk tímto nejsou garantované.</p>
-          <Link className="button-link" to={`/admin/quizzes/${encodeURIComponent(quiz.id)}/readiness`}>Zpět na připravenost</Link>
+          <Link className="button-link" to={`/admin/quizzes/${encodeURIComponent(quiz.id)}/readiness`}>Zpět na kontrolu</Link>
         </section>
       ) : item === undefined ? (
-        <QuizErrorState message="Blokující problémy se nepodařilo sestavit do fronty." onRetry={() => void load()} />
+        <QuizErrorState message="Položky kontroly se nepodařilo sestavit do fronty." onRetry={() => void load()} />
       ) : (
         <section className="repair-card" aria-labelledby="repair-issue-title">
           <div className="repair-card-heading">

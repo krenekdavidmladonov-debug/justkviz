@@ -43,6 +43,7 @@ function ProjectorState({ state, onMediaFinished, onMediaPlaybackState }: {
       onMediaFinished={onMediaFinished}
       onMediaPlaybackState={(generation, playbackState) => onMediaPlaybackState(generation, playbackState)}
       slide={{
+        ...(state.mediaPlaybackMode === undefined ? {} : { mediaPlaybackMode: state.mediaPlaybackMode }),
         ...(state.design === undefined ? {} : { design: state.design }),
         ...(state.roundTitle === undefined ? {} : { roundTitle: state.roundTitle }),
         kind: state.slideKind ?? 'legacy', title: state.title ?? '', text: state.text ?? '',

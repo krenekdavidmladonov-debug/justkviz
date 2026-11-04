@@ -3,7 +3,7 @@ import {
   doc,
   getDocFromServer,
   getDocsFromServer,
-  orderBy,
+  where,
   query,
 } from 'firebase/firestore';
 
@@ -29,14 +29,19 @@ export async function getEvent(eventId: string): Promise<EventRecord | null> {
 export async function listPublicEvents(): Promise<readonly PublicEventRecord[]> {
   const snapshot = await getDocsFromServer(query(
     collection(getFirebaseFirestore(), 'publicEvents'),
-    orderBy('startsAt', 'asc'),
+    where('registrationPublished', '==', true),
   ));
-  return snapshot.docs.map((item) => mapPublicEvent(item.id, item.data()));
+  return snapshot.docs.map((item) => mapPublicEvent(item.id, item.data())).sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
 }
 
 export async function getPublicEvent(eventId: string): Promise<PublicEventRecord | null> {
-  const snapshot = await getDocFromServer(doc(getFirebaseFirestore(), 'publicEvents', eventId));
-  return snapshot.exists() ? mapPublicEvent(snapshot.id, snapshot.data()) : null;
+  try {
+    const snapshot = await getDocFromServer(doc(getFirebaseFirestore(), 'publicEvents', eventId));
+    return snapshot.exists() && snapshot.data().registrationPublished === true ? mapPublicEvent(snapshot.id, snapshot.data()) : null;
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'permission-denied') return null;
+    throw error;
+  }
 }
 
 export async function listEventRegistrations(eventId: string): Promise<readonly RegistrationRecord[]> {

@@ -7,8 +7,8 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, test } from 'vitest';
+import { collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, query, where } from 'firebase/firestore';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'vitest';
 import { permissions } from '../packages/quiz-domain/src/access';
 
 const projectId = 'demo-filmovy-kviz-v2';
@@ -28,12 +28,46 @@ const publicEventPath = 'publicEvents/security-test-event';
 
 let testEnvironment: RulesTestEnvironment;
 
+test('even a fully authorized owner cannot read or reset server registration limits', async () => {
+  const uid = 'limit-owner', path = privateEventPath + '/registrationAbuse/synthetic-hash';
+  await testEnvironment.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'memberships/' + uid), { uid, role: 'owner', status: 'active', version: 1, sessionValidAfter: 0,
+      permissions, quizzes: { mode: 'all', ids: [] }, events: { mode: 'all', ids: [] } });
+    await setDoc(doc(context.firestore(), path), { tokens: 0, updatedAtMillis: 1 });
+  });
+  const db = testEnvironment.authenticatedContext(uid, { role: 'owner', email_verified: true, auth_time: 2000000000 }).firestore();
+  await assertSucceeds(getDoc(doc(db, privateEventPath)));
+  await assertFails(getDoc(doc(db, path)));
+  await assertFails(getDocs(collection(db, privateEventPath + '/registrationAbuse')));
+  await assertFails(setDoc(doc(db, path), { tokens: 3 }));
+  await assertFails(updateDoc(doc(db, path), { tokens: 3 }));
+  await assertFails(deleteDoc(doc(db, path)));
+});
+
 describe('transactional registration email privacy', () => {
+  test('even a current owner cannot inspect, redirect, inject or delete organizer notification intents', async () => {
+    const uid = 'notification-owner', path = `${privateEventPath}/emailIntents/organizer-synthetic`;
+    await testEnvironment.withSecurityRulesDisabled(async context => {
+      const db = context.firestore();
+      await setDoc(doc(db, `memberships/${uid}`), { uid, role: 'owner', status: 'active', version: 1, sessionValidAfter: 0,
+        permissions, quizzes: { mode: 'all', ids: [] }, events: { mode: 'all', ids: [] } });
+      await setDoc(doc(db, path), { type: 'registration-organizer-notification', ownerUid: uid, recipient: 'owner@example.test',
+        recipientPolicy: 'future-public-registration-owner', provenance: 'public-registration-create', status: 'pending' });
+    });
+    const db = testEnvironment.authenticatedContext(uid, { role: 'owner', email_verified: true, auth_time: 2000000000 }).firestore();
+    await assertSucceeds(getDoc(doc(db, privateEventPath)));
+    await assertFails(getDoc(doc(db, path)));
+    await assertFails(getDocs(collection(db, `${privateEventPath}/emailIntents`)));
+    await assertFails(setDoc(doc(db, `${privateEventPath}/emailIntents/organizer-forged`), { recipient: 'attacker@example.test' }));
+    await assertFails(updateDoc(doc(db, path), { recipient: 'attacker@example.test', status: 'pending' }));
+    await assertFails(deleteDoc(doc(db, path)));
+    await assertFails(updateDoc(doc(db, privateRegistrationPath), { emailDelivery: { type: 'registration-organizer-notification', status: 'sent' } }));
+  });
   for (const role of [null, 'user', 'moderator', 'admin']) {
     test('only server owns intents, encrypted capabilities and receipts: ' + String(role), async () => {
       const db = role === null ? testEnvironment.unauthenticatedContext().firestore()
         : testEnvironment.authenticatedContext('email-' + role, { role, email_verified: true, auth_time: 2000000000 }).firestore();
-      for (const child of ['emailIntents', 'emailSecrets', 'emailCampaigns', 'registrationOperations']) {
+      for (const child of ['emailIntents', 'emailSecrets', 'emailCampaigns', 'registrationOperations', 'registrationAbuse']) {
         const path = `${privateEventPath}/${child}/synthetic`;
         await testEnvironment.withSecurityRulesDisabled(async context => { await setDoc(doc(context.firestore(), path), { status: 'pending' }); });
         await assertFails(getDoc(doc(db, path)));
@@ -109,7 +143,7 @@ beforeEach(async () => {
       correctAnswer: 'Private snapshot answer',
     });
     await setDoc(doc(context.firestore(), publicEventPath), {
-      title: 'Public event', registrationStatus: 'scheduled',
+      title: 'Public event', registrationStatus: 'scheduled', registrationPublished: true,
     });
   });
 });
@@ -152,8 +186,28 @@ describe('anonymous user', () => {
   test('can read and query public events but cannot write them', async () => {
     const db = testEnvironment.unauthenticatedContext().firestore();
     await assertSucceeds(getDoc(doc(db, publicEventPath)));
-    await assertSucceeds(getDocs(collection(db, 'publicEvents')));
+    await assertSucceeds(getDocs(query(collection(db, 'publicEvents'), where('registrationPublished', '==', true))));
+    await assertFails(getDocs(collection(db, 'publicEvents')));
     await assertFails(setDoc(doc(db, publicEventPath), { title: 'Forged' }));
+  });
+
+  test('unpublished ready events are denied by direct reads and list queries, including after hiding', async () => {
+    const db = testEnvironment.unauthenticatedContext().firestore();
+    const hiddenPath = 'publicEvents/hidden-ready';
+    await testEnvironment.withSecurityRulesDisabled(async context => {
+      await setDoc(doc(context.firestore(), hiddenPath), { title: 'Ready but hidden', lifecycleStatus: 'ready', registrationPublished: false });
+      await setDoc(doc(context.firestore(), 'publicEvents/legacy-hidden'), { title: 'No explicit publication flag' });
+    });
+    await assertFails(getDoc(doc(db, hiddenPath)));
+    await assertFails(getDoc(doc(db, 'publicEvents/legacy-hidden')));
+    await assertFails(getDocs(query(collection(db, 'publicEvents'), where('registrationPublished', '==', false))));
+    const visible = await assertSucceeds(getDocs(query(collection(db, 'publicEvents'), where('registrationPublished', '==', true))));
+    expect(visible.docs.map(item => item.id)).toEqual(['security-test-event']);
+    await testEnvironment.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), publicEventPath), { registrationPublished: false }));
+    await assertFails(getDoc(doc(db, publicEventPath)));
+    expect((await assertSucceeds(getDocs(query(collection(db, 'publicEvents'), where('registrationPublished', '==', true))))).empty).toBe(true);
+    // A staff identity never gains an alternate public read path to hidden projections.
+    await assertFails(getDoc(doc(testEnvironment.authenticatedContext('admin-user', { email_verified: true, auth_time: 2000000000 }).firestore(), hiddenPath)));
   });
 
   test('cannot read unknown private event subpaths', async () => {
@@ -288,6 +342,27 @@ test('an unknown path remains denied even for an admin', async () => {
     .authenticatedContext('admin-user', { role: 'admin', email_verified: true, auth_time: 2000000000 })
     .firestore();
   await assertFails(getDoc(doc(db, 'unknown/private-document')));
+});
+
+test('Drive pairing, device capabilities and import jobs remain server-only even for the active owner', async () => {
+  const uid = 'companion-owner';
+  const names = ['driveMediaCompanions', 'driveMediaPairings', 'driveMediaJobs'];
+  await testEnvironment.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'memberships/' + uid), { uid, status: 'active', version: 1, sessionValidAfter: 0,
+      role: 'owner', permissions, quizzes: { mode: 'all', ids: [] }, events: { mode: 'all', ids: [] } });
+    for (const name of names) await setDoc(doc(db, name + '/synthetic'), { ownerUid: uid, tokenHash: 'synthetic-verifier' });
+  });
+  for (const db of [testEnvironment.unauthenticatedContext().firestore(),
+    testEnvironment.authenticatedContext(uid, { email_verified: true, auth_time: 2000000000 }).firestore()]) {
+    for (const name of names) {
+      await assertFails(getDoc(doc(db, name + '/synthetic')));
+      await assertFails(getDocs(collection(db, name)));
+      await assertFails(setDoc(doc(db, name + '/forged'), { ownerUid: uid }));
+      await assertFails(updateDoc(doc(db, name + '/synthetic'), { revoked: false }));
+      await assertFails(deleteDoc(doc(db, name + '/synthetic')));
+    }
+  }
 });
 
 describe('internal event scoring', () => {

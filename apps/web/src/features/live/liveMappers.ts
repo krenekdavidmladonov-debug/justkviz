@@ -112,6 +112,7 @@ function presentation(value: unknown): SlidePresentationInput {
 
 export function mapLiveControlState(id: string, data: DocumentData): LiveControlState {
   return {
+    ...(data.mediaPlaybackMode === 'original' ? { mediaPlaybackMode: 'original' as const } : {}),
     ...(data.showPreferences === undefined ? {} : { showPreferences: normalizeShowPreferences(data.showPreferences) }),
     ...(data.showCue === undefined ? {} : { showCue: parseShowCue(data.showCue) }),
     sessionId: id,
@@ -139,6 +140,7 @@ export function mapLiveControlState(id: string, data: DocumentData): LiveControl
 
 export function mapLiveControlSlide(id: string, data: DocumentData): LiveControlSlide {
   return {
+    ...(optionalString(data, 'originalMediaSource') === undefined ? {} : { originalMediaSource: optionalString(data, 'originalMediaSource') }),
     ...(data.hidden === true ? { hidden: true } : {}),
     ...(object(data.design) ? { design: normalizeSlideDesign(data.design) } : {}),
     ...(object(data.answerDesign) ? { answerDesign: normalizeSlideDesign(data.answerDesign) } : {}),
@@ -170,9 +172,11 @@ export function mapLiveControlSlide(id: string, data: DocumentData): LiveControl
 }
 
 export function mapPublicLiveState(id: string, data: DocumentData): PublicLiveState {
+  if (data.mediaPlaybackMode !== undefined && (data.mediaPlaybackMode !== 'original' || data.answerRevealed !== true || data.renderMode !== 'recap')) throw new Error('Unsafe original video presentation.');
   if ((data.interimResults || data.finalReveal) && (data.status !== "active" || data.answerRevealed || data.mediaPlaybackState !== "idle" || data.revealedAnswer || data.recapQuestionPosition || data.mediaSource)) throw new Error("Unsafe result presentation.");
   if (data.finalReveal && data.interimResults) throw new Error("Conflicting result presentation.");
   const mapped: PublicLiveState = {
+    ...(data.mediaPlaybackMode === 'original' && data.answerRevealed === true && data.renderMode === 'recap' ? { mediaPlaybackMode: 'original' as const } : {}),
     ...(data.showCue === undefined ? {} : { showCue: parseShowCue(data.showCue) }),
     ...(data.interimBackdrop === undefined ? {} : { interimBackdrop: parseInterimBackdrop(data.interimBackdrop) }),
     ...(object(data.design) ? { design: normalizeSlideDesign(data.design) } : {}),
@@ -214,7 +218,7 @@ export function mapPublicLiveState(id: string, data: DocumentData): PublicLiveSt
   };
   // New result payloads are a strict public boundary; do not silently drop private
   // extras or normalize malformed server publications into apparently safe data.
-  if (data.interimResults !== undefined || data.finalReveal !== undefined || data.interimBackdrop !== undefined || data.showCue !== undefined) {
+  if (data.mediaPlaybackMode !== undefined || data.interimResults !== undefined || data.finalReveal !== undefined || data.interimBackdrop !== undefined || data.showCue !== undefined) {
     const raw = { ...data }; delete raw.updatedAt;
     if (raw.sessionId !== undefined && raw.sessionId !== id) throw new Error('Invalid public session identity.');
     const parsed = parsePublicLiveState({ ...mapped, ...raw, sessionId: id });

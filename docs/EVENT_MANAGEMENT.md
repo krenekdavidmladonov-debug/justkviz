@@ -1,10 +1,5 @@
 # Event management
 
-Implementation and release evidence for scoped event lifecycle, archive, trash and deletion.
-
-Starting point: `be094fd17e18276130678952cf69417ce917245e`, including PR #31 application head `7b15faf53b4714122bf6cafd2ae751eda2061e35`. Existing main checkout is older and is not the release base.
-
-Only `filmovy-kviz-v2-staging` is authorized for cloud work. Original content and the personal owner account are excluded from automated QA and cleanup.
 
 ## State and permission contract
 
@@ -23,7 +18,7 @@ Only `filmovy-kviz-v2-staging` is authorized for cloud work. Original content an
 | Restore | event.manage | trash only | previous disposition/outcome, registration closed, live pointer removed |
 | Permanently delete / resume | event.read + event.delete | trash/deleting | recent Auth authentication, exact title and revision; server batches |
 
-`event.delete` is the only added permission. Existing owner membership implicitly receives it; manager/moderator/referee presets do not. Explicit delegation uses the existing grant parser and scope rules. No legacy admin claim grants it. Trash metadata/inventory is available only with event.manage or event.delete, within event scope; ordinary private reads, export and snapshot/media reads reject trash/deleting. Membership is reread in write transactions, so revocation conflicts with writes even for an old ID token.
+`event.delete` is the existing deletion permission. The owner preset includes it explicitly; manager/moderator/referee presets do not. Every role requires this concrete permission in its current membership. The current coordinator policy supersedes the former implicit owner exception: an older owner membership without the explicit permission now fails closed. This local correction does not migrate live memberships. An event organizer or immutable `createdBy` identity supplies no extra permission; `createdBy` only resolves an `own` resource scope. A cloud operator is not an application owner. Explicit delegation uses the existing grant parser and scope rules. No legacy admin claim grants authority. Trash metadata/inventory is available only with event.manage or event.delete, within event scope; ordinary private reads, export and snapshot/media reads reject trash/deleting. Membership is reread in write transactions, so revocation conflicts with writes even for an old ID token. Permanent deletion still requires event.read, active membership, matching event scope, recent authentication, exact title and revision.
 
 ## Actual event relationships and deletion allowlist
 
@@ -47,12 +42,14 @@ The existing event list now uses scoped document-ID pages (100 at a time), inclu
 
 ## Release and rollback
 
-The checked-in deployment-manifest names every affected callable, including the four existing access-grant endpoints whose permission catalog changes. Targeted artifact preparation strips dev entrypoints, checks a clean exact SHA, fixed staging configuration, no credential files, no declared cloud/email parameters and no secret bindings. The only new client callables are deleteEvent, restoreEvent and trashEvent in europe-west1. Their sole authorized IAM addition is allUsers roles/run.invoker on the corresponding individual services; no invoker check is disabled.
+Any infrastructure binding for callable endpoints requires separate concrete review and approval. Transport reachability does not grant application permission.
 
 Deploy backend guards first, verify them, then Rules and Hosting. Do not roll back to a pre-disposition backend after trash data exists: that could reopen content. A safe UI rollback keeps the protective backend/Rules; backend repair is a reviewed forward fix. No backfill or original-content writes are part of this release.
 
 Bounds fail closed: 200 sessions per event and 1000 owned snapshots per plan; unknown child schemas or corrupt/ambiguous live pointers require an explicit repair before continuing. Already downloaded or photographed data cannot be recalled. Reauthentication currently uses the existing email/password provider.
 
-## Evidence
+## Manual completion and presentation END, 2026-10-20
 
-Before cloud writes, a fresh inventory recorded 1923 documents (14 events, 6 library quizzes) and zero Storage objects. All 32 non-reserved Hosting files matched the gzip-level-9 hashes of the prepared application at `7b15faf53b4714122bf6cafd2ae751eda2061e35`. The personal owner and all original documents are outside QA mutation/cleanup scope. Detailed local/CI/online receipts and final release identifiers are recorded separately after verification.
+Ending a presentation changes only that private session and its sanitized public session. It neither completes the event nor changes its revision, registration settings, publication, scores, confirmed results or other presentations. The same operational event can start another presentation.
+
+The explicit settings action completeEvent accepts eventId, expectedRevision, an optional requestId/reason and optional endLive. It requires current scoped event.manage; endLive: true additionally requires event.live. Ready/live/finalizing events in active disposition may complete. Every waiting/active event session requires explicit endLive: true and is then closed atomically. Completion records a private trusted actor/time/reason, advances the capability epoch and event revision, closes/unpublishes registrations and removes publicEvents. Source snapshots, scores/history, finalVersions and interimVersions are retained. Actor/event/request receipts are revisioned and idempotent; stale state, revoked authority and foreign scope fail closed.

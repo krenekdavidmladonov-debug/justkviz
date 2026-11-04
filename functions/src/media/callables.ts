@@ -12,7 +12,7 @@ function admin(request: CallableRequest) {
 export const beginQuizMediaUpload = securedOnCall('beginQuizMediaUpload', options, async request => {
   const uid = await admin(request), data = mediaInput(request.data, ['quizId','requestId','kind','contentType','size']);
   const quizId = mediaId(data.quizId), requestId = mediaId(data.requestId);
-  if (!validOwnedMedia(data.kind, data.contentType, data.size)) throw new HttpsError('invalid-argument', 'Podporujeme PNG/JPEG/WebP do 10 MiB a MP3/WAV do 25 MiB.');
+  if (data.kind === 'video' || !validOwnedMedia(data.kind, data.contentType, data.size)) throw new HttpsError('invalid-argument', 'Podporujeme PNG/JPEG/WebP do 10 MiB a MP3/WAV do 25 MiB.');
   const assetId = createHash('sha256').update(JSON.stringify([quizId, uid, requestId])).digest('hex');
   const ref = getFirestore().doc('quizzes/' + quizId + '/mediaAssets/' + assetId);
   const fingerprint = createHash('sha256').update(JSON.stringify([data.kind,data.contentType,data.size])).digest('hex');

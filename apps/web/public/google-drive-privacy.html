@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Jak JustKvíz média přistupuje k údajům Google Disku, které údaje ukládá a co se stane při odpojení účtu.">
+  <title>JustKvíz média — ochrana údajů Google Disku</title>
+  <style>
+    :root{color-scheme:light;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#152033;background:#f6f8fb;line-height:1.7}*{box-sizing:border-box}body{margin:0}header,main,footer{width:min(820px,calc(100% - 40px));margin:auto}header{padding:30px 0 24px;border-bottom:1px solid #d9e1eb}.brand{display:inline-flex;align-items:center}.brand img{width:176px;height:40px;display:block}main{padding:48px 0}h1{font-size:clamp(2rem,6vw,3rem);line-height:1.15;letter-spacing:-.04em;margin:12px 0 24px}h2{font-size:1.3rem;line-height:1.35;margin:0 0 14px}p{margin:0 0 18px}.eyebrow{color:#7a5300;font-size:.82rem;font-weight:750;letter-spacing:.09em;text-transform:uppercase}.lead{font-size:1.12rem;color:#42516a}section{background:#fff;border:1px solid #d9e1eb;border-radius:18px;padding:28px;margin:24px 0}section>:last-child{margin-bottom:0}a{color:#1746b5;text-underline-offset:3px;overflow-wrap:anywhere}a:focus-visible{outline:3px solid #2563eb;outline-offset:4px}ul{padding-left:22px}li{margin:10px 0}code{font-size:.9em;overflow-wrap:anywhere}footer{padding:24px 0 32px;border-top:1px solid #d9e1eb;color:#536279;font-size:.92rem}footer p{margin:0 0 8px}@media(max-width:480px){header,main,footer{width:calc(100% - 32px)}main{padding:32px 0}section{padding:22px}}
+  </style>
+</head>
+<body>
+<p role="status" style="padding:16px;background:#fff4ce"><strong>Návrh k doplnění před veřejným spuštěním.</strong> Identita provozovatele, kontakt, právní důvody, retence a úplné podmínky čekají na schválení. <a href="/privacy">Ochrana osobních údajů</a>.</p>
+  <header><a class="brand" href="/google-drive.html" aria-label="JustKvíz média — úvod"><img src="/brand/justkviz-light.svg" width="176" height="40" alt="JustKvíz"></a></header>
+  <main>
+    <p class="eyebrow">JustKvíz média</p>
+    <h1>Údaje z Google Disku</h1>
+    <p class="lead">Tyto informace popisují připojení osobního Google účtu, soukromou složku a ukládání a přehrávání kvízových médií v JustKvízu. Provozovatel a kontakt: [provozovatel čeká na potvrzení], [kontakt doplní provozovatel].</p>
+    <section aria-labelledby="purpose">
+      <h2 id="purpose">Účel a rozsah přístupu</h2>
+      <p>Připojení si může nastavit přihlášený aktivní vlastník JustKvízu s příslušnými oprávněními. Slouží k ověření účtu, uložení připojení a výběru soukromé složky pro média. Souhlas udělujete na stránce Googlu.</p>
+      <p>Žádáme rozsah <code>https://www.googleapis.com/auth/drive.file</code>. Ten omezuje přístup na jednotlivé soubory a složky, které aplikaci zpřístupníte výběrem nebo pomocí aplikace vytvoříte. Současná funkce používá Google Picker pro výběr složky a serverové Google Drive API pro ověření účtu a metadat složky.</p>
+      <p>Po zapnutí ukládání médií aplikace zpracuje zdroj a časový úsek uložený v otázce, nahraje výřez videa se zvukem, samostatný zvuk nebo fotografii do soukromé složky a při přehrávání čte uložený soubor. Sdílení souborů nemění. Přístup hráčů k médiím řídí aktuální stav kvízu; obrázek odpovědi se před odhalením neposílá.</p>
+    </section>
+    <section aria-labelledby="data">
+      <h2 id="data">Které údaje zpracováváme</h2>
+      <ul>
+        <li><strong>Účet:</strong> e-mailovou adresu Google účtu a identifikátor oprávnění vlastníka (<code>permissionId</code>) pro ověření stejného účtu a vlastnictví složky.</li>
+        <li><strong>Vybraná složka:</strong> identifikátor, název a odkaz. Při kontrole dále načítáme typ složky, vlastnictví, oprávnění, možnost do složky přidávat obsah, příznak sdílení, koše a případného sdíleného disku.</li>
+        <li><strong>Přihlašovací oprávnění:</strong> obnovovací token pro udržení uděleného přístupu a krátkodobé přístupové tokeny pro ověření účtu, složky a použití Google Pickeru.</li>
+        <li><strong>Technické záznamy:</strong> stav a verzi připojení, ověřovací údaje jednorázového návratu z Googlu a audit připojení, výběru složky či odpojení. Audit zaznamenává typ operace, identifikátor uživatele JustKvízu a čas.</li>
+        <li><strong>Média:</strong> obsah vybraných souborů, identifikátor souboru, typ, velikost a kontrolní součty. Server uchovává původní zdroj a časový úsek, stav přípravy a vazbu na otázku, aby opakování nevytvářelo duplicitní přílohy a pozdní výsledek nepřepsal novější úpravu.</li>
+      </ul>
+      <p>Server přijme jen vlastní soukromou složku připojeného osobního účtu Gmail nebo Googlemail, bez dalších sdílených oprávnění, mimo koš a sdílený disk. Ověřuje také možnost do složky přidávat obsah. Tato kontrola sama žádný obsah nevytváří.</p>
+    </section>
+    <section aria-labelledby="storage">
+      <h2 id="storage">Uložení a přístup k údajům</h2>
+      <p>V místním režimu připravuje video a zvuk jednorázově propojený počítač vlastníka. Dostává pouze identifikátor uloženého YouTube videa, vybraný časový úsek a dočasnou úlohu. Přístup k Disku a konečné připojení souboru zůstávají na serveru. Počítač ukládá omezené oprávnění pomocníka šifrovaně přes Windows DPAPI a při přenosu uchovává pracovní kopii výřezu; po dokončení nebo skončení úlohy ji odstraní. Oprávnění počítače lze samostatně odvolat v Nastavení. Server uchovává jen jeho ověřovací otisk, platnost, stav propojení a zpracování.</p>
+      <p>Údaje připojení ukládáme na serverové straně prostředí Firebase aplikace JustKvíz V2. Obnovovací token se ukládá šifrovaně; dešifrování zajišťuje server s přístupem k samostatně spravovanému šifrovacímu klíči. Prohlížeč ani veřejní klienti nemají přímý přístup k uloženým údajům připojení.</p>
+      <p>Správa připojení na serveru znovu kontroluje aktuální identitu, aktivní členství vlastníka a konkrétní oprávnění. Vlastník ve svém Nastavení vidí adresu připojeného účtu a vybranou složku.</p>
+      <p>Google Picker dostává krátkodobý přístupový token do paměti prohlížeče. Aplikace tento token neukládá do místního ani relačního úložiště prohlížeče. Pro ověření návratu z Googlu používá relační úložiště pouze s jednorázovým stavem, identifikátorem uživatele a časem. Jednorázový autorizační kód je při návratu odstraněn z adresního řádku a předán serveru k dokončení připojení.</p>
+      <p>Google zpracovává požadavky na souhlas, Google Picker a Drive API; Firebase/Google Cloud zajišťuje serverový provoz a uložení. Údaje připojení nezveřejňujeme ani je nenabízíme ostatním uživatelům JustKvízu.</p>
+    </section>
+    <section aria-labelledby="use">
+      <h2 id="use">Použití údajů a zásady Google</h2>
+      <p>Tato funkce používá údaje získané z Google pro popsané připojení, ukládání a přehrávání médií a jejich zabezpečení. Úplné organizační zásady pro další použití údajů, marketing a umělou inteligenci potvrdí provozovatel před veřejným spuštěním. Soubor na Disku zůstává soukromý. Aplikace předá jeho obsah oprávněné obsluze nebo hráčům pouze podle aktuálního zobrazení kvízu, bez přihlašovacích údajů a odkazu na soukromý soubor.</p>
+      <p>Použití a předávání informací získaných prostřednictvím Google API v aplikaci JustKvíz média před veřejným spuštěním podléhá potvrzení provozovatele podle <a href="https://developers.google.com/terms/api-services-user-data-policy" rel="noopener noreferrer">Google API Services User Data Policy</a>, včetně požadavků na omezené použití (Limited Use).</p>
+    </section>
+    <section aria-labelledby="disconnect">
+      <h2 id="disconnect">Odpojení a uchování záznamů</h2>
+      <p>V <a href="/admin/settings">Nastavení JustKvízu</a> můžete připojení odpojit. Aplikace nejprve odstraní z aktivního připojení uložený účet, vybranou složku a obnovovací přihlašovací oprávnění a pokusí se zneplatnit udělený přístup u Googlu. Pokud Google není dostupný, tento pokus nemusí uspět; přístup lze odebrat také ve správě propojených aplikací vašeho Google účtu.</p>
+      <p>Odpojení nemaže složku ani soubory na Google Disku. Technický stav a bezpečnostní audit mohou po odpojení zůstat uložené; odpojení není úplným vymazáním všech provozních záznamů. Pro tuto funkci nyní není stanovena pevná lhůta jejich automatického odstranění.</p>
+      <p>Při odpojení přestanou být média z Disku v aplikaci dostupná. Opětovné připojení stejného účtu obnoví přístup k zachovaným soukromým souborům. Příprava nemění starší snapshoty akcí a žádné sdílené médium automaticky nemaže. Změna, sdílení nebo odstranění souboru přímo na Disku může zneplatnit jeho použití v kvízu.</p>
+      <p>Dotazy k údajům nebo požadavek na prověření či odstranění zbývajících záznamů směřujte na [kontakt doplní provozovatel]. Do zprávy neposílejte hesla, autorizační kódy ani tokeny.</p>
+    </section>
+    <p><a href="/google-drive.html">Zpět na informace o JustKvíz média</a></p>
+  </main>
+  <footer><p>[provozovatel čeká na potvrzení] · [kontakt doplní provozovatel]</p><p>Platné pro popsanou funkci připojení · Aktualizováno 18. října 2026</p></footer>
+</body>
+</html>

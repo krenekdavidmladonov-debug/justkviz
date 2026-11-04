@@ -1,5 +1,7 @@
 import { HttpsError } from 'firebase-functions/v2/https';
 
+import { maximumTeamMembers } from '../events/model.js';
+
 import { normalizeTeamName } from './domain.js';
 import type { RegistrationInput } from './types.js';
 
@@ -50,8 +52,8 @@ export function manualTeamInput(data: unknown) {
 function parseTeamInput(data: unknown, optionalEmail: boolean): Omit<RegistrationInput, 'contactEmail'> & { contactEmail: string | null } {
   const value = record(data);
   const teamName = safeText(value.teamName, 'teamName', 2, 80);
-  if (!Number.isInteger(value.memberCount) || (value.memberCount as number) < 1 || (value.memberCount as number) > 1_000) {
-    throw new HttpsError('invalid-argument', 'memberCount must be a positive integer.');
+  if (!Number.isInteger(value.memberCount) || (value.memberCount as number) < 1 || (value.memberCount as number) > maximumTeamMembers) {
+    throw new HttpsError('invalid-argument', `memberCount must be an integer between 1 and ${maximumTeamMembers}.`);
   }
   const absent = value.contactEmail === undefined || value.contactEmail === null || value.contactEmail === '';
   const contactEmail = optionalEmail && absent ? null : safeText(value.contactEmail, 'contactEmail', 3, 254).toLocaleLowerCase('en-US');
@@ -66,10 +68,27 @@ function parseTeamInput(data: unknown, optionalEmail: boolean): Omit<Registratio
   };
 }
 
-export function registrationWindow(data: unknown): { opensAt: Date; closesAt: Date; published: boolean } {
+export function registrationWindow(data: unknown): { opensAt?: Date; closesAt?: Date; published?: boolean; openRegistrationsNow?: true } {
   const value = record(data);
-  if (typeof value.registrationOpensAt !== 'string' || typeof value.registrationClosesAt !== 'string'
-    || typeof value.published !== 'boolean') {
+  if (value.published !== undefined && typeof value.published !== 'boolean') {
+    throw new HttpsError('invalid-argument', 'published must be boolean.');
+  }
+  const published = value.published;
+  if (value.openRegistrationsNow !== undefined && typeof value.openRegistrationsNow !== 'boolean') {
+    throw new HttpsError('invalid-argument', 'openRegistrationsNow must be boolean.');
+  }
+  if (value.openRegistrationsNow === true) {
+    if (published !== true) throw new HttpsError('invalid-argument', 'Opening registrations requires published: true.');
+    if (value.registrationOpensAt !== undefined || value.registrationClosesAt !== undefined) {
+      throw new HttpsError('invalid-argument', 'Opening registrations cannot include an explicit registration window.');
+    }
+    return { published, openRegistrationsNow: true };
+  }
+  if (value.registrationOpensAt === undefined && value.registrationClosesAt === undefined) {
+    if (published === undefined) throw new HttpsError('invalid-argument', 'Publication or registration window is required.');
+    return { published };
+  }
+  if (typeof value.registrationOpensAt !== 'string' || typeof value.registrationClosesAt !== 'string') {
     throw new HttpsError('invalid-argument', 'Registration window is required.');
   }
   const opensAt = new Date(value.registrationOpensAt);
@@ -77,5 +96,5 @@ export function registrationWindow(data: unknown): { opensAt: Date; closesAt: Da
   if (Number.isNaN(opensAt.getTime()) || Number.isNaN(closesAt.getTime()) || opensAt >= closesAt) {
     throw new HttpsError('invalid-argument', 'Registration window is invalid.');
   }
-  return { opensAt, closesAt, published: value.published };
+  return { opensAt, closesAt, ...(published === undefined ? {} : { published }) };
 }

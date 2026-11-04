@@ -1,23 +1,12 @@
 import type { EditorQuiz, PreflightResult } from '@filmovy-kviz/quiz-domain';
 
-export type PreflightLockDecision = 'ALLOW' | 'BLOCKED' | 'WARNINGS_REQUIRE_ACKNOWLEDGEMENT';
-
-export function decidePreflightLock(
-  preflight: Pick<PreflightResult, 'blockerCount' | 'warningCount'>,
-  acknowledgeWarnings: boolean,
-): PreflightLockDecision {
-  if (preflight.blockerCount > 0) return 'BLOCKED';
-  if (preflight.warningCount > 0 && !acknowledgeWarnings) return 'WARNINGS_REQUIRE_ACKNOWLEDGEMENT';
-  return 'ALLOW';
-}
-
 export function snapshotWriteCount(slideCount: number, roundCount: number): number {
   return slideCount + roundCount + 4;
 }
 
 export function buildQuizSnapshotMetadata(
   quiz: EditorQuiz,
-  preflight: Pick<PreflightResult, 'warningCount'>,
+  preflight: Pick<PreflightResult, 'blockerCount' | 'warningCount'>,
   actorId: string,
   createdAt: unknown,
 ): Record<string, unknown> {
@@ -36,8 +25,8 @@ export function buildQuizSnapshotMetadata(
     roundCount: quiz.roundCount,
     questionCount: quiz.questionCount,
     preflight: {
-      status: preflight.warningCount > 0 ? 'READY_WITH_WARNINGS' : 'READY',
-      blockerCount: 0,
+      status: preflight.blockerCount > 0 ? 'BLOCKED' : preflight.warningCount > 0 ? 'READY_WITH_WARNINGS' : 'READY',
+      blockerCount: preflight.blockerCount,
       warningCount: preflight.warningCount,
     },
     createdAt,

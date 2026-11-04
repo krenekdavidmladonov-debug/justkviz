@@ -40,21 +40,30 @@ export function QuizPreflightPanel({
   readonly onRecheck?: () => void;
   readonly onFix?: (target: PreflightFixTarget) => void;
 }) {
-  const contentReady = result.blockerCount === 0;
-  const statusMessage = result.status === 'BLOCKED'
-    ? `Kvíz zatím nelze spustit. Opravte ${result.blockerCount} ${plural(result.blockerCount, 'blokující problém', 'blokující problémy', 'blokujících problémů')}.`
-    : result.status === 'READY_WITH_WARNINGS'
-      ? 'Kvíz je připraven s upozorněními.'
-      : 'Kvíz je připraven.';
-  const visibleCategories = Object.entries(result.categories)
+  // Unsaved work is distinct from the optional editorial recommendations.
+  const hasUnsaved = result.issues.some(issue => issue.code === 'UNSAVED_CHANGES');
+  const contentIssues = result.issues.filter(issue => issue.code !== 'UNSAVED_CHANGES');
+  const contentBlockers = contentIssues.filter(issue => issue.severity === 'BLOCKER').length;
+  const contentReady = contentBlockers === 0;
+  const statusMessage = !contentReady
+    ? `Kontrola našla ${contentBlockers} ${plural(contentBlockers, 'věc', 'věci', 'věcí')} k prověření. Spuštění tím není podmíněné.`
+    : hasUnsaved ? 'Kontrola nenašla nedostatky v obsahu. Před hraním uložte rozepsané změny.'
+    : result.warningCount > 0
+      ? 'Kontrola nenašla zásadní nedostatky. Můžete si projít doporučení.'
+      : 'Kontrola nenašla žádné nedostatky.';
+  const visibleCategories = Object.keys(categoryLabels).map(category => [category, {
+    blockers: contentIssues.filter(issue => issue.category === category && issue.severity === 'BLOCKER').length,
+    warnings: contentIssues.filter(issue => issue.category === category && issue.severity === 'WARNING').length,
+  }] as const)
     .filter(([, count]) => count.blockers > 0 || count.warnings > 0);
 
   return (
     <section
-      className={`quiz-preflight-panel status-${result.status.toLowerCase()}`}
+      className={`quiz-preflight-panel status-${hasUnsaved && contentReady ? 'draft' : result.status.toLowerCase()}`}
       aria-labelledby="quiz-preflight-title"
       data-preflight-status={result.status}
       data-blocker-count={result.blockerCount}
+      data-content-blocker-count={contentBlockers}
       data-warning-count={result.warningCount}
       data-round-count={result.roundCount}
       data-question-count={result.questionCount}
@@ -62,19 +71,20 @@ export function QuizPreflightPanel({
     >
       <header className="preflight-heading">
         <div>
-          <span>PŘIPRAVENOST KVÍZU</span>
-          <h1 id="quiz-preflight-title">Je tento kvíz připravený?</h1>
+          <span>DOBROVOLNÁ KONTROLA KVÍZU</span>
+          <h1 id="quiz-preflight-title">Kontrola kvízu</h1>
           <p>{result.source === 'LOCAL_DRAFT'
-            ? 'Kontrola zahrnuje aktuální lokální draft vybrané položky a uložený zbytek kvízu.'
-            : 'Kontrola vychází z aktuálně uloženého kvízu.'}</p>
+            ? 'Kontrola průběžně zahrnuje i vaše rozepsané změny. Před hraním je uložte.'
+            : 'Kontrola uloženého obsahu nemění stav kvízu a není podmínkou spuštění.'}</p>
         </div>
         {onRecheck && <button type="button" className="secondary-button" onClick={onRecheck}>Zkontrolovat znovu</button>}
       </header>
+      {hasUnsaved && <p className="field-help" role="status">Rozpracováno — změny zatím nejsou uložené. Použijte Uložit vše.</p>}
 
       <div className="preflight-status-grid">
         <section className={contentReady ? 'preflight-check ready' : 'preflight-check blocked'}>
           <span aria-hidden="true">{contentReady ? '✓' : '✕'}</span>
-          <div><small>OBSAH KVÍZU</small><strong>{contentReady ? 'Připraven' : 'Vyžaduje opravu'}</strong></div>
+          <div><small>OBSAH KVÍZU</small><strong>{contentReady ? 'Bez nalezených nedostatků' : 'Položky k prověření'}</strong></div>
         </section>
         <section className="preflight-check neutral">
           <span aria-hidden="true">○</span>
@@ -85,8 +95,8 @@ export function QuizPreflightPanel({
       <dl className="preflight-metrics">
         <div><dt>Struktura</dt><dd>{result.roundCount} kol · {result.questionCount} otázek</dd></div>
         <div><dt>Správné odpovědi</dt><dd>{result.validAnswerCount} / {result.questionCount}</dd></div>
-        <div><dt>Blokery</dt><dd>{result.blockerCount}</dd></div>
-        <div><dt>Upozornění</dt><dd>{result.warningCount}</dd></div>
+        <div><dt>K prověření</dt><dd>{contentBlockers}</dd></div>
+        <div><dt>Doporučení</dt><dd>{result.warningCount}</dd></div>
       </dl>
 
       {visibleCategories.length > 0 && (
@@ -99,17 +109,17 @@ export function QuizPreflightPanel({
               data-category-warnings={count.warnings}
             >
               <strong>{categoryLabels[category as keyof typeof categoryLabels]}</strong>
-              <span>{count.blockers > 0 ? `${count.blockers} blokující` : ''}{count.blockers > 0 && count.warnings > 0 ? ' · ' : ''}{count.warnings > 0 ? `${count.warnings} upozornění` : ''}</span>
+              <span>{count.blockers > 0 ? `${count.blockers} k opravě` : ''}{count.blockers > 0 && count.warnings > 0 ? ' · ' : ''}{count.warnings > 0 ? `${count.warnings} doporučení` : ''}</span>
             </li>
           ))}
         </ul>
       )}
 
-      {result.issues.length > 0 && (
+      {contentIssues.length > 0 && (
         <ol className="preflight-issues" aria-label="Nalezené problémy">
-          {result.issues.map((issue, index) => (
+          {contentIssues.map((issue, index) => (
             <li className={`preflight-issue severity-${issue.severity.toLowerCase()}`} key={`${issue.code}-${issue.reference.questionId ?? issue.reference.roundId ?? 'quiz'}-${index}`} data-issue-code={issue.code} data-issue-category={issue.category}>
-              <span className="preflight-severity">{issue.severity === 'BLOCKER' ? 'BLOKUJE START' : 'UPOZORNĚNÍ'}</span>
+              <span className="preflight-severity">{issue.severity === 'BLOCKER' ? 'K PROVĚŘENÍ' : 'DOPORUČENÍ'}</span>
               <strong>{issueHeading(issue)}</strong>
               <p>{issue.message}</p>
               {issue.fixTarget && (onFix
@@ -122,7 +132,7 @@ export function QuizPreflightPanel({
 
       <footer className="preflight-result" role="status" aria-live="polite">
         <strong>{statusMessage}</strong>
-        {result.warningCount > 0 && <p>Externí média jsou vždy best-effort online. Kontrola negarantuje dostupnost, přehratelnost ani offline provoz.</p>}
+        {result.warningCount > 0 && <p>Doporučení hraní neblokují. Obrázky, zvuk a video z externích odkazů si před akcí přehrajte na zařízení, které použijete.</p>}
       </footer>
     </section>
   );

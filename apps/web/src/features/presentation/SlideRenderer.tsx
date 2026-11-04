@@ -4,7 +4,7 @@ import { AssetImage } from '../media/AssetImage';
 import { useMemo, useState } from 'react';
 
 import { productConfig } from '../../config/product';
-import { buildSlideRenderModel, defaultRules, formatPlAnswer, isSafeHttpUrl, projectorMediaPlan } from './model';
+import { buildSlideRenderModel, defaultRules, isSafeHttpUrl, projectorMediaPlan, recapAnswer } from './model';
 import type { MediaPlaybackCommand, MediaPlaybackState, SlideRenderInput, SlideRenderMode } from './types';
 import { MediaPlayer } from './MediaPlayer';
 import { slideDesignStyle } from './design';
@@ -66,6 +66,8 @@ export function SlideRenderer({
   mediaGeneration = 0,
   introGeneration = 0,
   compact = false,
+  mediaEnabled = true,
+  playPrivateAudio = false,
   onMediaFinished,
   onMediaPlaybackState,
 }: {
@@ -78,6 +80,8 @@ export function SlideRenderer({
   readonly mediaGeneration?: number;
   readonly introGeneration?: number;
   readonly compact?: boolean;
+  readonly mediaEnabled?: boolean;
+  readonly playPrivateAudio?: boolean;
   readonly onMediaFinished?: (generation: number) => void;
   readonly onMediaPlaybackState?: (
     generation: number,
@@ -95,9 +99,7 @@ export function SlideRenderer({
   const showMediaError = !mediaFinished && (mediaCommand === 'play' || mediaCommand === 'replay' || mediaCommand === 'error')
     && (mediaFailed || mediaPlaybackState === 'error');
   const showAnswer = model.renderMode === 'recap' && model.revealedAnswer !== undefined;
-  const displayedAnswer = model.isLegacyPl && model.revealedAnswer !== undefined
-    ? formatPlAnswer(model.revealedAnswer)
-    : model.revealedAnswer;
+  const displayedAnswer = showAnswer ? recapAnswer(model) : undefined;
   const visibleMode = model.renderMode === 'editorPreview' ? 'editorPreview' : model.renderMode;
   const questionHeader = model.design.showQuestionNumber === false ? null
     : <QuestionHeader number={model.questionNumber} count={model.questionCount} legacyPl={model.isLegacyPl} />;
@@ -118,12 +120,54 @@ export function SlideRenderer({
     if (generation !== mediaGeneration) return;
     onMediaPlaybackState?.(generation, state);
   };
+  const answerContent = displayedAnswer && (
+    <section className="slide-answer">
+      <span>SPRÁVNÁ ODPOVĚĎ</span>
+      <div className="slide-answer-value">
+        {displayedAnswer.optionLetter && <span className="slide-answer-letter">{displayedAnswer.optionLetter}</span>}
+        <strong>{displayedAnswer.text}</strong>
+      </div>
+      {slide.answerExplanation && <p>{slide.answerExplanation}</p>}
+      {model.answerImage && <AssetImage source={model.answerImage} alt="Obrázek odpovědi" sessionId={mediaSessionId} />}
+    </section>
+  );
+  const vinyl = <div className={`vinyl-visual ${mediaPlan.vinylPlaying ? 'is-playing' : ''}`} aria-label={mediaPlan.vinylPlaying ? 'Audio se přehrává' : 'Audio je připravené'}>
+    <div className="vinyl-disc"><div className="vinyl-label">{productConfig.shortName}</div></div><div className="vinyl-arm" />
+    <span>{mediaPlan.vinylPlaying ? 'PŘEHRÁVÁ SE AUDIO' : mediaFinished ? 'AUDIO DOHRÁLO' : 'AUDIO OTÁZKA'}</span>
+  </div>;
 
   let content;
   if (model.renderMode === 'recap' && model.contentKind === 'recap') {
     content = <div className="slide-centered"><p className="slide-kicker">REKAPITULACE KOLA</p><h1>{model.title || 'Vyberte otázku'}</h1><p>{model.text || 'Moderátor postupně zobrazí vybrané odpovědi.'}</p></div>;
+  } else if (model.mediaSource && (model.contentKind === 'video' || (model.contentKind === 'audio' && (playPrivateAudio || model.renderMode === 'recap')))) {
+    const recap = model.renderMode === 'recap';
+    const showFrame = recap || (model.contentKind === 'video' && !mediaPlan.showQuestion);
+    const mountPlayer = mediaPlan.mountPlayer || (playPrivateAudio && model.contentKind === 'audio' && !mediaFailed);
+    const sharedLayout = recap ? `recap-layout recap-${model.contentKind} shared-media-recap`
+      : model.contentKind === 'audio' ? 'audio-layout'
+        : `video-layout ${mediaPlan.showQuestion ? 'question-layout question-video' : 'video-presentation'}`;
+    content = (
+      <div className={`slide-layout shared-media-layout ${sharedLayout}`}>
+        <div className="video-question-copy">{questionHeader}<QuestionCopy title={model.title} text={model.text} />{!recap && <Options options={model.options} />}</div>
+        <div className={`shared-media-frame ${recap ? 'recap-media-frame' : 'video-media-frame'}${showFrame ? '' : ' is-hidden'}`} aria-hidden={!showFrame} inert={!showFrame}>
+          {mediaEnabled && mountPlayer && <MediaPlayer
+            sessionId={mediaSessionId}
+            allowManualAutoplay={model.contentKind === 'video' || model.mediaPlaybackMode === 'original'}
+            source={model.mediaSource}
+            command={mediaCommand}
+            generation={mediaGeneration}
+            startSeconds={mediaPlan.startSeconds}
+            endSeconds={mediaPlan.endSeconds}
+            className={`youtube-player-shell ${recap ? 'recap-player' : 'projector-video-player'}`}
+            onFinished={finish}
+            onError={fail}
+            onPlaybackState={playback}
+          />}
+        </div>
+        {recap ? answerContent : model.contentKind === 'audio' ? vinyl : null}
+      </div>
+    );
   } else if (model.renderMode === 'recap') {
-    const recapMedia = model.contentKind === 'audio' || model.contentKind === 'video';
     content = (
       <div className={`slide-layout recap-layout recap-${model.contentKind}`}>
         {questionHeader}
@@ -131,27 +175,7 @@ export function SlideRenderer({
         {model.contentKind === 'image' && model.questionImage && (isSafeHttpUrl(model.questionImage) || Boolean(parseQuizAsset(model.questionImage))) && (
           <QuestionImage sessionId={mediaSessionId} source={model.questionImage} overlay={0} />
         )}
-        {recapMedia && model.mediaSource && mediaPlan.mountPlayer && (
-          <MediaPlayer
-            sessionId={mediaSessionId}
-            allowManualAutoplay={model.contentKind === 'video'}
-            source={model.mediaSource}
-            command={mediaCommand}
-            generation={mediaGeneration}
-            startSeconds={mediaPlan.startSeconds}
-            className="youtube-player-shell recap-player"
-            onFinished={finish}
-            onError={fail}
-            onPlaybackState={playback}
-          />
-        )}
-        {showAnswer && (
-          <section className="slide-answer">
-            <span>SPRÁVNÁ ODPOVĚĎ</span>
-            <strong>{displayedAnswer}</strong>{slide.answerExplanation && <p>{slide.answerExplanation}</p>}
-            {model.answerImage && <AssetImage source={model.answerImage} alt="Obrázek odpovědi" sessionId={mediaSessionId} />}
-          </section>
-        )}
+        {answerContent}
       </div>
     );
   } else if (model.contentKind === 'agenda') {
@@ -167,28 +191,7 @@ export function SlideRenderer({
       <div className="slide-layout audio-layout">
         {questionHeader}
         <QuestionCopy title={model.title} text={model.text} />
-          <Options options={model.options} /><div className={`vinyl-visual ${mediaPlan.vinylPlaying ? 'is-playing' : ''}`} aria-label={mediaPlan.vinylPlaying ? 'Audio se přehrává' : 'Audio je připravené'}>
-          <div className="vinyl-disc"><div className="vinyl-label">{productConfig.shortName}</div></div><div className="vinyl-arm" />
-          <span>{mediaPlan.vinylPlaying ? 'PŘEHRÁVÁ SE AUDIO' : mediaFinished ? 'AUDIO DOHRÁLO' : 'AUDIO OTÁZKA'}</span>
-        </div>
-      </div>
-    );
-  } else if (model.contentKind === 'video' && mediaPlan.mountPlayer && model.mediaSource) {
-    content = (
-      <div className="video-presentation"><QuestionCopy title={model.title} text={model.text} /><Options options={model.options} />
-        <MediaPlayer
-            sessionId={mediaSessionId}
-          allowManualAutoplay
-          source={model.mediaSource}
-          command={mediaCommand}
-          generation={mediaGeneration}
-          startSeconds={mediaPlan.startSeconds}
-          endSeconds={mediaPlan.endSeconds}
-          className="youtube-player-shell projector-video-player"
-          onFinished={finish}
-          onError={fail}
-          onPlaybackState={playback}
-        />
+        <Options options={model.options} />{vinyl}
       </div>
     );
   } else {
@@ -206,7 +209,7 @@ export function SlideRenderer({
   }
 
   return (
-    <article style={slideDesignStyle(model.design)} className={`slide-renderer mode-${visibleMode} kind-${model.contentKind} layout-${layout} align-${model.design.textAlign ?? 'left'} density-${density}${model.design.backgroundColor ? ' has-custom-background' : ''} image-layout-${slide.imageLayout ?? 'split'}${compact ? ' is-compact' : ''}`}>
+    <article data-media-playback-mode={model.mediaPlaybackMode} style={slideDesignStyle(model.design)} className={`slide-renderer mode-${visibleMode} kind-${model.contentKind} layout-${layout} align-${model.design.textAlign ?? 'left'} density-${density}${model.design.backgroundColor ? ' has-custom-background' : ''} image-layout-${slide.imageLayout ?? 'split'}${compact ? ' is-compact' : ''}`}>
       <div className="slide-background" aria-hidden="true">{model.backgroundImage && <AssetImage source={model.backgroundImage} alt="" sessionId={mediaSessionId} />}</div>
       <div className="slide-background-overlay" style={{ opacity: model.backgroundOverlay / 100 }} aria-hidden="true" />
       <div className="slide-safe-area">

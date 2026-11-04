@@ -26,16 +26,29 @@ function Fingerprint {
   param([string]$Directory)
   Assert-EventNightNoReparse $Directory -Recurse
   $prefix = [System.IO.Path]::GetFullPath($Directory).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
-  $records = @(Get-ChildItem -LiteralPath $Directory -File -Recurse -Force | Sort-Object FullName | ForEach-Object {
-    [ordered]@{ path = $_.FullName.Substring($prefix.Length).Replace('\', '/'); bytes = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName).Hash }
+  $records = @(Get-ChildItem -LiteralPath (Get-EventNightNativePath $Directory) -File -Recurse -Force | Sort-Object FullName | ForEach-Object {
+    [ordered]@{ path = (Get-EventNightLogicalPath $_.FullName).Substring($prefix.Length).Replace('\', '/'); bytes = $_.Length; sha256 = (Get-EventNightFileSha256 $_.FullName) }
   })
   return ($records | ConvertTo-Json -Depth 5 -Compress)
 }
+function Write-FixtureFile {
+  param([string]$Path, [string]$Text)
+  [System.IO.File]::WriteAllText((Get-EventNightNativePath $Path), ($Text + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding($true)))
+}
+function Move-FixturePath {
+  param([string]$LiteralPath, [string]$Destination)
+  $prefix = [System.IO.Path]::GetFullPath($script:FixtureRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+  foreach ($path in @($LiteralPath, $Destination)) {
+    if (-not [System.IO.Path]::GetFullPath($path).StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Fixture move escaped its isolated root' }
+    Assert-EventNightNoReparse $path -Recurse
+  }
+  [System.IO.Directory]::Move((Get-EventNightNativePath $LiteralPath), (Get-EventNightNativePath $Destination))
+}
 function New-Snapshot {
   param([string]$Directory, [psobject]$Paths, [string]$Payload)
-  New-Item -ItemType Directory -Path $Directory -Force | Out-Null
-  '{"synthetic":true}' | Set-Content -LiteralPath (Join-Path $Directory 'firebase-export-metadata.json') -Encoding UTF8
-  $Payload | Set-Content -LiteralPath (Join-Path $Directory 'payload.json') -Encoding UTF8
+  [System.IO.Directory]::CreateDirectory((Get-EventNightNativePath $Directory)) | Out-Null
+  Write-FixtureFile (Join-Path $Directory 'firebase-export-metadata.json') '{"synthetic":true}'
+  Write-FixtureFile (Join-Path $Directory 'payload.json') $Payload
   New-EventNightSnapshotManifest $Directory $Paths
   Assert-EventNightSnapshot $Directory $Paths | Out-Null
 }
@@ -54,13 +67,14 @@ function New-Case {
 
 # Faults wrap real filesystem renames, including an interruption immediately after
 # canonical -> prior backup. No mocked snapshot, hash, copy, or recovery validation.
-function Move-Item {
+$script:RealSnapshotMove = (Get-Command Move-EventNightSnapshotPath -CommandType Function).ScriptBlock
+function Move-EventNightSnapshotPath {
   [CmdletBinding()]
-  param([string]$LiteralPath, [string]$Destination)
+  param([string]$RepoRoot, [string]$LiteralPath, [string]$Destination)
   if ($script:Fault -eq 'before-first' -and $LiteralPath -eq $script:FaultCanonical) {
     $script:Fault = ''; throw 'Synthetic interruption before first rename'
   }
-  Microsoft.PowerShell.Management\Move-Item -LiteralPath $LiteralPath -Destination $Destination
+  & $script:RealSnapshotMove @PSBoundParameters
   if (($script:Fault -eq 'between' -and $LiteralPath -eq $script:FaultCanonical) -or
       ($script:Fault -eq 'after-new' -and $LiteralPath -eq $script:FaultStaging)) {
     $script:Fault = ''; throw 'Synthetic interruption after real rename'
@@ -121,14 +135,14 @@ Check ((Fingerprint $case.Paths.SnapshotDirectory) -eq $case.Previous) 'initial 
 Check ((Fingerprint $case.Paths.ExportStaging) -eq $case.Next) 'initial refusal preserves staging bytes'
 
 $case = New-Case 'initial-new'
-Microsoft.PowerShell.Management\Move-Item -LiteralPath $case.Paths.SnapshotDirectory -Destination (Join-Path $case.Paths.DataDirectory 'fixture-prior')
+Move-FixturePath -LiteralPath $case.Paths.SnapshotDirectory -Destination (Join-Path $case.Paths.DataDirectory 'fixture-prior')
 Promote-EventNightSnapshot $case.Repo $case.Paths -Initial | Out-Null
 Check ((Fingerprint $case.Paths.SnapshotDirectory) -eq $case.Next) 'explicit first prepare promotes valid staging'
 Check (-not (Test-Path -LiteralPath $case.Paths.ExportStaging)) 'initial staging renamed to canonical'
 Check (-not (Test-Path -LiteralPath $case.Paths.PromotionJournal)) 'initial promotion needs no prior journal'
 
 $case = New-Case 'missing-no-journal'
-Microsoft.PowerShell.Management\Move-Item -LiteralPath $case.Paths.SnapshotDirectory -Destination (Join-Path $case.Paths.DataDirectory 'unreferenced-backup')
+Move-FixturePath -LiteralPath $case.Paths.SnapshotDirectory -Destination (Join-Path $case.Paths.DataDirectory 'unreferenced-backup')
 Fails { Restore-EventNightSnapshot $case.Repo $case.Paths } 'missing canonical without journal fails closed'
 Fails { Promote-EventNightSnapshot $case.Repo $case.Paths } 'export does not seed missing canonical'
 Check (-not (Test-Path -LiteralPath $case.Paths.SnapshotDirectory)) 'failed operations do not create canonical'
@@ -153,8 +167,8 @@ foreach ($kind in @('json', 'oversized', 'project', 'schema', 'traversal', 'hash
     'traversal' { $journal.previousBackup = '../outside' }
     'hash' { $journal.previousManifestSha256 = 'not-a-hash' }
     'extra' { $journal | Add-Member -NotePropertyName extra -NotePropertyValue 'unexpected' }
-    'missing-backup' { Microsoft.PowerShell.Management\Move-Item -LiteralPath $prior -Destination (Join-Path $case.Paths.DataDirectory 'unreferenced') }
-    'corrupt-backup' { 'corrupt' | Set-Content -LiteralPath (Join-Path $prior 'payload.json') -Encoding UTF8 }
+    'missing-backup' { Move-FixturePath -LiteralPath $prior -Destination (Join-Path $case.Paths.DataDirectory 'unreferenced') }
+    'corrupt-backup' { Write-FixtureFile (Join-Path $prior 'payload.json') 'corrupt' }
     'wrong-manifest' { $journal.previousManifestSha256 = '0' * 64 }
   }
   if ($kind -in @('project', 'schema', 'traversal', 'hash', 'extra', 'wrong-manifest')) {
@@ -197,21 +211,55 @@ foreach ($kind in @('backup-link', 'backup-child-link', 'data-ancestor-link')) {
   $prior = Prior-Path $case $journal
   $outside = Join-Path $script:FixtureRoot ($kind + '-outside')
   if ($kind -eq 'backup-link') {
-    Microsoft.PowerShell.Management\Move-Item -LiteralPath $prior -Destination $outside
-    New-Item -ItemType $linkType -Path $prior -Target $outside | Out-Null
+    Move-FixturePath -LiteralPath $prior -Destination $outside
+    New-Item -ItemType $linkType -Path (Get-EventNightNativePath $prior) -Target (Get-EventNightNativePath $outside) | Out-Null
   } elseif ($kind -eq 'data-ancestor-link') {
-    Microsoft.PowerShell.Management\Move-Item -LiteralPath $case.Paths.DataDirectory -Destination $outside
-    New-Item -ItemType $linkType -Path $case.Paths.DataDirectory -Target $outside | Out-Null
+    Move-FixturePath -LiteralPath $case.Paths.DataDirectory -Destination $outside
+    New-Item -ItemType $linkType -Path (Get-EventNightNativePath $case.Paths.DataDirectory) -Target (Get-EventNightNativePath $outside) | Out-Null
   } else {
     New-Item -ItemType Directory -Path $outside | Out-Null
     'synthetic-outside' | Set-Content -LiteralPath (Join-Path $outside 'payload.json') -Encoding UTF8
-    New-Item -ItemType $linkType -Path (Join-Path $prior 'child-link') -Target $outside | Out-Null
+    New-Item -ItemType $linkType -Path (Get-EventNightNativePath (Join-Path $prior 'child-link')) -Target (Get-EventNightNativePath $outside) | Out-Null
   }
   # Hash outside with the actual native file enumeration (never through the link).
-  $outsideBefore = @(Get-ChildItem -LiteralPath $outside -File -Recurse -Force | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName).Hash }) -join ','
+  $outsideBefore = @(Get-ChildItem -LiteralPath (Get-EventNightNativePath $outside) -File -Recurse -Force | ForEach-Object { (Get-EventNightFileSha256 $_.FullName) }) -join ','
   Fails { Restore-EventNightSnapshot $case.Repo $case.Paths } "reparse escape rejected: $kind"
-  $outsideAfter = @(Get-ChildItem -LiteralPath $outside -File -Recurse -Force | ForEach-Object { (Get-FileHash -LiteralPath $_.FullName).Hash }) -join ','
+  $outsideAfter = @(Get-ChildItem -LiteralPath (Get-EventNightNativePath $outside) -File -Recurse -Force | ForEach-Object { (Get-EventNightFileSha256 $_.FullName) }) -join ','
   Check ($outsideBefore -eq $outsideAfter) "reparse target bytes unchanged: $kind"
 }
+
+# The exposed rename primitive must reject unsafe inputs before any destination mutation.
+$case = New-Case 'rename-guards'
+Fails { Move-EventNightSnapshotPath $case.Repo $case.Paths.SnapshotDirectory $case.Paths.ExportStaging } 'rename refuses an existing directory target'
+Check ((Fingerprint $case.Paths.SnapshotDirectory) -eq $case.Previous) 'overwrite refusal preserves source'
+Check ((Fingerprint $case.Paths.ExportStaging) -eq $case.Next) 'overwrite refusal preserves target'
+$outside = Join-Path $script:FixtureRoot 'rename-outside'
+Fails { Move-EventNightSnapshotPath $case.Repo $case.Paths.SnapshotDirectory $outside } 'rename refuses outside-root destination'
+Check (-not [System.IO.Directory]::Exists((Get-EventNightNativePath $outside))) 'outside-root refusal creates no destination'
+$missing = Join-Path $case.Paths.DataDirectory 'missing-source'
+$destination = Join-Path $case.Paths.DataDirectory 'missing-target'
+Fails { Move-EventNightSnapshotPath $case.Repo $missing $destination } 'rename refuses missing source'
+Check (-not [System.IO.Directory]::Exists((Get-EventNightNativePath $destination))) 'missing source creates no destination'
+$sourceFile = Join-Path $case.Paths.DataDirectory 'source.tmp'
+$targetFile = Join-Path $case.Paths.DataDirectory 'target.tmp'
+Write-FixtureFile $sourceFile 'source retained'
+Write-FixtureFile $targetFile 'target retained'
+$sourceHash = Get-EventNightFileSha256 $sourceFile
+$targetHash = Get-EventNightFileSha256 $targetFile
+Fails { Move-EventNightSnapshotPath $case.Repo $sourceFile $targetFile } 'rename refuses an existing file target'
+Check ((Get-EventNightFileSha256 $sourceFile) -eq $sourceHash) 'file overwrite refusal preserves source'
+Check ((Get-EventNightFileSha256 $targetFile) -eq $targetHash) 'file overwrite refusal preserves target'
+[System.IO.Directory]::CreateDirectory((Get-EventNightNativePath $outside)) | Out-Null
+$sentinel = Join-Path $outside 'sentinel.json'
+Write-FixtureFile $sentinel 'outside sentinel retained'
+$sentinelHash = Get-EventNightFileSha256 $sentinel
+$link = Join-Path $case.Paths.DataDirectory 'linked-parent'
+New-Item -ItemType $linkType -Path (Get-EventNightNativePath $link) -Target (Get-EventNightNativePath $outside) | Out-Null
+Fails { Move-EventNightSnapshotPath $case.Repo $link $destination } 'rename refuses reparse source'
+Fails { Move-EventNightSnapshotPath $case.Repo $case.Paths.SnapshotDirectory (Join-Path $link 'escape') } 'rename refuses reparse destination ancestor'
+Check (-not [System.IO.Directory]::Exists((Get-EventNightNativePath $destination))) 'reparse source creates no destination'
+Check (-not [System.IO.Directory]::Exists((Get-EventNightNativePath (Join-Path $outside 'escape')))) 'reparse ancestor creates no outside destination'
+Check ((Get-EventNightFileSha256 $sentinel) -eq $sentinelHash) 'reparse refusals preserve outside sentinel'
+Check ((Fingerprint $case.Paths.SnapshotDirectory) -eq $case.Previous) 'reparse refusals preserve canonical bytes'
 
 Write-Output "PASS: event-night recovery ($script:Checks assertions, synthetic fixtures retained for audit)"

@@ -4,8 +4,10 @@ import { Timestamp, type DocumentReference, type Firestore } from 'firebase-admi
 
 import { EmailDeliveryError, type DeliveryErrorCode } from './errors.js';
 import type { EmailIntent } from './intent.js';
+import { ownerNotificationIntentId, registrationOwnerNotificationAuthorized } from './organizer.js';
+import { allowedRegistrationOwnerNotificationIntent, registrationOwnerNotificationActivation } from './runtime.js';
 import { eventTeamMessage, messageCopy, teamMessageEventTitle, type TeamMessageContent } from './team-message.js';
-import { managementUrl, registrationEmail, type EmailBody } from './templates.js';
+import { managementUrl, registrationEmail, registrationOwnerNotification, type EmailBody } from './templates.js';
 import type { TokenEnvelope, TokenVault } from './token-vault.js';
 
 export interface EmailMessage extends EmailBody {
@@ -58,13 +60,29 @@ export async function deliverRegistrationEmail(db: Firestore, ref: DocumentRefer
     const valid = intent.eventId === ref.parent.parent?.id && typeof intent.registrationId === 'string'
       && /^[a-zA-Z0-9_-]{1,150}$/u.test(intent.registrationId) && Number.isInteger(intent.attempts) && intent.attempts >= 0
       && intent.createdAt instanceof Timestamp && (['registration-confirmed', 'registration-updated', 'registration-cancelled'].includes(intent.type)
+        || intent.type === 'registration-organizer-notification'
         || (intent.type === 'event-team-message' && /^[a-f0-9]{64}$/u.test(intent.campaignId)));
     if (!valid) {
       transaction.update(ref, { status: 'failed', lastError: 'configuration-invalid', leaseId: null, leaseUntil: null, updatedAt: now });
       return { result: 'failed' as const };
     }
-    const registrationRef = intent.type === 'event-team-message' ? null : ref.parent.parent.collection('registrations').doc(intent.registrationId);
+    const organizer = intent.type === 'registration-organizer-notification';
+    const registrationRef = intent.type === 'event-team-message' || organizer ? null : ref.parent.parent.collection('registrations').doc(intent.registrationId);
     const registration = registrationRef ? await transaction.get(registrationRef) : null;
+    if (organizer) {
+      const activation = registrationOwnerNotificationActivation();
+      if (!activation || !allowedRegistrationOwnerNotificationIntent(intent as unknown as Record<string, unknown>, activation)) return { result: 'unchanged' as const };
+      const canonical = (await transaction.get(ref.parent.parent.collection('registrations').doc(intent.registrationId))).data();
+      const member = (await transaction.get(db.doc('memberships/' + activation.ownerUid))).data();
+      if (ref.id !== ownerNotificationIntentId(intent.registrationId) || intent.createdAt.toMillis() > now.toMillis()
+        || !canonical || canonical.eventId !== intent.eventId || canonical.source === 'manual' || !['accepted', 'cancelled'].includes(canonical.status as string)
+        || !(canonical.createdAt instanceof Timestamp) || canonical.createdAt.toMillis() !== intent.createdAt.toMillis()
+        || typeof canonical.managementTokenHash !== 'string' || !/^[a-f0-9]{64}$/u.test(canonical.managementTokenHash)
+        || !registrationOwnerNotificationAuthorized(member, activation, intent.eventId, event)) {
+        transaction.update(ref, { status: 'failed', lastError: 'configuration-invalid', leaseId: null, leaseUntil: null, updatedAt: now });
+        return { result: 'failed' as const };
+      }
+    }
     const summary = registration?.data()?.emailDelivery as { intentId?: string } | undefined;
     // A crashed processing worker may already have sent. Lease expiry is not
     // evidence of non-acceptance, even when the crash actually preceded send.
@@ -87,11 +105,15 @@ export async function deliverRegistrationEmail(db: Firestore, ref: DocumentRefer
     // Resolve secrets only after a claim. Missing configuration becomes terminal.
     const selectedTransport = resolve(transport);
     let body: EmailBody;
-    if (intent.type === 'event-team-message') {
+    if (intent.type === 'registration-organizer-notification') {
+      body = registrationOwnerNotification(intent.content, resolve(origin), intent.eventId);
+    } else if (intent.type === 'event-team-message') {
       const campaign = await readProtectedEnvelope(async () => (await ref.parent.parent!.collection('emailCampaigns').doc(intent.campaignId).get()).data());
       if (!campaign || campaign.eventId !== intent.eventId || !campaign.content) throw new EmailDeliveryError('configuration-invalid', false);
       const content = campaign.content as TeamMessageContent;
-      body = eventTeamMessage({ ...messageCopy({ subject: content.subject, message: content.message }), eventTitle: teamMessageEventTitle(content.eventTitle) });
+      let brandingOrigin: string | undefined;
+      try { brandingOrigin = resolve(origin); } catch { /* Branding is optional for organizational messages. */ }
+      body = eventTeamMessage({ ...messageCopy({ subject: content.subject, message: content.message }), eventTitle: teamMessageEventTitle(content.eventTitle) }, brandingOrigin);
     } else {
       const selectedVault = resolve(vault);
       const selectedOrigin = resolve(origin);
@@ -105,10 +127,16 @@ export async function deliverRegistrationEmail(db: Firestore, ref: DocumentRefer
         // Historical update intents never had an envelope. Keep them deliverable
         // without a CTA; do not mint a capability, intent or replacement message.
       }
-      body = registrationEmail(intent.type, intent.content, link);
+      body = registrationEmail(intent.type, intent.content, link, selectedOrigin);
     }
     const currentEvent = (await ref.parent.parent!.get()).data();
     if (!currentEvent || !eventOperational(currentEvent) || (currentEvent.capabilityVersion ?? 0) !== (intent.capabilityVersion ?? 0)) return 'unchanged';
+    if (intent.type === 'registration-organizer-notification') {
+      const activation = registrationOwnerNotificationActivation();
+      const member = activation ? (await db.doc('memberships/' + activation.ownerUid).get()).data() : undefined;
+      if (!activation || !allowedRegistrationOwnerNotificationIntent(intent as unknown as Record<string, unknown>, activation)
+        || !registrationOwnerNotificationAuthorized(member, activation, intent.eventId, currentEvent)) throw new EmailDeliveryError('configuration-invalid', false);
+    }
     await selectedTransport.send({ idempotencyKey: ref.path, to: intent.recipient, createdAtMillis: intent.createdAt.toMillis(),
       ...body });
   } catch (error) {

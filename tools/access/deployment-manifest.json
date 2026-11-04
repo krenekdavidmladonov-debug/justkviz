@@ -67,6 +67,8 @@
     "updateQuizSlide"
   ],
   "unchangedExcluded": {
+    "restoreQuiz": "Introduced by quiz library trash; outside the historical access deployment scope.",
+    "trashQuiz": "Introduced by quiz library trash; outside the historical access deployment scope.",
     "cancelEventRegistration": "Unchanged anonymous registration capability flow",
     "updateEventRegistration": "Unchanged anonymous registration capability flow",
     "createEventRegistration": "Unchanged anonymous registration capability flow",
@@ -82,7 +84,20 @@
     "restoreEvent": "Introduced by event management; see tools/event-management/deployment-manifest.json",
     "trashEvent": "Introduced by event management; see tools/event-management/deployment-manifest.json",
     "readEventShowPreferences": "Introduced by SHOW MODE; local only, no staging deployment authorized. See docs/SHOW_MODE_IMPLEMENTATION.md.",
-    "configureEventShow": "Introduced by SHOW MODE; local only, no staging deployment authorized. See docs/SHOW_MODE_IMPLEMENTATION.md."
+    "configureEventShow": "Introduced by SHOW MODE; local only, no staging deployment authorized. See docs/SHOW_MODE_IMPLEMENTATION.md.",
+    "readDriveConnection": "Separate default-disabled Drive connection rollout; see docs/GOOGLE_DRIVE_CONNECTION.md.",
+    "beginDriveConnection": "Separate default-disabled Drive connection rollout; see docs/GOOGLE_DRIVE_CONNECTION.md.",
+    "completeDriveConnection": "Separate default-disabled Drive connection rollout; see docs/GOOGLE_DRIVE_CONNECTION.md.",
+    "getDriveFolderPicker": "Separate default-disabled Drive connection rollout; see docs/GOOGLE_DRIVE_CONNECTION.md.",
+    "selectDriveFolder": "Separate default-disabled Drive connection rollout; see docs/GOOGLE_DRIVE_CONNECTION.md.",
+    "disconnectDriveConnection": "Separate default-disabled Drive connection rollout; see docs/GOOGLE_DRIVE_CONNECTION.md.",
+    "createDriveMediaFolder": "Separate Drive media rollout; see docs/GOOGLE_DRIVE_MEDIA.md.",
+    "requestDriveMediaImport": "Separate default-disabled Drive media rollout; see docs/GOOGLE_DRIVE_MEDIA.md.",
+    "readDriveMediaImport": "Separate default-disabled Drive media rollout; see docs/GOOGLE_DRIVE_MEDIA.md.",
+    "processDriveMediaImport": "Private task worker in separate Drive media rollout; see docs/GOOGLE_DRIVE_MEDIA.md.",
+    "configureDriveMediaCompanion": "Separate default-disabled local media release; see tools/drive-local/deployment-manifest.json.",
+    "driveMediaCompanion": "Separate capability-protected local media release; see tools/drive-local/deployment-manifest.json.",
+    "completeEvent": "Introduced by manual event completion; outside the historical access deployment scope."
   },
   "firestoreRules": "firestore.rules",
   "storageRules": "storage.rules",

@@ -1,5 +1,5 @@
 import { LiveSessionError } from './errors.js';
-import { resolveSlideDesign, normalizeResultTemplates, canHideInfoSlide, type ResultTemplate } from '@filmovy-kviz/quiz-domain';
+import { originalYoutubeSource, resolveSlideDesign, normalizeResultTemplates, canHideInfoSlide, type ResultTemplate } from '@filmovy-kviz/quiz-domain';
 import type {
   LiveRenderMode,
   PrivateLiveSession,
@@ -212,8 +212,11 @@ export function buildPublicSessionState(session: PrivateLiveSession, slide?: Pri
   if (session.presentationMode !== 'recap' && !session.answerRevealed) return result;
   const revealedAnswer = displayAnswer(slide.correctAnswer, slide.kind);
   if (revealedAnswer === undefined) throw new LiveSessionError('failed-precondition', 'This slide has no displayable answer.');
+  const originalSource = session.answerRevealed && session.mediaPlaybackMode === 'original' ? originalYoutubeSource(slide) : undefined;
+  const { clipEndSeconds: savedEnd, ...revealedResult } = result; void savedEnd;
   return {
-    ...result,
+    ...(originalSource ? revealedResult : result),
+    ...(originalSource ? { mediaPlaybackMode: 'original' as const, mediaSource: originalSource, clipStartSeconds: 0 } : {}),
     answerRevealed: true,
     renderMode: 'recap',
     ...(Object.keys(resolveSlideDesign(slide.defaultDesign, slide.roundDesign, slide.design, slide.answerDesign, true)).length ? { design: resolveSlideDesign(slide.defaultDesign, slide.roundDesign, slide.design, slide.answerDesign, true) } : {}),

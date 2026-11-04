@@ -30,7 +30,7 @@ beforeEach(async () => {
     await setDoc(doc(db, 'quizSnapshots/snapshot'), { quizId: 'a' });
     await setDoc(doc(db, 'quizSnapshots/snapshot/slides/question'), { correctAnswer: 'PRIVATE' });
     await setDoc(doc(db, 'publicSessions/known'), { title: 'Public question' });
-    await setDoc(doc(db, 'publicEvents/listed'), { title: 'Public event' });
+    await setDoc(doc(db, 'publicEvents/listed'), { title: 'Public event', registrationPublished: true });
     await setDoc(doc(db, 'memberships/creator'), member('creator'));
     await setDoc(doc(db, 'memberships/viewer'), member('viewer', { role: 'viewer', permissions: [...rolePresets.viewer] }));
     await setDoc(doc(db, 'memberships/owner'), member('owner', { role: 'owner', permissions: [...permissions], quizzes: { mode: 'all', ids: [] }, events: { mode: 'all', ids: [] } }));
@@ -145,7 +145,8 @@ test('relocking revokes direct historical snapshot get and list without granting
 test('anonymous projector and public events remain available with private writes denied', async () => {
   const db = env.unauthenticatedContext().firestore();
   await assertSucceeds(getDoc(doc(db, 'publicSessions/known')));
-  await assertSucceeds(getDocs(collection(db, 'publicEvents')));
+  await assertSucceeds(getDocs(query(collection(db, 'publicEvents'), where('registrationPublished', '==', true))));
+  await assertFails(getDocs(collection(db, 'publicEvents')));
   await assertFails(getDocs(collection(db, 'publicSessions')));
   await assertFails(setDoc(doc(db, 'publicSessions/known'), { revealedAnswer: 'Forged' }));
 });

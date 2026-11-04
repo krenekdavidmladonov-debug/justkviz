@@ -2,6 +2,7 @@ import { HttpsError } from 'firebase-functions/v2/https';
 
 import { validateEventConfiguration } from './model.js';
 import type { EventConfigurationInput } from './types.js';
+import { requestedEventPricing } from './pricing.js';
 
 export function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && !Array.isArray(value) && typeof value === 'object';
@@ -55,7 +56,7 @@ function positiveInteger(value: unknown, field: string, maximum: number): number
   return value as number;
 }
 
-export function requestedEventConfiguration(data: unknown): EventConfigurationInput {
+export function requestedEventConfiguration(data: unknown, options: { readonly allowLegacyTeamSize?: boolean } = {}): EventConfigurationInput {
   if (!isObject(data)) throw new HttpsError('invalid-argument', 'event configuration is required.');
   const value = data.event;
   if (!isObject(value)) throw new HttpsError('invalid-argument', 'event configuration is required.');
@@ -63,6 +64,10 @@ export function requestedEventConfiguration(data: unknown): EventConfigurationIn
   if (!isObject(venue)) throw new HttpsError('invalid-argument', 'event venue is required.');
   const startsAtText = boundedString(value.startsAt, 'startsAt', 100);
   const configuration: EventConfigurationInput = {
+    ...(Object.hasOwn(value, 'pricing') ? { pricing: (() => {
+      try { return requestedEventPricing(value.pricing); }
+      catch { throw new HttpsError('invalid-argument', 'pricing must contain a valid mode and amountCzk.'); }
+    })() } : {}),
     title: boundedString(value.title, 'title', 300),
     description: (() => { const description = value.description ?? ''; if (typeof description !== 'string' || description.length > 2000 || /[\p{Cf}]/u.test(description)) throw new HttpsError('invalid-argument', 'Popis je neplatný.'); return description.trim(); })(),
     startsAt: new Date(startsAtText),
@@ -76,7 +81,7 @@ export function requestedEventConfiguration(data: unknown): EventConfigurationIn
     teamSizeMin: positiveInteger(value.teamSizeMin, 'teamSizeMin', 1_000),
     teamSizeMax: positiveInteger(value.teamSizeMax, 'teamSizeMax', 1_000),
   };
-  const issues = validateEventConfiguration(configuration);
+  const issues = validateEventConfiguration(configuration, options);
   if (issues.length > 0) throw new HttpsError('invalid-argument', issues[0]!);
   return configuration;
 }

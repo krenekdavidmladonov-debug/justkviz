@@ -1,4 +1,4 @@
-import { normalizeSlideDesign } from '@filmovy-kviz/quiz-domain';
+import { correctOptionIndex, normalizeSlideDesign } from '@filmovy-kviz/quiz-domain';
 import type {
   MediaPlaybackCommand,
   MediaPlaybackState,
@@ -122,6 +122,7 @@ export function buildSlideRenderModel(
       ? { answerImage: input.answerImage ?? mediaSource(input.media, 'answer', 'image') }
       : {}),
     ...(input.mediaSource ?? fallbackMedia ? { mediaSource: input.mediaSource ?? fallbackMedia } : {}),
+    ...(input.mediaPlaybackMode === 'original' ? { mediaPlaybackMode: 'original' as const } : {}),
     backgroundOverlay,
     clipStartSeconds,
     ...(clipEndSeconds === undefined ? {} : { clipEndSeconds }),
@@ -136,6 +137,16 @@ export function formatPlAnswer(value: string): string {
   if (['true', '1', 'ano', 'pravda'].includes(normalized)) return 'PRAVDA';
   if (['false', '0', 'ne', 'lež', 'lez'].includes(normalized)) return 'LEŽ';
   return value;
+}
+
+/** Resolve only the already revealed answer against the public question options. */
+export function recapAnswer(model: Pick<NormalizedSlideRenderModel, 'revealedAnswer' | 'options' | 'isLegacyPl'>): { readonly text: string; readonly optionLetter?: string } | undefined {
+  if (model.revealedAnswer === undefined) return undefined;
+  if (model.isLegacyPl) return { text: formatPlAnswer(model.revealedAnswer) };
+  const optionIndex = correctOptionIndex({ options: model.options, correctAnswer: model.revealedAnswer });
+  return optionIndex === undefined
+    ? { text: model.revealedAnswer }
+    : { text: model.options[optionIndex]!, optionLetter: String.fromCharCode(65 + optionIndex) };
 }
 
 export interface ProjectorMediaPlan {
@@ -157,15 +168,18 @@ export function projectorMediaPlan(
   const failed = playbackState === 'error' || locallyFailed;
   const finished = playbackState === 'finished' || locallyFinished;
   if (model.renderMode === 'recap' && (model.contentKind === 'audio' || model.contentKind === 'video')) {
-    return { mountPlayer: model.mediaSource !== undefined && !failed, showQuestion: true, vinylPlaying: false, startSeconds: 0 };
+    const original = model.mediaPlaybackMode === 'original';
+    return { mountPlayer: model.mediaSource !== undefined && !failed, showQuestion: true, vinylPlaying: false,
+      startSeconds: original ? 0 : model.clipStartSeconds,
+      ...(!original && model.clipEndSeconds !== undefined ? { endSeconds: model.clipEndSeconds } : {}) };
   }
   if (model.contentKind === 'audio') {
     return { mountPlayer: false, showQuestion: true, vinylPlaying: commanded && playbackState === 'playing' && !finished && !failed, startSeconds: model.clipStartSeconds,
       ...(model.clipEndSeconds === undefined ? {} : { endSeconds: model.clipEndSeconds }) };
   }
   if (model.contentKind === 'video') {
-    const mountPlayer = commanded && !finished && !failed && model.mediaSource !== undefined;
-    return { mountPlayer, showQuestion: !mountPlayer, vinylPlaying: false,
+    const showVideo = commanded && !finished && !failed && model.mediaSource !== undefined;
+    return { mountPlayer: model.mediaSource !== undefined && !failed, showQuestion: !showVideo, vinylPlaying: false,
       startSeconds: model.clipStartSeconds,
       ...(model.clipEndSeconds === undefined ? {} : { endSeconds: model.clipEndSeconds }) };
   }

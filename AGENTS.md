@@ -1,48 +1,19 @@
 # AGENTS.md
 
-## Scope
+## Scope and safe local development
 
-This repository contains Filmový Kvíz V2, a replacement for an existing production application. The existing application and its Firebase project are out of scope.
+JustKvíz is a quiz authoring, registration, scoring and presentation application. Existing production systems and live data are outside autonomous development scope.
 
-## Non-negotiable safety rules
+- Local source changes, isolated tests and reversible local commits are allowed. Use a dedicated branch and preserve existing dirty work.
+- Public push, pull requests, merge, deployment, cloud writes, IAM, secrets and real emails require explicit approval for the concrete action. Historical approvals or release reports are not authorization.
+- Never commit secrets, credentials, environment files, personal or live data, private exports or internal operational records. Keep coordinator memory and evidence outside this public branch.
+- Use explicit demo-* Firebase projects and loopback emulator endpoints. Seed scripts must fail closed before SDK initialization.
+- Require current active server-managed membership, concrete permissions and matching resource scope. Role labels and legacy Auth claims grant no implicit authority.
+- Never send unrevealed answers, private notes or team contacts to public/projector clients. Treat browser input as untrusted.
+- Read architecture, data-model and security documentation before changing boundaries. Run pnpm check and relevant tests; authorization/Rules changes additionally require demo emulator Rules tests.
+- Coordinate disjoint file ownership for implementation and independent read-only QA/security review. Preserve meaningful tests, reproduce real defects, and distinguish emulator/browser evidence from physical or live-cloud acceptance.
+- Select the next feasible product task after each completed task. Skip unchanged completed work, record actual blocked inputs privately and continue independent work. Public source history must remain free of private automation, chat, worktree or claim records.
 
-- Never deploy to Firebase Hosting, Functions, Firestore, Storage, or any other environment without explicit user approval in the current conversation.
-- Never connect to the production Firebase project or copy production credentials/data without explicit approval.
-- Never commit secrets, service-account keys, `.env` files, access tokens, or production Firebase configuration.
-- Use Firebase Emulator Suite and a `demo-*` project ID for local development.
-- Seed scripts must fail closed unless both a local emulator host and a `demo-*` project ID are present.
-- A correct answer must never be sent to a public or projector client before it is explicitly revealed.
-- Public clients must not read private quiz documents or team contact data.
-- Authentication alone is not authorization. Administrative access requires a current active server-managed membership, the concrete permissions for the operation, and scope for the affected resource, enforced by Security Rules and server code. Role labels and legacy Auth claims alone grant no authority.
-- Treat all browser input as untrusted. Validate sensitive writes in Cloud Functions.
-- Begin Security Rules with least privilege and add access only alongside emulator tests.
+## Layout
 
-## Engineering workflow
-
-### Owner-directed autonomy (2026-10-13)
-
-The owner has instructed the lead to continue development autonomously and coordinate all available worker slots efficiently. Local implementation, corrective changes, isolated synthetic emulator tests, documentation, dedicated branches and local commits are authorized; do not request repeated approval for these routine steps. An earlier completed QA phase does not prohibit new evidence-driven development.
-
-The lead assigns at most three concurrent workers, explicitly using GPT-6.1 Sol with low, medium or high reasoning and disjoint file ownership. Reuse prior passing evidence where source and scope still match; run additional checks for actual changes or missing coverage. The lead reviews and integrates results. Once a concrete external action is authorized in the conversation, carry out necessary implementation details within that scope without asking for the same approval again.
-
-This instruction does not supply missing credentials or physical equipment, expand an expired temporary grant, or authorize unrelated production data, destructive cleanup or real email to unspecified recipients. Prepare concrete remaining external steps and report only the actual missing input. Preserve all security invariants above.
-
-- Read `docs/ARCHITECTURE.md`, `docs/DATA_MODEL.md`, and `docs/SECURITY.md` before changing boundaries, collections, or authorization.
-- Create a dedicated branch before a substantial change.
-- Keep commits small, logical, and reversible. Preserve unrelated user changes.
-- Prefer simple, readable modules over speculative abstractions.
-- Run `pnpm check` and `pnpm test:rules` before committing changes to authentication, authorization, collections, or Security Rules.
-- Update documentation when architecture, data ownership, or security assumptions change.
-
-## Project layout
-
-- `apps/web`: React/Vite client containing admin, projector, and public surfaces.
-- `functions`: trusted Firebase Cloud Functions boundary.
-- `docs`: architecture, data model, and security decisions.
-- Root Firebase files: emulator/deployment configuration and deny-by-default rules.
-
-## Environment rules
-
-- Copy `apps/web/.env.example` to `apps/web/.env.local` for local work.
-- Keep `VITE_FIREBASE_PROJECT_ID` on a `demo-*` project unless the user explicitly authorizes another non-production environment.
-- Prefer emulators. Do not run `firebase deploy` as part of routine verification.
+apps/web contains the React/Vite client; functions contains the trusted Firebase boundary; packages contains shared domain modules. Public technical contracts are in docs.

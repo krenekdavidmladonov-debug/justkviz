@@ -20,7 +20,7 @@ const admin = client('boundary-admin');
 const user = client('boundary-user');
 const login = (client, role) => signInWithEmailAndPassword(client.auth, `${role}@example.test`, 'LocalQuiz123!');
 const form = (teamName, memberCount) => ({ teamName, memberCount, contactEmail: 'synthetic@example.test' });
-const config = (teams = 3, people = 12) => ({ title: 'Syntetické hranice', startsAt: '2031-01-01T18:00:00Z', timeZone: 'Europe/Prague', venue: { name: 'Test', publicLocation: 'Test' }, teamCapacity: teams, peopleCapacity: people, teamSizeMin: 2, teamSizeMax: 6 });
+const config = (teams = 3, people = 12) => ({ title: 'Syntetické hranice', startsAt: '2031-01-01T18:00:00Z', timeZone: 'Europe/Prague', venue: { name: 'Test', publicLocation: 'Test' }, teamCapacity: teams, peopleCapacity: people, teamSizeMin: 2, teamSizeMax: 4 });
 const state = async (id) => (await getDoc(doc(admin.db, 'events', id))).data();
 async function window(id, published, expired = false) {
   return admin.call('configureEventRegistration', { eventId: id, expectedRevision: (await state(id)).revision, published,
@@ -116,7 +116,7 @@ async function run() {
   await signOut(user.auth);
   await revisionBoundaries();
   const full = await event(1, 6);
-  const fullTeam = await user.call('createEventRegistration', { eventId: full, ...form('Plný tým', 6) });
+  const fullTeam = await user.call('createEventRegistration', { eventId: full, ...form('Plný tým', 4) });
   await denied(user.call('createEventRegistration', { eventId: full, ...form('Další tým', 2) }), 'failed-precondition');
   await user.call('updateEventRegistration', { ...managed(full, fullTeam), ...form('Plný tým', 3) });
   await user.call('cancelEventRegistration', managed(full, fullTeam));
@@ -134,9 +134,11 @@ async function run() {
   const shrink = await event(3, 12);
   await user.call('createEventRegistration', { eventId: shrink, ...form('První tým', 4) });
   await user.call('createEventRegistration', { eventId: shrink, ...form('Druhý tým', 4) });
-  for (const change of [{ ...config(), teamCapacity: 1 }, { ...config(), peopleCapacity: 6 }]) {
+  for (const change of [{ ...config(), teamCapacity: 1 }]) {
     await denied(admin.call('updateEvent', { eventId: shrink, expectedRevision: (await state(shrink)).revision, event: change }), 'failed-precondition');
   }
+  await admin.call('updateEvent', { eventId: shrink, expectedRevision: (await state(shrink)).revision, event: { ...config(), peopleCapacity: 6 } });
+  assert.equal((await state(shrink)).acceptedPeople, 8);
   const race = await event(2, 12);
   await user.call('createEventRegistration', { eventId: race, ...form('Základní tým', 4) });
   const revision = (await state(race)).revision;
@@ -146,7 +148,7 @@ async function run() {
   ]);
   assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
   const final = await state(race);
-  assert.ok(final.acceptedTeams <= final.teamCapacity && final.acceptedPeople <= final.peopleCapacity);
+  assert.ok(final.acceptedTeams <= final.teamCapacity);
   console.log('PASS: full versus closed, capacity shrink, registration revision/reissue races, token rotation and negative authorization');
 }
 try { await run(); } finally { await Promise.all([deleteApp(admin.app), deleteApp(user.app)]); }

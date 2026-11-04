@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { canDelegate, grantErrors, permissionLabels, permissions, roleLabels, rolePresets, type AccessGrant, type AccessRole, type AccessScope, type Membership } from '@filmovy-kviz/quiz-domain';
 import { useAuth } from '../../auth/AuthProvider';
 import { accessCall, privateRead, type PrivateDocument } from '../../features/access/api';
+import { accessInvitationUrl } from '../../features/access/sharing';
+import { readFirebaseConfig } from '../../services/firebase/config';
 
 interface AccessUser extends Membership { lastLoginAt: string | null; emailVerified: boolean }
 interface Invitation { inviteId: string; email: string; grant: AccessGrant; version: number; status: string; expiresAt: number }
@@ -55,7 +57,10 @@ export function UsersAccessPage() {
     setPending(true); setError(''); setNotice('');
     try { await action(); await load(); } catch (failure) { setError(failure instanceof Error ? failure.message : 'Změnu nelze dokončit.'); } finally { setPending(false); }
   }
-  function invitationLink(inviteId: string, token: string) { setLink(`${window.location.origin}/invite/${encodeURIComponent(inviteId)}#token=${encodeURIComponent(token)}`); }
+  function invitationLink(inviteId: string, token: string) {
+    const config = readFirebaseConfig();
+    setLink(accessInvitationUrl(inviteId, token, { projectId: config.options.projectId ?? '', useEmulators: config.useEmulators }, window.location.origin));
+  }
   function edit(user: AccessUser | null) {
     setSelected(user); setGrant(user ? { role: user.role, permissions: [...user.permissions], quizzes: { ...user.quizzes, ids: [...user.quizzes.ids] }, events: { ...user.events, ids: [...user.events.ids] } } : emptyGrant());
     setEmail(user?.email ?? ''); setStatus(user?.status ?? 'active'); setEditing(true); setError(''); setLink('');

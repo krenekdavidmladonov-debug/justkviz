@@ -1,5 +1,5 @@
 import { defineConfig } from '@playwright/test';
 export default defineConfig({testDir:'.',testMatch:'complete-editor.spec.mjs',workers:1,timeout:600000,expect:{timeout:20000},reporter:[['line']],
-  outputDir:'../../.local-data/complete-editor/browser',use:{baseURL:'http://127.0.0.1:5198',viewport:{width:1366,height:768},trace:'off',video:'on',screenshot:'off',actionTimeout:20000},
+  outputDir:'../../.local-data/complete-editor/browser',use:{baseURL:'http://127.0.0.1:5198',viewport:{width:1366,height:768},trace:'off',video:'off',screenshot:'off',actionTimeout:20000,launchOptions:process.env.PLAYWRIGHT_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_EXECUTABLE_PATH}:{}},
   webServer:{cwd:process.cwd(),command:'node tools/run-complete-editor-preview.mjs',url:'http://127.0.0.1:5198',reuseExistingServer:false,
     env:{VITE_FIREBASE_API_KEY:'demo-api-key',VITE_FIREBASE_AUTH_DOMAIN:'demo-filmovy-kviz-v2.firebaseapp.com',VITE_FIREBASE_PROJECT_ID:'demo-filmovy-kviz-v2',VITE_FIREBASE_USE_EMULATORS:'true',VITE_FIREBASE_STORAGE_BUCKET:'demo-filmovy-kviz-v2.appspot.com',VITE_FIREBASE_MESSAGING_SENDER_ID:'000000000000',VITE_FIREBASE_APP_ID:'1:000000000000:web:demo',VITE_ENABLE_TEAM_EMAIL:'false'}}});

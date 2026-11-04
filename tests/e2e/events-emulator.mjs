@@ -15,6 +15,8 @@ import {
   getDocFromServer,
   getDocs,
   getFirestore,
+  query,
+  where,
   updateDoc,
 } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
@@ -48,7 +50,7 @@ const eventInput = (title = 'Events foundation E2E') => ({
   teamCapacity: 20,
   peopleCapacity: 120,
   teamSizeMin: 2,
-  teamSizeMax: 6,
+  teamSizeMax: 4,
 });
 
 async function expectFunctionError(action, code, reason) {
@@ -102,9 +104,10 @@ async function run() {
   assert.equal(privateCreated.scoring.unitScale, 2);
   assert.equal(privateCreated.scoring.rankingMode, 'dense');
   assert.equal(privateCreated.scoring.started, false);
-  const publicCreated = (await getDoc(publicRef)).data();
+  await assert.rejects(getDocFromServer(publicRef), /permission-denied/u);
+  const publicCreated = (await adminDb.doc('publicEvents/' + created.eventId).get()).data();
   assert.deepEqual(Object.keys(publicCreated).sort(), [
-    'availability', 'capacity', 'publicLocation', 'registrationPublished', 'registrationStatus', 'registrationWindow',
+    'availability', 'capacity', 'description', 'lifecycleStatus', 'pricing', 'publicLocation', 'registrationPublished', 'registrationStatus', 'registrationWindow',
     'revision', 'startsAt', 'teamSize', 'timeZone', 'title', 'updatedAt', 'venueName',
   ]);
   assert.deepEqual(publicCreated.capacity, { teams: { accepted: 0, maximum: 20 }, people: { accepted: 0, maximum: 120 } });
@@ -120,22 +123,15 @@ async function run() {
     'functions/aborted',
   );
 
-  await expectFunctionError(
-    () => invoke('lockEventQuiz', {
-      eventId: created.eventId, expectedRevision: 2, quizId: 'preflight-blocked-e2e',
-      expectedQuizRevision: 0, acknowledgeWarnings: true,
-    }),
-    'functions/failed-precondition',
-    'QUIZ_BLOCKED',
-  );
-  await expectFunctionError(
-    () => invoke('lockEventQuiz', {
-      eventId: created.eventId, expectedRevision: 2, quizId: 'preflight-warning-e2e',
-      expectedQuizRevision: 0, acknowledgeWarnings: false,
-    }),
-    'functions/failed-precondition',
-    'WARNINGS_REQUIRE_ACKNOWLEDGEMENT',
-  );
+  for (const [quizId, status] of [['preflight-blocked-e2e', 'BLOCKED'], ['preflight-warning-e2e', 'READY_WITH_WARNINGS']]) {
+    const advisoryEvent = await invoke('createEvent', { expectedRevision: 0, event: eventInput('Optional review synthetic') });
+    const advisoryLock = await invoke('lockEventQuiz', { eventId: advisoryEvent.eventId, expectedRevision: 1, quizId, expectedQuizRevision: 0 });
+    assert.equal(advisoryLock.preflight.status, status);
+    assert.equal(advisoryLock.lifecycleStatus, 'ready');
+    const safePublic = (await adminDb.doc('publicEvents/' + advisoryEvent.eventId).get()).data();
+    assert.equal('preflight' in safePublic, false);
+    assert.equal('quizAssignment' in safePublic, false);
+  }
 
   const locked = await invoke('lockEventQuiz', {
     eventId: created.eventId, expectedRevision: 2, quizId: 'preflight-ready-e2e',
@@ -144,6 +140,9 @@ async function run() {
   assert.equal(locked.revision, 3);
   assert.equal(locked.lifecycleStatus, 'ready');
   assert.equal(locked.preflight.status, 'READY');
+  assert.equal((await getDocFromServer(eventRef)).data().registrationPublished, false);
+  assert.equal((await adminDb.doc('publicEvents/' + created.eventId).get()).data().lifecycleStatus, 'ready');
+  await assert.rejects(getDocFromServer(publicRef), /permission-denied/u);
   const firstSnapshotId = locked.snapshotId;
   const firstSnapshotRef = doc(db, 'quizSnapshots', firstSnapshotId);
   const firstSnapshot = (await getDoc(firstSnapshotRef)).data();
@@ -191,8 +190,8 @@ async function run() {
   );
 
   await signOut(auth);
-  assert.equal((await getDoc(publicRef)).exists(), true);
-  assert.equal((await getDocs(collection(db, 'publicEvents'))).docs.some((item) => item.id === created.eventId), true);
+  await assert.rejects(getDocFromServer(publicRef), /permission-denied/u);
+  assert.equal((await getDocs(query(collection(db, 'publicEvents'), where('registrationPublished', '==', true)))).docs.some((item) => item.id === created.eventId), false);
   await assert.rejects(getDoc(eventRef), /permission-denied/u);
   await assert.rejects(getDoc(firstSnapshotRef), /permission-denied/u);
   await assert.rejects(updateDoc(publicRef, { title: 'Forged' }), /permission-denied/u);
@@ -205,14 +204,14 @@ async function run() {
   await signInWithEmailAndPassword(auth, 'admin@example.test', 'LocalQuiz123!');
   const cancelled = await invoke('cancelEvent', { eventId: created.eventId, expectedRevision: 5 });
   assert.equal(cancelled.lifecycleStatus, 'cancelled');
-  assert.equal((await getDoc(publicRef)).data().cancelled, true);
+  assert.equal((await adminDb.doc('publicEvents/' + created.eventId).get()).data().cancelled, true);
   const archived = await invoke('archiveEvent', { eventId: created.eventId, expectedRevision: 6 });
   assert.equal(archived.lifecycleStatus, 'cancelled');
   assert.equal(archived.disposition, 'archived');
 
   globalThis.console.log(JSON.stringify({
     status: 'PASS', adminCrud: true, moderatorReadOnly: true, publicProjectionSanitized: true,
-    directWritesDenied: true, blockerDenied: true, warningAcknowledgementRequired: true,
+    directWritesDenied: true, editorialFindingsAdvisory: true, warningAcknowledgementOptional: true,
     immutableSnapshots: true, supersededSnapshotReadsDenied: true, currentSnapshotReadsAllowed: true,
     relockBeforeScoring: true, staleQuizRevisionDenied: true,
   }, null, 2));

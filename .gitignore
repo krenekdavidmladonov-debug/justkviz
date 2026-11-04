@@ -39,3 +39,4 @@ Thumbs.db
 *serviceAccount*.json
 *.pem
 *.key
+functions/worker/

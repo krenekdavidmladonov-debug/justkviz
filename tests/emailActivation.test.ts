@@ -1,7 +1,7 @@
 /* eslint @typescript-eslint/require-await: off -- SDK mocks perform no network IO. */
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { Timestamp } from 'firebase/firestore';
-import { allowedRegistrationEmailIntent, futurePublicRegistrationEligible, registrationEmailActivation, registrationEmailEnabled, registrationEmailRecipientEligible, registrationEmailSecrets } from '../functions/src/email/runtime';
+import { allowedRegistrationEmailIntent, allowedRegistrationOwnerNotificationIntent, futurePublicRegistrationEligible, registrationEmailActivation, registrationEmailEnabled, registrationEmailRecipientEligible, registrationEmailSecrets, registrationOwnerNotificationActivation } from '../functions/src/email/runtime';
 import { createTokenVault } from '../functions/src/email/token-vault';
 
 const sdk = vi.hoisted(() => ({ firestore: vi.fn(), queue: vi.fn(), enqueue: vi.fn(async () => {}), defineSecret: vi.fn(), defineString: vi.fn() }));
@@ -17,13 +17,166 @@ const intent = (patch: Record<string, unknown> = {}) => ({ eventId: 'event', reg
   createdAt: Timestamp.fromMillis(Date.parse(cutoff)), ...patch });
 const activation = { activatedAtMillis: Date.parse(cutoff), recipient: 'approved@example.test' };
 const envNames = ['GCLOUD_PROJECT', 'GOOGLE_CLOUD_PROJECT', 'FIREBASE_CONFIG', 'FUNCTIONS_EMULATOR', 'FIRESTORE_EMULATOR_HOST', 'FIREBASE_AUTH_EMULATOR_HOST',
-  'REGISTRATION_EMAIL_MODE', 'REGISTRATION_EMAIL_ACTIVATED_AT', 'REGISTRATION_EMAIL_ALLOWED_RECIPIENT', 'REGISTRATION_EMAIL_RECIPIENT_POLICY'];
+  'REGISTRATION_EMAIL_MODE', 'REGISTRATION_EMAIL_ACTIVATED_AT', 'REGISTRATION_EMAIL_ALLOWED_RECIPIENT', 'REGISTRATION_EMAIL_RECIPIENT_POLICY', 'EMAIL_PUBLIC_ORIGIN',
+  'REGISTRATION_OWNER_NOTIFICATION_MODE', 'REGISTRATION_OWNER_NOTIFICATION_RECIPIENT', 'REGISTRATION_OWNER_NOTIFICATION_OWNER_UID', 'REGISTRATION_OWNER_NOTIFICATION_ACTIVATED_AT'];
 function installEnv(values: NodeJS.ProcessEnv) {
   const emulatorNames = [...Object.keys(process.env), ...Object.keys(values)].filter(name => name.endsWith('_EMULATOR_HOST'));
   for (const name of new Set([...envNames, ...emulatorNames])) vi.stubEnv(name, values[name]);
 }
 beforeEach(() => { vi.clearAllMocks(); vi.resetModules(); installEnv({}); sdk.firestore.mockReturnValue({}); sdk.queue.mockReturnValue({ enqueue: sdk.enqueue }); });
 afterEach(() => vi.unstubAllEnvs());
+
+describe('independent owner registration notification activation', () => {
+  const ownerCloud = { ...cloud, REGISTRATION_OWNER_NOTIFICATION_MODE: 'staging', REGISTRATION_OWNER_NOTIFICATION_RECIPIENT: 'owner@example.test',
+    REGISTRATION_OWNER_NOTIFICATION_OWNER_UID: 'synthetic-owner', REGISTRATION_OWNER_NOTIFICATION_ACTIVATED_AT: cutoff };
+  const owner = { recipient: 'owner@example.test', ownerUid: 'synthetic-owner', activatedAtMillis: Date.parse(cutoff) };
+  const ownerIntent = (patch: Record<string, unknown> = {}) => ({ type: 'registration-organizer-notification', recipientPolicy: 'future-public-registration-owner',
+    provenance: 'public-registration-create', ownerUid: owner.ownerUid, recipient: owner.recipient,
+    createdAt: Timestamp.fromMillis(owner.activatedAtMillis), registrationCreatedAt: Timestamp.fromMillis(owner.activatedAtMillis), ...patch });
+  test('defaults off independently of participant activation and preserves the participant allowlist', () => {
+    expect(registrationOwnerNotificationActivation(cloud)).toBeNull();
+    expect(registrationOwnerNotificationActivation({ ...ownerCloud, REGISTRATION_OWNER_NOTIFICATION_MODE: undefined })).toBeNull();
+    expect(registrationOwnerNotificationActivation({ ...ownerCloud, REGISTRATION_OWNER_NOTIFICATION_MODE: 'off' })).toBeNull();
+    expect(registrationOwnerNotificationActivation(ownerCloud)).toEqual(owner);
+    expect(registrationEmailActivation(ownerCloud)).toEqual(activation);
+    expect(registrationEmailRecipientEligible(owner.recipient, ownerCloud)).toBe(false);
+    expect(allowedRegistrationEmailIntent(ownerIntent(), activation)).toBe(false);
+    expect(allowedRegistrationEmailIntent(intent(), activation)).toBe(true);
+  });
+  test('malformed, incomplete, foreign and contradictory configuration disables only the owner notification', () => {
+    for (const patch of [{ REGISTRATION_OWNER_NOTIFICATION_MODE: 'true' }, { REGISTRATION_OWNER_NOTIFICATION_RECIPIENT: undefined },
+      { REGISTRATION_OWNER_NOTIFICATION_RECIPIENT: 'a@example.test,b@example.test' }, { REGISTRATION_OWNER_NOTIFICATION_RECIPIENT: 'owner@example.test\nBcc: hidden@example.test' },
+      { REGISTRATION_OWNER_NOTIFICATION_OWNER_UID: undefined }, { REGISTRATION_OWNER_NOTIFICATION_OWNER_UID: '../owner' },
+      { REGISTRATION_OWNER_NOTIFICATION_OWNER_UID: 'x'.repeat(129) }, { REGISTRATION_OWNER_NOTIFICATION_ACTIVATED_AT: undefined },
+      { REGISTRATION_OWNER_NOTIFICATION_ACTIVATED_AT: '2031-02-30T00:00:00.000Z' }, { REGISTRATION_OWNER_NOTIFICATION_ACTIVATED_AT: '2031-10-13T10:00:00Z' },
+      { GCLOUD_PROJECT: 'foreign-project' }, { FIREBASE_CONFIG: '{' }, { GOOGLE_CLOUD_PROJECT: 'foreign-project' },
+      { REGISTRATION_EMAIL_MODE: 'off' }, { FIRESTORE_EMULATOR_HOST: 'localhost:8080' }, { FUNCTIONS_EMULATOR: 'true' }]) {
+      expect(registrationOwnerNotificationActivation({ ...ownerCloud, ...patch })).toBeNull();
+    }
+  });
+  test('emulator opt-in requires a demo project and bounded loopback; ordinary emulators remain off', () => {
+    const local = { ...ownerCloud, GCLOUD_PROJECT: 'demo-owner-notifications', REGISTRATION_EMAIL_MODE: undefined,
+      REGISTRATION_OWNER_NOTIFICATION_MODE: 'emulator', FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080' };
+    expect(registrationOwnerNotificationActivation(local)).toEqual(owner);
+    expect(registrationOwnerNotificationActivation({ GCLOUD_PROJECT: local.GCLOUD_PROJECT, FIRESTORE_EMULATOR_HOST: local.FIRESTORE_EMULATOR_HOST })).toBeNull();
+    for (const patch of [{ GCLOUD_PROJECT: cloud.GCLOUD_PROJECT }, { FIRESTORE_EMULATOR_HOST: undefined },
+      { FIRESTORE_EMULATOR_HOST: 'remote.example.test:8080' }, { FIRESTORE_EMULATOR_HOST: 'localhost:99999' },
+      { GOOGLE_CLOUD_PROJECT: cloud.GCLOUD_PROJECT }, { FIREBASE_CONFIG: JSON.stringify({ projectId: cloud.GCLOUD_PROJECT }) }]) {
+      expect(registrationOwnerNotificationActivation({ ...local, ...patch })).toBeNull();
+    }
+  });
+  test('admits only exact new-create owner provenance and both matching canonical dates', () => {
+    expect(allowedRegistrationOwnerNotificationIntent(ownerIntent(), owner)).toBe(true);
+    for (const patch of [{ type: 'registration-confirmed' }, { type: 'registration-updated' }, { type: 'registration-cancelled' }, { type: 'event-team-message' },
+      { recipient: 'attacker@example.test' }, { ownerUid: 'another-owner' }, { ownerUid: undefined }, { provenance: undefined }, { provenance: 'manual' },
+      { recipientPolicy: undefined }, { recipientPolicy: 'future-public-registration' }, { createdAt: undefined }, { registrationCreatedAt: undefined },
+      { createdAt: Timestamp.fromMillis(owner.activatedAtMillis - 1), registrationCreatedAt: Timestamp.fromMillis(owner.activatedAtMillis - 1) },
+      { registrationCreatedAt: Timestamp.fromMillis(owner.activatedAtMillis - 1) }, { registrationCreatedAt: Timestamp.fromMillis(owner.activatedAtMillis + 1) },
+      { createdAt: { toMillis: () => NaN } }, { registrationCreatedAt: '2031-10-13T10:00:00.000Z' }]) {
+      expect(allowedRegistrationOwnerNotificationIntent(ownerIntent(patch), owner)).toBe(false);
+    }
+    expect(allowedRegistrationOwnerNotificationIntent(ownerIntent(), { ...owner, activatedAtMillis: owner.activatedAtMillis + 1 })).toBe(false);
+  });
+  test('current membership, configured UID, concrete permissions and event scope grant delivery authority', async () => {
+    const { registrationOwnerNotificationAuthorized: authorized } = await import('../functions/src/email/organizer');
+    const member = { uid: owner.ownerUid, email: owner.recipient, role: 'owner', status: 'active', version: 1,
+      permissions: ['event.read', 'event.contacts'], events: { mode: 'selected', ids: ['event'] } };
+    expect(authorized(member, owner, 'event', { createdBy: 'another-user' })).toBe(true);
+    expect(authorized({ ...member, role: 'viewer' }, owner, 'event', {})).toBe(true);
+    expect(authorized({ ...member, email: 'historical@example.test' }, owner, 'event', {})).toBe(true);
+    for (const patch of [{ uid: 'foreign' }, { status: 'suspended' },
+      { permissions: [] }, { permissions: ['event.read'] }, { permissions: ['event.contacts'] },
+      { events: { mode: 'none', ids: [] } }, { events: { mode: 'selected', ids: ['other'] } },
+      { events: { mode: 'own', ids: [] } }, { events: undefined }, { permissions: undefined }]) {
+      expect(authorized({ ...member, ...patch }, owner, 'event', { createdBy: 'another-user' })).toBe(false);
+    }
+    for (const missing of [undefined, null, [], 'owner']) expect(authorized(missing, owner, 'event', {})).toBe(false);
+    expect(authorized({ ...member, events: { mode: 'own', ids: [] } }, owner, 'event', { createdBy: owner.ownerUid })).toBe(true);
+  });
+  test('enqueue creates one deterministic private intent without participant summary, contact or capability data', async () => {
+    installEnv(ownerCloud);
+    const { enqueueRegistrationOwnerNotification, ownerNotificationIntentId } = await import('../functions/src/email/organizer');
+    const { Timestamp: AdminTimestamp } = await import('../functions/node_modules/firebase-admin/lib/firestore/index.js');
+    const now = AdminTimestamp.fromMillis(owner.activatedAtMillis), create = vi.fn(), update = vi.fn();
+    const intentRef = { id: ownerNotificationIntentId('registration') }, doc = vi.fn(() => intentRef);
+    const eventRef = { id: 'event', collection: () => ({ doc }) } as unknown as Parameters<typeof enqueueRegistrationOwnerNotification>[1];
+    const registrationRef = { id: 'registration' } as Parameters<typeof enqueueRegistrationOwnerNotification>[2];
+    const tx = { create, update } as unknown as Parameters<typeof enqueueRegistrationOwnerNotification>[0];
+    const event = { title: 'Synthetic', startsAt: now, timeZone: 'Europe/Prague', venue: { name: 'Private venue' }, privateAnswer: 'FORBIDDEN' };
+    const registration = { createdAt: now, status: 'accepted', managementTokenHash: 'a'.repeat(64), teamName: 'Team', memberCount: 2,
+      contactEmail: 'participant@example.test', contactPhone: 'FORBIDDEN', managementToken: 'FORBIDDEN', recipient: 'attacker@example.test', ownerUid: 'attacker' };
+    expect(enqueueRegistrationOwnerNotification(tx, eventRef, registrationRef, event, registration, now)).toBe(true);
+    expect(doc).toHaveBeenCalledExactlyOnceWith(ownerNotificationIntentId('registration'));
+    expect(create).toHaveBeenCalledOnce(); expect(update).not.toHaveBeenCalled();
+    const queued = create.mock.lastCall?.[1] as Record<string, unknown>;
+    expect(queued).toMatchObject({ type: 'registration-organizer-notification', recipient: owner.recipient, ownerUid: owner.ownerUid,
+      recipientPolicy: 'future-public-registration-owner', provenance: 'public-registration-create', status: 'pending', attempts: 0 });
+    expect(queued.content).toEqual({ eventTitle: 'Synthetic', startsAtMillis: owner.activatedAtMillis, timeZone: 'Europe/Prague', teamName: 'Team', memberCount: 2 });
+    expect(JSON.stringify(queued)).not.toMatch(/participant@example|attacker|FORBIDDEN|contactEmail|managementToken|emailDelivery/u);
+    create.mockClear(); doc.mockClear();
+    for (const patch of [{ source: 'manual' }, { status: 'cancelled' }, { status: 'pending' }, { managementTokenHash: null },
+      { managementTokenHash: 'client' }, { createdAt: undefined }, { createdAt: AdminTimestamp.fromMillis(owner.activatedAtMillis - 1) },
+      { createdAt: AdminTimestamp.fromMillis(owner.activatedAtMillis + 1) }]) {
+      expect(enqueueRegistrationOwnerNotification(tx, eventRef, registrationRef, event, { ...registration, ...patch }, now)).toBe(false);
+    }
+    installEnv(cloud);
+    expect(enqueueRegistrationOwnerNotification(tx, eventRef, registrationRef, event, registration, now)).toBe(false);
+    expect(create).not.toHaveBeenCalled(); expect(update).not.toHaveBeenCalled(); expect(doc).not.toHaveBeenCalled();
+  });
+  test('revocation between lease claim and physical send blocks delivery without changing participant status', async () => {
+    installEnv(ownerCloud);
+    const { deliverRegistrationEmail } = await import('../functions/src/email/delivery');
+    const { Timestamp: AdminTimestamp } = await import('../functions/node_modules/firebase-admin/lib/firestore/index.js');
+    const createdAt = AdminTimestamp.fromMillis(owner.activatedAtMillis), send = vi.fn(async () => {}), vault = vi.fn();
+    const active = { uid: owner.ownerUid, status: 'active', permissions: ['event.read', 'event.contacts'], events: { mode: 'all', ids: [] } };
+    for (const revoked of [{ ...active, status: 'suspended' }, { ...active, permissions: ['event.read'] },
+      { ...active, events: { mode: 'selected', ids: ['different-event'] } }]) {
+      const event = { lifecycleStatus: 'scheduled', capabilityVersion: 0 };
+      let state: Record<string, unknown> = { ...ownerIntent(), eventId: 'event', registrationId: 'registration', createdAt, registrationCreatedAt: createdAt,
+        capabilityVersion: 0, content: { eventTitle: 'Synthetic', startsAtMillis: owner.activatedAtMillis, timeZone: 'Europe/Prague', teamName: 'Synthetic', memberCount: 2 },
+        status: 'pending', attempts: 0, leaseUntil: null, lastError: null };
+      const registration = { eventId: 'event', status: 'accepted', createdAt, managementTokenHash: 'a'.repeat(64), emailDelivery: { type: 'registration-confirmed', status: 'sent' } };
+      const registrationRef = {}, memberRef = { get: async () => ({ data: () => revoked }) };
+      const eventRef = { id: 'event', get: async () => ({ data: () => event }), collection: () => ({ doc: () => registrationRef }) };
+      const ref = { id: 'owner_registration', path: 'events/event/emailIntents/owner_registration', parent: { parent: eventRef } };
+      const update = vi.fn((selected: unknown, patch: Record<string, unknown>) => { expect(selected).toBe(ref); state = { ...state, ...patch }; });
+      const get = async (selected: unknown) => ({ exists: true, data: () => selected === eventRef ? event : selected === ref ? state : selected === memberRef ? active : registration });
+      const db = { doc: () => memberRef, runTransaction: async (callback: (tx: { get: typeof get; update: typeof update }) => Promise<unknown>) => callback({ get, update }) };
+      expect(await deliverRegistrationEmail(db as unknown as Parameters<typeof deliverRegistrationEmail>[0], ref as unknown as Parameters<typeof deliverRegistrationEmail>[1],
+        { send }, vault, 'https://justkviz.cz', () => owner.activatedAtMillis)).toBe('failed');
+      expect(state).toMatchObject({ status: 'failed', lastError: 'configuration-invalid', attempts: 1 });
+      expect(registration.emailDelivery).toEqual({ type: 'registration-confirmed', status: 'sent' });
+    }
+    expect(send).not.toHaveBeenCalled(); expect(vault).not.toHaveBeenCalled();
+  });
+});
+
+describe('exact V2 registration email origins', () => {
+  test('accepts the custom domain and retained Firebase origins only in the activated V2 runtime', async () => {
+    installEnv(cloud);
+    const { cloudEmailOrigin } = await import('../functions/src/email/config');
+    for (const origin of ['https://justkviz.cz', 'https://justkviz-v2.web.app', 'https://filmovy-kviz-v2-staging.web.app']) {
+      vi.stubEnv('EMAIL_PUBLIC_ORIGIN', origin);
+      expect(cloudEmailOrigin()).toBe(origin);
+    }
+    installEnv({ EMAIL_PUBLIC_ORIGIN: 'https://justkviz.cz' });
+    expect(cloudEmailOrigin).toThrow('configuration-invalid');
+    installEnv({ ...cloud, GCLOUD_PROJECT: 'foreign-project', EMAIL_PUBLIC_ORIGIN: 'https://justkviz.cz' });
+    expect(cloudEmailOrigin).toThrow('configuration-invalid');
+  });
+  test('rejects lookalikes, subdomains, credentials and non-origin URL components without normalization', async () => {
+    installEnv(cloud);
+    const { cloudEmailOrigin } = await import('../functions/src/email/config');
+    for (const origin of [undefined, '', 'http://justkviz.cz', 'https://www.justkviz.cz', 'https://evil.justkviz.cz',
+      'https://justkviz.cz.evil.example', 'https://justkviz.cz@evil.example', 'https://evil.example@justkviz.cz',
+      'https://justkviz.cz/', 'https://justkviz.cz:443', 'https://justkviz.cz:8443', 'https://justkviz.cz/path',
+      'https://justkviz.cz?redirect=evil', 'https://justkviz.cz#fragment', 'https://justkviz.cz.', 'https://JUSTKVIZ.CZ',
+      ' https://justkviz.cz', 'https://justkviz.cz\n']) {
+      vi.stubEnv('EMAIL_PUBLIC_ORIGIN', origin);
+      expect(cloudEmailOrigin).toThrow('configuration-invalid');
+    }
+  });
+});
 
 describe('registration-only explicit server activation', () => {
   test('defaults off even with secrets/config values present; no keyring binding', () => {

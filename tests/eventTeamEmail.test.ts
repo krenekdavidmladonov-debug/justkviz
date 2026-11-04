@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { deliverySummary, eventTeamMessage, messageCopy, messageInput, recipientSnapshot, teamMessageEventTitle, teamMessageHash } from '../functions/src/email/team-message';
 const row = (id: string, contactEmail: unknown = 'same@example.test', status = 'accepted') => ({ id, data: { eventId: 'event', contactEmail, status } });
 describe('event team email boundary', () => {
+  it('uses the configured public logo and keeps a plain text brand fallback', () => {
+    const email = eventTeamMessage({ subject: 'Začínáme', message: 'Od 18:00', eventTitle: 'Večer' }, 'https://justkviz-v2.web.app');
+    expect(email.html).toContain('src="https://justkviz-v2.web.app/brand/justkviz-email.png"');
+    expect(email.html).toContain('alt="JustKvíz"');
+    expect(email.html).not.toContain('registration/manage');
+    expect(email.text).toContain('JustKvíz');
+  });
   it('normalizes Czech plain text and escapes HTML without a management CTA', () => {
     const copy = messageCopy({ subject: '  Zítra začínáme ', message: ' Čaj & <script>&lt;&gt;\r\nOd 18:00 ' });
     expect(copy.subject).toBe('Zítra začínáme'); expect(copy.message).toContain('\nOd 18:00');

@@ -12,6 +12,10 @@ interface YouTubePlayerInstance {
   pauseVideo(): void;
   seekTo(seconds: number, allowSeekAhead: boolean): void;
   getCurrentTime(): number;
+  setVolume(volume: number): void;
+  unMute(): void;
+  addEventListener?(event: string, listener: string): void;
+  removeEventListener?(event: string, listener: string): void;
   destroy(): void;
 }
 
@@ -46,6 +50,39 @@ declare global {
 }
 
 let apiPromise: Promise<YouTubeNamespace> | undefined;
+let listenerSequence = 0;
+type PlaybackEvent = 'onStateChange' | 'onError' | 'onAutoplayBlocked';
+type PlaybackListener = (event?: { data: number }) => void;
+interface YouTubeResource {
+  readonly videoId: string;
+  readonly player: YouTubePlayerInstance;
+  readonly namespace: YouTubeNamespace;
+  ready: boolean;
+  configured: boolean;
+  endSeconds: number | undefined;
+  readonly listeners: Partial<Record<PlaybackEvent, PlaybackListener>>;
+  activate?: (() => void) | undefined;
+  deactivate?: (() => void) | undefined;
+}
+function listen(resource: YouTubeResource, event: PlaybackEvent, callback: PlaybackListener): () => void {
+  const { player } = resource;
+  // Some live SDK instances lack dynamic removal. Constructor callbacks remain
+  // available without registering callbacks that cannot later be detached.
+  const remove = typeof player.removeEventListener === 'function' ? player.removeEventListener.bind(player) : undefined;
+  if (typeof player.addEventListener !== 'function' || typeof remove !== 'function') {
+    resource.listeners[event] = callback;
+    return () => { if (resource.listeners[event] === callback) delete resource.listeners[event]; };
+  }
+  const name = '__filmovyKvizYouTubeListener' + ++listenerSequence;
+  const target = window as unknown as Record<string, unknown>;
+  target[name] = callback;
+  player.addEventListener(event, name);
+  return () => {
+    try { remove(event, name); }
+    catch { /* Epoch guards already invalidate callbacks; cleanup must still release the iframe. */ }
+    finally { delete target[name]; }
+  };
+}
 
 function mediaDebug(delta: 1 | -1): void {
   const current = window.__FILMOVY_KVIZ_MEDIA_DEBUG__ ?? {
@@ -101,7 +138,9 @@ export function YouTubePlayer({
   onPlaybackState,
   currentTimeRequest,
   onCurrentTime,
+  onPlayRequest,
   allowManualAutoplay = false,
+  fadeInSeconds,
 }: {
   readonly source: string;
   readonly command: MediaPlaybackCommand;
@@ -114,7 +153,11 @@ export function YouTubePlayer({
   readonly onPlaybackState?: (generation: number, state: Extract<MediaPlaybackState, 'ready' | 'playing'>) => void;
   readonly currentTimeRequest?: number;
   readonly onCurrentTime?: (seconds: number) => void;
+  /** Editor-only: turn an iframe play gesture into a fresh bounded playback command. */
+  readonly onPlayRequest?: () => void;
   readonly allowManualAutoplay?: boolean;
+  /** Opt-in volume ramp; counted only while the official player reports PLAYING. */
+  readonly fadeInSeconds?: number;
 }) {
   const reactId = useId();
   const hostRef = useRef<HTMLDivElement>(null);
@@ -125,15 +168,25 @@ export function YouTubePlayer({
   const onErrorRef = useRef(onError);
   const onPlaybackStateRef = useRef(onPlaybackState);
   const onCurrentTimeRef = useRef(onCurrentTime);
+  const onPlayRequestRef = useRef(onPlayRequest);
   const [machine, dispatch] = useReducer(reduceMediaMachine, initialMediaMachineState);
   const [visibleError, setVisibleError] = useState<string>();
   const [blockedEpoch, setBlockedEpoch] = useState<number>();
+  const [resource, setResource] = useState<YouTubeResource>();
+  const [attempt, setAttempt] = useState(0);
+  const failedSetup = useRef(false);
+  const generationRef = useRef(generation);
   const videoId = youtubeVideoId(source);
 
   useEffect(() => { onFinishedRef.current = onFinished; }, [onFinished]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
   useEffect(() => { onPlaybackStateRef.current = onPlaybackState; }, [onPlaybackState]);
   useEffect(() => { onCurrentTimeRef.current = onCurrentTime; }, [onCurrentTime]);
+  useEffect(() => { onPlayRequestRef.current = onPlayRequest; }, [onPlayRequest]);
+  useEffect(() => { generationRef.current = generation; }, [generation]);
+  useEffect(() => {
+    if (failedSetup.current && (command === 'play' || command === 'replay')) { failedSetup.current = false; setAttempt(value => value + 1); }
+  }, [command, generation]);
   useEffect(() => {
     if (currentTimeRequest === undefined || currentTimeRequest <= 0 || playerRef.current === undefined) return;
     try {
@@ -145,116 +198,154 @@ export function YouTubePlayer({
   }, [currentTimeRequest]);
 
   useEffect(() => {
-    const epoch = epochSequenceRef.current + 1;
-    epochSequenceRef.current = epoch;
-    activeEpochRef.current = epoch;
-    let cancelled = false;
-    let mountedPlayer: YouTubePlayerInstance | undefined;
-    const active = () => !cancelled && activeEpochRef.current === epoch;
-    setVisibleError(undefined);
-    setBlockedEpoch(undefined);
+    let cancelled = false, ready = false, mounted: YouTubeResource | undefined;
+    failedSetup.current = false;
+    setResource(undefined);
     hostRef.current?.replaceChildren();
-    if (videoId === undefined || hostRef.current === null) {
-      const message = 'Zdroj není podporovaný YouTube odkaz ani video ID.';
-      dispatch({ type: 'error', generation, message });
-      setVisibleError(message);
-      onErrorRef.current?.(generation, message);
-      return () => { cancelled = true; if (activeEpochRef.current === epoch) activeEpochRef.current = undefined; };
-    }
-    if (command === 'error') {
-      const message = 'Médium je ve stavu chyby. Použijte REPLAY pro nový pokus.';
-      dispatch({ type: 'error', generation, message });
-      setVisibleError(message);
-      return () => { cancelled = true; if (activeEpochRef.current === epoch) activeEpochRef.current = undefined; };
-    }
-    if (command === 'play' || command === 'replay') dispatch({ type: 'play', generation });
-    else if (command === 'stop') dispatch({ type: 'stop', generation });
-    else if (command === 'finished') dispatch({ type: 'finished', generation });
-    else dispatch({ type: 'reset', generation });
-    void loadYouTubeApi().then((YT) => {
-      if (!active() || hostRef.current === null) return;
+    if (videoId === undefined || hostRef.current === null) return;
+    void loadYouTubeApi().then(namespace => {
+      if (cancelled || hostRef.current === null) return;
       const mountPoint = document.createElement('div');
       hostRef.current.append(mountPoint);
-      const player = new YT.Player(mountPoint, {
+      const player = new namespace.Player(mountPoint, {
         videoId,
         playerVars: { controls: 1, rel: 0, playsinline: 1, origin: window.location.origin },
         events: {
           onReady: () => {
-            if (!active()) return;
-            setVisibleError(undefined);
-            if (command === 'play' || command === 'replay') {
-              dispatch({ type: 'ready', generation });
-              onPlaybackStateRef.current?.(generation, 'ready');
-              player.loadVideoById({
-                videoId,
-                startSeconds,
-                ...(endSeconds === undefined ? {} : { endSeconds }),
-              });
-            } else {
-              player.cueVideoById({ videoId, startSeconds, ...(endSeconds === undefined ? {} : { endSeconds }) });
-              if (command === 'stop') dispatch({ type: 'stop', generation });
-              else if (command === 'finished') dispatch({ type: 'finished', generation });
-              else dispatch({ type: 'ready', generation });
-            }
+            if (cancelled) return;
+            ready = true;
+            if (mounted) { mounted.ready = true; mounted.activate?.(); }
           },
-          onStateChange: (event) => {
-            if (!active()) return;
-            if (event.data === YT.PlayerState.PLAYING) {
-              setVisibleError(undefined);
-              setBlockedEpoch(undefined);
-              dispatch({ type: 'playing', generation });
-              onPlaybackStateRef.current?.(generation, 'playing');
-            }
-            if (event.data === YT.PlayerState.ENDED) {
-              dispatch({ type: 'finished', generation });
-              onFinishedRef.current?.(generation);
-            }
-          },
-          onError: () => {
-            if (!active()) return;
-            setBlockedEpoch(undefined);
-            const message = 'YouTube médium se nepodařilo přehrát.';
-            dispatch({ type: 'error', generation, message });
-            setVisibleError(message);
-            onErrorRef.current?.(generation, message);
-          },
-          onAutoplayBlocked: () => {
-            if (!active()) return;
-            const message = 'Prohlížeč zablokoval automatické přehrání. Spusťte video ručně na tomto zařízení.';
-            if (!allowManualAutoplay) {
-              dispatch({ type: 'error', generation, message });
-              setVisibleError(message);
-              onErrorRef.current?.(generation, message);
-              return;
-            }
-            dispatch({ type: 'ready', generation });
-            onPlaybackStateRef.current?.(generation, 'ready');
-            setBlockedEpoch(epoch);
-            setVisibleError(message);
-          },
+          onStateChange: event => { if (!cancelled) mounted?.listeners.onStateChange?.(event); },
+          onError: () => { if (!cancelled) mounted?.listeners.onError?.(); },
+          onAutoplayBlocked: () => { if (!cancelled) mounted?.listeners.onAutoplayBlocked?.(); },
         },
       });
-      mountedPlayer = player;
+      mounted = { player, namespace, videoId, ready, configured: false, endSeconds: undefined, listeners: {} };
       playerRef.current = player;
       mediaDebug(1);
+      setResource(mounted);
     }).catch(() => {
-      if (!active()) return;
+      if (cancelled) return;
+      failedSetup.current = true;
       const message = 'YouTube přehrávač se nepodařilo načíst.';
-      dispatch({ type: 'error', generation, message });
-      setVisibleError(message);
-      onErrorRef.current?.(generation, message);
+      dispatch({ type: 'error', generation: generationRef.current, message });
+      setVisibleError(message); onErrorRef.current?.(generationRef.current, message);
     });
     return () => {
       cancelled = true;
-      if (activeEpochRef.current === epoch) activeEpochRef.current = undefined;
-      if (mountedPlayer !== undefined) {
-        mountedPlayer.destroy();
-        if (playerRef.current === mountedPlayer) playerRef.current = undefined;
-        mediaDebug(-1);
+      if (mounted) {
+        mounted.deactivate?.();
+        mounted.activate = undefined; mounted.player.destroy(); mediaDebug(-1);
+        if (playerRef.current === mounted.player) playerRef.current = undefined;
       }
       hostRef.current?.replaceChildren();
     };
-  }, [allowManualAutoplay, command, endSeconds, generation, startSeconds, videoId]);
+  }, [videoId, attempt]);
+
+  useEffect(() => {
+    const epoch = ++epochSequenceRef.current;
+    activeEpochRef.current = epoch;
+    let cancelled = false, terminal = false, started = false, applied = false;
+    const active = () => !cancelled && activeEpochRef.current === epoch;
+    const requestedPlay = command === 'play' || command === 'replay';
+    setVisibleError(undefined); setBlockedEpoch(undefined);
+    if (videoId === undefined || command === 'error') {
+      const message = videoId === undefined ? 'Zdroj není podporovaný YouTube odkaz ani video ID.' : 'Médium je ve stavu chyby. Použijte REPLAY pro nový pokus.';
+      dispatch({ type: 'error', generation, message }); setVisibleError(message);
+      if (videoId === undefined) onErrorRef.current?.(generation, message);
+      if (resource?.ready && resource.videoId === videoId) resource.player.pauseVideo();
+      return () => { cancelled = true; };
+    }
+    dispatch({ type: requestedPlay ? 'play' : command === 'stop' ? 'stop' : command === 'finished' ? 'finished' : 'reset', generation });
+    if (!resource || resource.videoId !== videoId) return () => { cancelled = true; };
+    const { player, namespace } = resource;
+    const fadeDuration = fadeInSeconds !== undefined && Number.isFinite(fadeInSeconds) && fadeInSeconds > 0 ? fadeInSeconds * 1000 : 0;
+    let fadeTimer: ReturnType<typeof setInterval> | undefined, fadeStartedAt: number | undefined, fadeElapsed = 0;
+    const stopFade = (recordElapsed = false) => {
+      if (recordElapsed && fadeStartedAt !== undefined) fadeElapsed = Math.min(fadeDuration, fadeElapsed + performance.now() - fadeStartedAt);
+      fadeStartedAt = undefined;
+      clearInterval(fadeTimer); fadeTimer = undefined;
+    };
+    const fail = (message: string) => {
+      if (!active() || terminal) return;
+      stopFade();
+      terminal = true; setBlockedEpoch(undefined); if (resource.ready) player.pauseVideo();
+      dispatch({ type: 'error', generation, message }); setVisibleError(message); onErrorRef.current?.(generation, message);
+    };
+    const startFade = () => {
+      if (!fadeDuration || fadeElapsed >= fadeDuration || fadeTimer !== undefined) return;
+      fadeStartedAt = performance.now();
+      const tick = () => {
+        if (!active() || terminal || fadeStartedAt === undefined) { stopFade(); return; }
+        const elapsed = Math.min(fadeDuration, fadeElapsed + performance.now() - fadeStartedAt);
+        try { player.setVolume(Math.round(100 * elapsed / fadeDuration)); }
+        catch { fail('Hlasitost YouTube hudby se nepodařilo nastavit.'); return; }
+        if (elapsed >= fadeDuration) stopFade(true);
+      };
+      tick();
+      if (active() && !terminal && fadeStartedAt !== undefined) fadeTimer = setInterval(tick, 50);
+    };
+    const removeState = listen(resource, 'onStateChange', event => {
+      if (!active()) return;
+      if (event?.data === namespace.PlayerState.PLAYING && (!requestedPlay || terminal)) {
+        player.pauseVideo();
+        onPlayRequestRef.current?.();
+        return;
+      }
+      if (terminal) return;
+      if (event?.data === namespace.PlayerState.PLAYING) {
+        started = true; setVisibleError(undefined); setBlockedEpoch(undefined);
+        startFade();
+        if (terminal) return;
+        dispatch({ type: 'playing', generation }); onPlaybackStateRef.current?.(generation, 'playing');
+      } else stopFade(true);
+      if (event?.data === namespace.PlayerState.ENDED && requestedPlay && started) {
+        terminal = true; dispatch({ type: 'finished', generation }); onFinishedRef.current?.(generation);
+      }
+    });
+    const removeError = listen(resource, 'onError', () => fail('YouTube médium se nepodařilo přehrát.'));
+    const removeBlocked = listen(resource, 'onAutoplayBlocked', () => {
+      if (!active() || terminal || !requestedPlay) return;
+      stopFade(true);
+      const message = 'Prohlížeč zablokoval automatické přehrání. Spusťte video ručně na tomto zařízení.';
+      if (!allowManualAutoplay) { fail(message); return; }
+      dispatch({ type: 'ready', generation }); onPlaybackStateRef.current?.(generation, 'ready');
+      setBlockedEpoch(epoch); setVisibleError(message);
+    });
+    const prepare = () => {
+      if (!active() || terminal || applied) return;
+      applied = true;
+      if (command === 'stop' || command === 'finished') { player.pauseVideo(); return; }
+      const options = { videoId, startSeconds, ...(endSeconds === undefined ? {} : { endSeconds }) };
+      if (requestedPlay) {
+        if (fadeDuration) {
+          try { player.setVolume(0); player.unMute(); }
+          catch { fail('Hlasitost YouTube hudby se nepodařilo nastavit.'); return; }
+        }
+        dispatch({ type: 'ready', generation }); onPlaybackStateRef.current?.(generation, 'ready');
+        // YouTube drops cue/load endSeconds after seekTo. Bounded clips must be loaded with their end again.
+        if (resource.configured && resource.endSeconds === undefined && endSeconds === undefined) { player.seekTo(startSeconds, true); player.playVideo(); }
+        else player.loadVideoById(options);
+      } else {
+        if (resource.configured && resource.endSeconds === undefined && endSeconds === undefined) { player.pauseVideo(); player.seekTo(startSeconds, true); }
+        else player.cueVideoById(options);
+        dispatch({ type: 'ready', generation });
+      }
+      resource.configured = true; resource.endSeconds = endSeconds;
+    };
+    resource.activate = prepare;
+    if (resource.ready) prepare();
+    const deactivate = () => {
+      if (cancelled) return;
+      stopFade();
+      cancelled = true; removeState(); removeError(); removeBlocked();
+      if (resource.activate === prepare) resource.activate = undefined;
+      if (activeEpochRef.current === epoch) activeEpochRef.current = undefined;
+    };
+    resource.deactivate = deactivate;
+    return deactivate;
+  }, [allowManualAutoplay, command, endSeconds, fadeInSeconds, generation, resource, startSeconds, videoId]);
 
   return (
     <div className={className ?? 'youtube-player-shell'} data-media-lifecycle={machine.lifecycle} data-player-id={reactId}>

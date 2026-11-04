@@ -59,7 +59,11 @@ export function AdminEventsPage() {
             <article className="event-card" key={event.id}><Link className="event-card-main" to={`/admin/events/${event.id}`}>
               <div><span className={`quiz-status status-${event.lifecycleStatus}`}>{lifecycleLabels[event.lifecycleStatus]}</span><h2>{event.title}</h2><p>{event.venue.name}</p></div>
               <div className="event-card-meta"><strong>{formatDate(event.startsAt)}</strong><span>{event.acceptedTeams} týmů · {event.quizAssignment?.quizTitle ?? 'Kvíz nepřiřazen'}</span>{eventDisposition(event) === 'deleting' && <strong>Mazání probíhá</strong>}</div>
-            </Link><EventActions event={event} onChanged={async message => { await load(); setNotice(message); }} /></article>
+            </Link><EventActions event={event} onChanged={(message, deleted, updated) => {
+              setEvents(current => deleted ? current.filter(item => item.id !== event.id) : current.map(item => item.id === event.id && updated ? updated : item));
+              setPage(0);
+              setNotice(message);
+            }} /></article>
           ))}
         </div>
       )}

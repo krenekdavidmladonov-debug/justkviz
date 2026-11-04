@@ -1,5 +1,6 @@
 import { eventDisposition, hasPermission, normalizeSlideDesign, normalizeResultTemplates, normalizePrintTemplate } from '@filmovy-kviz/quiz-domain';
 import { assertEventReadable } from '../events/guards.js';
+import { storedEventPricing } from '../events/pricing.js';
 import { deletionInventory } from '../events/deletion.js';
 import { FieldPath, getFirestore, Timestamp, type DocumentSnapshot, type Query, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
@@ -7,6 +8,9 @@ import { mapEditorQuiz, quizAssetReference, type Membership } from '@filmovy-kvi
 import { slideView } from './slide-view.js';
 export { slideView } from './slide-view.js';
 import { authorize, freshIdentity, type AuthIdentity, type Resource } from './authorization.js';
+import { quizDisposition, quizTrashRevision } from '../quizzes/guards.js';
+import { loadSnapshotClipAssets } from '../media/snapshot-clip-store.js';
+import { resolveSnapshotClip } from '../media/snapshot-clips.js';
 
 const db = () => getFirestore();
 export function pick(data: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
@@ -27,11 +31,11 @@ function stored(doc: DocumentSnapshot) {
   if (!data) throw new HttpsError('not-found', 'Obsah není dostupný.');
   return data;
 }
-const quizFields = ['title', 'description', 'status', 'revision', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'roundCount', 'questionCount', 'slideCount'];
+const quizFields = ['title', 'description', 'status', 'revision', 'disposition', 'trashedAt', 'trashedBy', 'createdAt', 'updatedAt', 'createdBy', 'updatedBy', 'roundCount', 'questionCount', 'slideCount'];
 const roundFields = ['title', 'type', 'position', 'questionCount', 'slideCount'];
 const eventFields = ['description', 'disposition', 'previousDisposition', 'trashedAt', 'archivedAt', 'title', 'startsAt', 'timeZone', 'teamCapacity', 'peopleCapacity', 'teamSizeMin', 'teamSizeMax', 'acceptedTeams', 'acceptedPeople', 'registrationPublished', 'registrationOpensAt', 'registrationClosesAt', 'registrationStatus', 'lifecycleStatus', 'revision', 'liveSessionId', 'createdBy'];
 function eventView(data: Record<string, unknown>, member: Membership) {
-  return { ...pick(data, eventFields), cancellation: data.cancellation ? pick(data.cancellation as Record<string, unknown>, ['at', 'by', 'publicMessage', ...(hasPermission(member, 'event.manage') || hasPermission(member, 'event.notes.read') ? ['reason'] : [])]) : null, venue: pick((data.venue ?? {}) as Record<string, unknown>, ['name', 'publicLocation']),
+  return { ...pick(data, eventFields), pricing: storedEventPricing(data.pricing), cancellation: data.cancellation ? pick(data.cancellation as Record<string, unknown>, ['at', 'by', 'publicMessage', ...(hasPermission(member, 'event.manage') || hasPermission(member, 'event.notes.read') ? ['reason'] : [])]) : null, venue: pick((data.venue ?? {}) as Record<string, unknown>, ['name', 'publicLocation']),
     scoring: pick((data.scoring ?? {}) as Record<string, unknown>, ['unitScale', 'rankingMode', 'started']),
     quizAssignment: data.quizAssignment ? pick(data.quizAssignment as Record<string, unknown>, ['quizId', 'quizRevision', 'snapshotId', 'quizTitle', 'roundCount', 'questionCount', 'lockedAt']) : null };
 }
@@ -83,8 +87,10 @@ export const readAccessData = onCall({ region: 'europe-west1', cors: true, maxIn
     if (data.operation === 'quizzes' || data.operation === 'events') {
       const kind = data.operation === 'quizzes' ? 'quiz' : 'event';
       const member = await authorize(request.auth, [kind === 'quiz' ? 'quiz.read' : 'event.read'], undefined, tx);
+      if (kind === 'quiz' && data.includeTrash !== undefined && typeof data.includeTrash !== 'boolean') throw new HttpsError('invalid-argument', 'Neplatný výběr koše.');
+      if (kind === 'quiz' && data.includeTrash === true && !hasPermission(member, 'quiz.delete')) throw new HttpsError('permission-denied', 'K zobrazení koše nemáte oprávnění.');
       const docs = await scopedList(tx, kind, member);
-      return wire(docs.filter(d => kind !== 'event' || !['trash', 'deleting'].includes(eventDisposition(d.data()!)) || hasPermission(member, 'event.manage') || hasPermission(member, 'event.delete')).map(d => ({ id: d.id, data: kind === 'quiz' ? pick(stored(d), quizFields) : eventView(stored(d), member) })));
+      return wire(docs.filter(d => kind === 'quiz' ? data.includeTrash === true || quizDisposition(stored(d)) !== 'trash' : !['trash', 'deleting'].includes(eventDisposition(d.data()!)) || hasPermission(member, 'event.manage') || hasPermission(member, 'event.delete')).map(d => ({ id: d.id, data: kind === 'quiz' ? { ...pick(stored(d), quizFields), disposition: quizDisposition(stored(d)), revision: quizTrashRevision(stored(d)) } : eventView(stored(d), member) })));
     }
     if (['editor', 'quiz', 'quizSlides', 'mediaAssets'].includes(String(data.operation))) {
       const quizId = id(data.quizId), resource: Resource = { kind: 'quiz', id: quizId };
@@ -115,7 +121,12 @@ export const readAccessData = onCall({ region: 'europe-west1', cors: true, maxIn
       const snapshotId = id(data.snapshotId), resource = await snapshotResource(request.auth, snapshotId, tx);
       const member = await authorize(request.auth, ['event.read'], resource, tx);
       const rows = await tx.get(db().collection(`quizSnapshots/${snapshotId}/${data.operation === 'snapshotRounds' ? 'rounds' : 'slides'}`).orderBy('position').limit(401));
-      return wire(rows.docs.map(d => data.operation === 'snapshotRounds' ? { id: d.id, data: pick(d.data(), roundFields) } : slideView(d.id, d.data(), member.permissions.includes('event.answers.read'), member.permissions.includes('event.notes.read'))));
+      if (data.operation === 'snapshotRounds') return wire(rows.docs.map(d => ({ id: d.id, data: pick(d.data(), roundFields) })));
+      if (rows.size > 400) throw new HttpsError('resource-exhausted', 'Kvíz je příliš velký.');
+      const root = stored(await tx.get(db().doc(`quizSnapshots/${snapshotId}`)));
+      const quizId = id(root.quizId);
+      const assets = await loadSnapshotClipAssets(tx, db(), quizId, rows.docs.map(d => d.data()));
+      return wire(rows.docs.map(d => slideView(d.id, resolveSnapshotClip(quizId, d.data(), assets), member.permissions.includes('event.answers.read'), member.permissions.includes('event.notes.read'))));
     }
     if (['event', 'registrations', 'roster', 'eventManagement'].includes(String(data.operation))) {
       const eventId = id(data.eventId), resource: Resource = { kind: 'event', id: eventId };

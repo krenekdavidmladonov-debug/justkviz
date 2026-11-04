@@ -61,7 +61,7 @@ export function AccountPage() {
         {mode === 'signup' && <p>Minimálně 12 znaků. Vytvoření účtu samo o sobě nepřiděluje přístup ke kvízům ani akcím. Po vytvoření ověřte svůj e-mail.</p>}
         <button className="primary-button" disabled={pending}>{pending ? 'Zpracovávám…' : mode === 'signup' ? 'Vytvořit účet' : 'Přihlásit se'}</button>
       </form>
-      <button className="quiet-button" disabled={pending || !email} onClick={() => void run(async () => { await sendPasswordResetEmail(getFirebaseAuth(), email.trim()); setNotice('Pokud pro e-mail existuje účet, Firebase odešle pokyny k obnovení hesla.'); })}>Zapomenuté heslo</button>
+      <button className="quiet-button" disabled={pending || !email} onClick={() => void run(async () => { await sendPasswordResetEmail(getFirebaseAuth(), email.trim()); setNotice('Pokud pro tento e-mail existuje účet, odešleme pokyny k obnovení hesla.'); })}>Zapomenuté heslo</button>
     </section> : <>
       <section className="account-card"><h2>Osobní údaje</h2>
         <p><strong>{user.email}</strong> · {user.emailVerified ? 'E-mail ověřen' : 'E-mail čeká na ověření'}</p>
@@ -70,7 +70,7 @@ export function AccountPage() {
           <button className="secondary-button" disabled={pending}>Uložit jméno</button>
         </form>
         {!user.emailVerified && <div className="account-actions">
-          <button className="secondary-button" disabled={pending} onClick={() => void run(async () => { await sendEmailVerification(user); setNotice('Ověřovací e-mail byl odeslán přes Firebase.'); })}>Odeslat ověřovací e-mail</button>
+          <button className="secondary-button" disabled={pending} onClick={() => void run(async () => { await sendEmailVerification(user); setNotice('Ověřovací e-mail byl odeslán.'); })}>Odeslat ověřovací e-mail</button>
           <button className="quiet-button" disabled={pending} onClick={() => void run(async () => { await reload(user); await getIdToken(user, true); setNotice(user.emailVerified ? 'E-mail je ověřen.' : 'E-mail zatím není ověřen.'); })}>Už jsem e-mail ověřil/a</button>
         </div>}
       </section>
@@ -80,12 +80,12 @@ export function AccountPage() {
       </section>}
       <section className="account-card"><h2>Přístup do JustKvízu</h2>
         {membership ? <><p><strong>{roleLabels[membership.role]}</strong></p><p>Kvízy: {scopeSummary(membership.quizzes)}<br />Akce: {scopeSummary(membership.events)}</p><ul>{membership.permissions.map(p => <li key={p}>{permissionLabels[p]}</li>)}</ul><Link className="primary-button" to="/admin">Otevřít administraci</Link></>
-          : <><p>ČEKÁ NA NASTAVENÍ OSOBNÍHO ÚČTU</p><p>Účet zatím nemá aktivní přístup. Přijměte pozvánku od správce. Převod vlastnictví vyžaduje schválení přesné osobní identity; tento formulář jej neprovádí.</p></>}
+          : <><p>Přístup zatím není přidělen</p><p>Pro práci s kvízy a akcemi přijměte pozvánku od správce.</p></>}
       </section>
       <section className="account-card"><h2>Zabezpečení účtu</h2>
         <div className="account-form"><label>Aktuální heslo<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></label>
           <label>Nový přihlašovací e-mail<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} /></label>
-          <button className="secondary-button" disabled={pending || !email || email === user.email} onClick={() => void run(async () => { await reauthenticate(); await verifyBeforeUpdateEmail(user, email.trim()); setNotice('Firebase odeslal ověření na nový e-mail. Změna se dokončí až po jeho potvrzení; pak se znovu přihlaste.'); })}>Ověřit a změnit e-mail</button>
+          <button className="secondary-button" disabled={pending || !email || email === user.email} onClick={() => void run(async () => { await reauthenticate(); await verifyBeforeUpdateEmail(user, email.trim()); setNotice('Na nový e-mail jsme odeslali ověření. Změna se dokončí až po jeho potvrzení; pak se znovu přihlaste.'); })}>Ověřit a změnit e-mail</button>
           <label>Nové heslo<input type="password" minLength={12} autoComplete="new-password" value={newPassword} onChange={e => setNewPassword(e.target.value)} /></label>
           <label>Zopakovat nové heslo<input type="password" minLength={12} autoComplete="new-password" value={confirmation} onChange={e => setConfirmation(e.target.value)} /></label>
           <p>Po změně hesla se odhlásí všechna zařízení včetně tohoto. Přihlaste se potom novým heslem.</p>

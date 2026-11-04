@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Informace o soukromém propojení Gmailu pořadatele pro odesílání registračních zpráv JustKvízu.">
+<title>JustKvíz — propojení Gmailu</title>
+<style>
+    :root{color-scheme:light;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#152033;background:#f6f8fb;line-height:1.65}*{box-sizing:border-box}body{margin:0}header,main,footer{width:min(820px,calc(100% - 40px));margin:auto}header{padding:30px 0 24px;border-bottom:1px solid #d9e1eb}.brand{display:inline-flex;align-items:center}.brand img{width:176px;height:40px;display:block}main{padding:48px 0}h1{font-size:clamp(2rem,6vw,3.2rem);line-height:1.12;letter-spacing:-.045em;margin:12px 0 24px}h2{font-size:1.3rem;line-height:1.35;margin:0 0 12px}p{margin:0 0 18px}.eyebrow{color:#7a5300;font-size:.82rem;font-weight:750;letter-spacing:.09em;text-transform:uppercase}.lead{font-size:1.17rem;color:#42516a}.card{background:#fff;border:1px solid #d9e1eb;border-radius:18px;padding:28px;margin:28px 0}.notice{background:#fff8e3;border-left:4px solid #b87900;padding:16px 20px;border-radius:4px}a{color:#1746b5;text-underline-offset:3px;overflow-wrap:anywhere}a:focus-visible{outline:3px solid #2563eb;outline-offset:4px}.actions{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin:28px 0}.button{display:inline-block;padding:12px 18px;background:#1d4ed8;color:#fff;border-radius:10px;text-decoration:none;font-weight:700}.button:hover{background:#1e40af}ul{padding-left:22px}li{margin:10px 0}footer{padding:24px 0 32px;border-top:1px solid #d9e1eb;color:#536279;font-size:.92rem}footer p{margin:0 0 8px}@media(max-width:480px){header,main,footer{width:calc(100% - 32px)}main{padding:32px 0}.card{padding:22px}.actions{align-items:stretch;flex-direction:column}.button{text-align:center}}
+  nav{display:flex;flex-wrap:wrap;gap:10px 20px;margin-top:20px}.brand{font-size:1.5rem;font-weight:800;letter-spacing:-.04em;text-decoration:none;color:#152033}code{overflow-wrap:anywhere}nav a[aria-current="page"]{font-weight:750}</style>
+</head>
+<body>
+<p role="status" style="padding:16px;background:#fff4ce"><strong>Návrh k doplnění před veřejným spuštěním.</strong> Identita provozovatele, kontakt, právní důvody, retence a úplné podmínky čekají na schválení. <a href="/privacy">Ochrana osobních údajů</a>.</p>
+<header><a class="brand" href="/google-gmail.html" aria-label="JustKvíz Gmail — úvod">JustKvíz</a><nav aria-label="Informace o propojení Gmailu"><a href="/google-gmail.html" aria-current="page">Úvod</a> <a href="/google-gmail-privacy.html">Ochrana údajů</a> <a href="/google-gmail-terms.html">Podmínky používání</a></nav></header>
+<main><p class="eyebrow">JustKvíz · Gmail</p>
+<h1>E-maily k registracím na kvíz</h1>
+<p class="lead">Při zapnutém propojení JustKvíz používá Gmail pořadatele k odesílání zpráv souvisejících s registracemi na kvízové akce.</p>
+<div class="notice">Google účet propojuje pouze pořadatel [provozovatel čeká na potvrzení] ([kontakt doplní provozovatel]). Účastníci při registraci svůj Google účet nepřipojují a přístup ke Gmailu neudělují.</div>
+<section class="card" aria-labelledby="purpose"><h2 id="purpose">K čemu propojení slouží</h2>
+<p>Při zapnutém odesílání aplikace odesílá potvrzení registrace, zprávu o její změně nebo zrušení a upozornění pořadateli na novou registraci. Zprávy obsahují údaje potřebné pro danou registraci a akci; potvrzení a zpráva o změně mohou obsahovat soukromý odkaz pro správu registrace.</p>
+<p>Veřejný přehled akcí a registrace najdete na <a href="https://justkviz.cz/events">justkviz.cz/events</a>.</p></section>
+<section aria-labelledby="scope"><h2 id="scope">Pouze odesílání zpráv</h2><p>Propojení vyžaduje jediné oprávnění Google: <code>https://www.googleapis.com/auth/gmail.send</code>. Aplikace přes toto propojení nečte doručenou poštu, nevyhledává zprávy ani nestahuje obsah schránky nebo kontakty.</p><p>Odesílání zajišťuje server aplikace. Přihlašovací údaje OAuth jsou uložené na serveru v Google Cloud Secret Manager a nejsou poskytované veřejnému webu ani účastníkům.</p></section>
+<section class="card" aria-labelledby="control"><h2 id="control">Správa připojení</h2><p>Pořadatel může oprávnění odebrat v nastavení svého účtu Google v části připojení k aplikacím a službám třetích stran. Poté připojení nebude moci odesílat nové zprávy, dokud nebude znovu autorizované.</p><p>Obnovení připojení samo znovu neodešle dříve selhané zprávy. Stav „odesláno“ označuje přijetí zprávy službou Gmail, nikoli potvrzení jejího doručení nebo přečtení.</p></section></main>
+<footer><p>Provoz a podpora: [provozovatel čeká na potvrzení] · [kontakt doplní provozovatel]</p><p><a href="https://justkviz.cz/events">Veřejné akce JustKvízu</a> · Aktualizováno 25. října 2026</p></footer>
+</body>
+</html>

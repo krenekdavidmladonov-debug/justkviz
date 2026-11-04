@@ -250,7 +250,7 @@ test('transport errors never expose raw request/response credentials', async () 
 
 test('CLI attribution is pinned and skipAutoAuth true denies ADC, wrong operator or version', async () => {
   const plan = qaPlan(approval()), calls = [], t = transports();
-  const modules = { package: { version: '15.28.2' }, auth: { getGlobalDefaultAccount: () => ({ user: { email: approval().operatorEmail } }) },
+  const modules = { package: { version: '15.34.2' }, auth: { getGlobalDefaultAccount: () => ({ user: { email: approval().operatorEmail } }) },
     requireAuth: { async requireAuth(options, skipAutoAuth) { calls.push({ options, skipAutoAuth }); return approval().operatorEmail; } },
     apiv2: { Client: class { constructor(options) { calls.push(options); return options.urlPrefix.includes('firestore') ? t.clients.firestore : t.clients.auth; } } } };
   await connectQaStore(plan, name => modules[name]);
@@ -262,7 +262,7 @@ test('CLI attribution is pinned and skipAutoAuth true denies ADC, wrong operator
 
 test('pinned real CLI transport supports suppressed sensitive body logging and retries:0', () => {
   const require = createRequire(import.meta.url), apiv2 = require('firebase-tools/lib/apiv2');
-  assert.equal(require('firebase-tools/package.json').version, '15.28.2');
+  assert.equal(require('firebase-tools/package.json').version, '15.34.2');
   const logger = require('firebase-tools/lib/logger').logger, original = logger.debug, logs = [];
   logger.debug = message => { logs.push(message); };
   try {

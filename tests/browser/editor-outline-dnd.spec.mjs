@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto';
 import { editorIdentity } from '../e2e/editor-identity.mjs';
 import { mediaSlide } from '../e2e/media-fixture.mjs';
 
+async function openRounds(page) { await expect(page.locator('.outline-round').first()).toBeVisible(); while (await page.locator('.outline-collapse[aria-expanded="false"]').count()) await page.locator('.outline-collapse[aria-expanded="false"]').first().click(); }
+
 async function fixture(page) {
   const identity = await editorIdentity();
   const id = 'save-all-' + randomUUID(), root = identity.db.doc('quizzes/' + id);
@@ -21,7 +23,7 @@ async function fixture(page) {
   await page.context().route('**/*', r => ['127.0.0.1','localhost'].includes(new URL(r.request().url()).hostname) ? r.continue() : r.abort());
   await page.goto('/admin/login'); await page.getByLabel('E-mail').fill(identity.email); await page.getByLabel('Heslo').fill(identity.password);
   await page.getByRole('button', { name: 'Přihlásit se', exact: true }).click(); await page.locator('.admin-dashboard').waitFor();
-  await page.goto('/admin/quizzes/' + id + '/edit'); await page.locator('.outline-question').nth(1).waitFor();
+  await page.goto('/admin/quizzes/' + id + '/edit'); await openRounds(page); await page.locator('.outline-question').nth(1).waitFor();
   return { identity, root };
 }
 const select = (page, index) => page.locator('.outline-question').nth(index).click();
@@ -42,28 +44,33 @@ async function secondRound(f) {
 
 const row = (page, id) => page.locator('li[data-question-id="' + id + '"]');
 const order = page => page.locator('li[data-question-id]').evaluateAll(nodes => nodes.map(node => node.dataset.questionId));
-async function dragBefore(page, source, target) {
-  await expect(row(page, source)).toHaveAttribute('draggable','true');
-  await row(page, source).dragTo(row(page, target), { targetPosition: { x: 40, y: 5 } });
+const handle = (page, id) => row(page, id).locator('.outline-drag-handle');
+const question = (page, id) => row(page, id).locator('.outline-question');
+async function dragAt(page, source, target, fraction) {
+  const destination = row(page, target); await destination.scrollIntoViewIfNeeded();
+  const box = await destination.boundingBox(); expect(box).not.toBeNull();
+  await expect(handle(page, source)).toHaveAttribute('draggable','true');
+  await handle(page, source).dragTo(destination, { targetPosition: { x: box.width / 2, y: box.height * fraction } });
 }
+const dragBefore = (page, source, target) => dragAt(page, source, target, 0.25);
 test('drag in left outline changes order and rounds without leaving the editor', async ({ page }) => {
   const f = await fixture(page);
   try {
-    await secondRound(f); await page.setViewportSize({ width: 1600, height: 1200 }); await page.reload();
+    await secondRound(f); await page.setViewportSize({ width: 1600, height: 1200 }); await page.reload(); await openRounds(page);
     await expect(page.getByRole('button', { name:'Storyboard', exact:true })).toHaveCount(0);
     await select(page, 0); await expect(prompt(page)).toHaveValue('a');
-    await row(page,'a').dragTo(row(page,'b'), { targetPosition: { x: 40, y: 43 } });
+    await dragAt(page,'a','b',0.75);
     await expect.poll(() => order(page)).toEqual(['b','a','c','d']);
     await expect(prompt(page)).toHaveValue('a');
     await dragBefore(page,'a','c');
     await expect.poll(() => order(page)).toEqual(['b','a','c','d']);
     await expect.poll(async () => (await f.root.collection('slides').doc('a').get()).data().roundId).toBe('round2');
     await expect.poll(async () => (await f.root.collection('slides').doc('a').get()).data().questionNumber).toBe(1);
-    await expect(row(page,'a')).toHaveAttribute('draggable','true');
-    await row(page,'a').getByRole('button').focus(); await page.keyboard.press('Alt+ArrowDown');
+    await expect(handle(page,'a')).toHaveAttribute('draggable','true');
+    await question(page,'a').focus(); await page.keyboard.press('Alt+ArrowDown');
     await expect.poll(() => order(page)).toEqual(['b','c','a','d']);
-    await expect(row(page,'a').getByRole('button')).toBeFocused();
-    await page.screenshot({ path: '.local-data/editor-outline/desktop.png' });
+    await expect(question(page,'a')).toBeFocused();
+    // The assertions above verify interaction without capturing private editor content.
   } finally { await f.identity.dispose(); }
 });
 
@@ -71,17 +78,17 @@ test('unsaved content survives selection and prevents structural writes until sa
   const f = await fixture(page);
   try {
     await select(page,0); await prompt(page).fill('Unfinished edit'); await select(page,1);
-    await expect(row(page,'a')).toHaveAttribute('draggable','false');
+    await expect(handle(page,'a')).toHaveAttribute('draggable','false');
     await select(page,0); await expect(prompt(page)).toHaveValue('Unfinished edit');
     expect((await f.root.get()).data().revision).toBe(0);
-    await save(page); await expect(row(page,'a')).toHaveAttribute('draggable','true');
+    await save(page); await expect(handle(page,'a')).toHaveAttribute('draggable','true');
   } finally { await f.identity.dispose(); }
 });
 
 test('interrupted cross-round drag reloads persisted order and keeps the editor usable', async ({ page }) => {
   const f = await fixture(page); let failed = false;
   try {
-    await secondRound(f); await page.setViewportSize({ width:1600,height:1200 }); await page.reload();
+    await secondRound(f); await page.setViewportSize({ width:1600,height:1200 }); await page.reload(); await openRounds(page);
     await page.route('**/reorderQuizQuestion', async route => {
       if (route.request().method() === 'POST' && !failed) { failed=true; return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:{status:'UNAVAILABLE',message:'Synthetic interruption'}})}); }
       return route.continue();

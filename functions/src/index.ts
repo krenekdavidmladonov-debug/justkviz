@@ -85,5 +85,9 @@ export { createQuizRound } from './editor/callables.js';
 export { getMyAccess, listAccessUsers, createAccessInvitation, changeAccessInvitation, acceptAccessInvitation, updateAccessMembership, listAccessAudit, revokeMySessions } from './access/callables.js';
 export { readAccessData } from './access/reads.js';
 
-export { trashEvent, restoreEvent } from './events/management.js';
+export { completeEvent, trashEvent, restoreEvent } from './events/management.js';
 export { deleteEvent } from './events/deletion.js';
+export { trashQuiz, restoreQuiz } from './quizzes/management.js';
+export { readDriveConnection, beginDriveConnection, completeDriveConnection, getDriveFolderPicker, selectDriveFolder, createDriveMediaFolder, disconnectDriveConnection } from './drive/callables.js';
+export { requestDriveMediaImport, readDriveMediaImport, processDriveMediaImport } from './drive/import-callables.js';
+export { configureDriveMediaCompanion, driveMediaCompanion } from './drive/local-companion.js';

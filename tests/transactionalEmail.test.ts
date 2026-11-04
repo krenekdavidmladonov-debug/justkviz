@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest';
 import { Timestamp } from 'firebase/firestore';
 
 import { createTokenVault, emulatorTokenVault } from '../functions/src/email/token-vault';
-import { managementUrl, registrationEmail } from '../functions/src/email/templates';
+import { managementUrl, registrationEmail, registrationOwnerNotification } from '../functions/src/email/templates';
 import { CaptureEmailTransport } from '../functions/src/dev/capture-email';
 import { mapRegistration } from '../apps/web/src/features/events/eventMappers';
 
@@ -12,7 +12,61 @@ const content = { eventTitle: 'Filmový večer <script>alert(1)</script>', start
 const protectedManagementLink = managementUrl('http://localhost:5000', 'synthetic', 'registration', 'a'.repeat(43));
 afterEach(() => vi.unstubAllEnvs());
 
+describe('private organizer registration notification template', () => {
+  test('includes only the requested roster details and an authenticated admin destination', () => {
+    const body = registrationOwnerNotification({ ...content, contactEmail: 'DO-NOT-RENDER@example.test', token: 'DO-NOT-RENDER' } as typeof content,
+      'https://justkviz.cz', 'synthetic-event');
+    expect(body.subject).toContain('Nová registrace týmu');
+    expect(body.text).toContain(content.teamName);
+    expect(body.text).toContain(content.eventTitle);
+    expect(body.text).toContain('Počet hráčů: 4'); expect(body.text).toContain('19:00');
+    expect(body.text).toContain('https://justkviz.cz/admin/events/synthetic-event/registrations');
+    expect(body.html).toContain('href="https://justkviz.cz/admin/events/synthetic-event/registrations"');
+    expect(body.html).toContain('&lt;script&gt;'); expect(body.html).toContain('&lt;img');
+    expect(body.html).not.toMatch(/<script|<iframe|<form|onerror=alert\(1\)>/u);
+    expect(JSON.stringify(body)).not.toMatch(/registration\/manage|#registration=|token=|DO-NOT-RENDER|Sál &|Kde:/u);
+  });
+  test('sanitizes subject headers and never accepts a destination URL or path from an event ID', () => {
+    const body = registrationOwnerNotification({ ...content, teamName: 'Team\r\nBcc: forged\0\u202e' }, 'https://justkviz.cz', 'event');
+    expect(body.subject).not.toMatch(/[\p{Cc}\p{Cf}]/u);
+    for (const origin of ['javascript:alert(1)', 'https://user:password@example.test', 'http://remote.example.test', 'https://justkviz.cz/path',
+      'https://justkviz.cz?token=secret', 'https://justkviz.cz#secret']) expect(() => registrationOwnerNotification(content, origin, 'event')).toThrow();
+    for (const eventId of ['../other', 'event?recipient=attacker', 'event#token=secret', 'https://attacker.test', 'event/<script>', '']) {
+      expect(() => registrationOwnerNotification(content, 'https://justkviz.cz', eventId)).toThrow();
+    }
+  });
+});
+
 describe('Czech transactional messages', () => {
+  test('renders custom-domain management links and artwork while keeping capabilities out of requests', () => {
+    const origin = 'https://justkviz.cz', token = 'a'.repeat(43);
+    const link = managementUrl(origin, 'synthetic', 'registration', token), url = new URL(link);
+    expect(url.origin).toBe(origin);
+    expect(url.pathname).toBe('/events/synthetic/registration/manage');
+    expect(url.search).toBe('');
+    expect(url.hash).toContain(token);
+    for (const type of ['registration-confirmed', 'registration-updated', 'registration-cancelled'] as const) {
+      const body = registrationEmail(type, content, link, origin);
+      const image = body.html.match(/<img[^>]+>/u)?.[0];
+      expect(image).toContain('src="https://justkviz.cz/brand/justkviz-email.png"');
+      expect(image).not.toContain(token);
+      expect(body.text.includes(link)).toBe(type !== 'registration-cancelled');
+      expect(body.html.includes(link.replaceAll('&', '&amp;'))).toBe(type !== 'registration-cancelled');
+      expect(body.html).not.toMatch(/justkviz-v2\.web\.app|filmovy-kviz-v2-staging\.web\.app/u);
+    }
+  });
+  test('uses the configured public logo without copying protected link capabilities into image URLs', () => {
+    for (const type of ['registration-confirmed', 'registration-updated', 'registration-cancelled'] as const) {
+      const body = registrationEmail(type, content, protectedManagementLink, 'https://justkviz-v2.web.app');
+      expect(body.html).toContain('<img src="https://justkviz-v2.web.app/brand/justkviz-email.png" width="264" height="60" alt="JustKvíz"');
+      expect(body.html.match(/<img[^>]+>/gu)).toHaveLength(1);
+      expect(body.html.match(/<img[^>]+>/u)?.[0]).not.toMatch(/registration|token|localhost/u);
+      expect(body.text).toContain('Tým JustKvíz');
+    }
+    for (const origin of ['javascript:alert(1)', 'https://user:password@example.test', 'https://example.test/path', 'https://example.test?token=secret']) {
+      expect(registrationEmail('registration-updated', content, undefined, origin).html).not.toContain('<img');
+    }
+  });
   for (const type of ['registration-confirmed', 'registration-updated', 'registration-cancelled'] as const) {
     test(type + ' has text, escaped HTML and event/team details', () => {
       const body = registrationEmail(type, content, protectedManagementLink);
@@ -54,7 +108,7 @@ describe('Czech transactional messages', () => {
       venueName: '', publicLocation: '', memberCount: 0 });
     expect(absent.subject).toBe('JustKvíz | Registrace zrušena');
     expect(absent.text).not.toMatch(/Kdy:|Kde:|Akce:|Tým:|Počet hráčů:|undefined|NaN|Invalid Date/u);
-    expect(absent.text).not.toContain('@');
+    expect(absent.text).toContain('obraťte na pořadatele konkrétní akce');
     expect(registrationEmail('registration-updated', { ...content, timeZone: 'not-a-time-zone' }).text).not.toContain('Kdy:');
   });
   test('formats real event time with daylight saving and includes a known address only once', () => {

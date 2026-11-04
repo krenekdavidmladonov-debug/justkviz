@@ -4,8 +4,91 @@ import { LiveSessionError } from '../functions/src/live/errors';
 import { buildPublicSessionState, displayAnswer, publicResultTemplate } from '../functions/src/live/publication';
 import { applyLiveSessionAction, applyMediaPlaybackReport } from '../functions/src/live/session-machine';
 import type { PrivateLiveSession, PrivateSlide } from '../functions/src/live/types';
+import { mapEditorSlide, originalYoutubeSource } from '../packages/quiz-domain/src';
+import { slideView } from '../functions/src/access/slide-view';
+import { mapPublicLiveState } from '../apps/web/src/features/live/liveMappers';
+import { parsePublicLiveState, sanitizedChannelState } from '../apps/web/src/features/live/projectorChannel';
+import { createHash } from 'node:crypto';
+import { verifiedOriginalYoutubeSource } from '../functions/src/media/original-source';
+import { captureInterimReturn, parseInterimReturn, restoreInterimReturn, staticInterimBackdrop } from '../functions/src/live/show-mode';
+import { closeSessions } from '../functions/src/live/event-lifecycle';
+import { adjacentVisibleSlidePosition, requestedNavigationDirection } from '../functions/src/live/navigation';
 
 const now = new Date('2026-09-01T10:00:00.000Z');
+
+describe('server-authoritative adjacent navigation', () => {
+  function navigationStore(slides: readonly Record<string, unknown>[]) {
+    const reads: Array<{ cursor: number; limit: number; fields: readonly string[] }> = [];
+    let cursor = 0, ascending = true, limit = 0, fields: string[] = [];
+    const query = {
+      where: (_field: string, _operator: string, value: number) => { cursor = value; return query; },
+      orderBy: (_field: string, order: string) => { ascending = order === 'asc'; return query; },
+      select: (...value: string[]) => { fields = value; return query; },
+      limit: (value: number) => { limit = value; return query; },
+    };
+    const root = { collection: () => query } as unknown as Parameters<typeof adjacentVisibleSlidePosition>[1];
+    const transaction = { get: () => {
+      reads.push({ cursor, limit, fields });
+      const candidates = slides.filter(slide => ascending ? Number(slide.position) > cursor : Number(slide.position) < cursor)
+        .sort((a, b) => (Number(a.position) - Number(b.position)) * (ascending ? 1 : -1)).slice(0, limit);
+      return Promise.resolve({ docs: candidates.map(slide => ({ data: () => slide })), size: candidates.length });
+    } } as unknown as Parameters<typeof adjacentVisibleSlidePosition>[0];
+    return { reads, transaction, root };
+  }
+
+  test.each([1, -1] as const)('batches a long hidden run in direction %s and returns the nearest visible slide', async direction => {
+    const slides = Array.from({ length: 100 }, (_, index) => ({ position: index + 1, kind: 'intro', isQuestion: false, hidden: true }));
+    const target = direction === 1 ? 99 : 2;
+    slides[target - 1] = { ...slides[target - 1]!, hidden: false };
+    const store = navigationStore(slides);
+    expect(await adjacentVisibleSlidePosition(store.transaction, store.root, direction === 1 ? 0 : 101, direction)).toBe(target);
+    expect(store.reads).toHaveLength(5);
+    expect(store.reads[0]!.limit).toBe(1);
+    expect(store.reads.slice(1).every(read => read.limit === 32)).toBe(true);
+    expect(store.reads[0]!.fields).toEqual(['position', 'kind', 'isQuestion', 'roundId', 'hidden']);
+  });
+
+  test.each([1, -1] as const)('ordinary navigation reads only the adjacent candidate in direction %s', async direction => {
+    const store = navigationStore(Array.from({ length: 100 }, (_, index) => ({ position: index + 1, kind: 'question', isQuestion: true })));
+    expect(await adjacentVisibleSlidePosition(store.transaction, store.root, 50, direction)).toBe(50 + direction);
+    expect(store.reads).toHaveLength(1);
+    expect(store.reads[0]!.limit).toBe(1);
+  });
+
+  test('cannot skip a question or round header through a hidden flag', async () => {
+    for (const protectedSlide of [{ kind: 'question', isQuestion: true }, { kind: 'intro', isQuestion: false, roundId: 'round-1' }]) {
+      const store = navigationStore([{ position: 1, hidden: true, ...protectedSlide }]);
+      expect(await adjacentVisibleSlidePosition(store.transaction, store.root, 0, 1)).toBe(1);
+      expect(store.reads).toHaveLength(1);
+    }
+  });
+
+  test('keeps the 400-slide scan bound and stops on an exhausted direction', async () => {
+    const slides = Array.from({ length: 401 }, (_, index) => ({ position: index + 1, kind: 'intro', isQuestion: false, hidden: index !== 400 }));
+    const store = navigationStore(slides);
+    expect(await adjacentVisibleSlidePosition(store.transaction, store.root, 0, 1)).toBeUndefined();
+    expect(store.reads).toHaveLength(14);
+    expect(store.reads.at(-1)!.limit).toBe(15);
+    const empty = navigationStore([]);
+    expect(await adjacentVisibleSlidePosition(empty.transaction, empty.root, 0, -1)).toBeUndefined();
+    expect(empty.reads).toHaveLength(1);
+  });
+
+  test('shared navigation callable accepts only an explicit direction or the legacy position payload', () => {
+    expect(requestedNavigationDirection({ direction: 1 })).toBe(1);
+    expect(requestedNavigationDirection({ direction: -1 })).toBe(-1);
+    expect(requestedNavigationDirection({ position: 5 })).toBeUndefined();
+    for (const direction of [0, 2, '1', null, true]) expect(() => requestedNavigationDirection({ direction })).toThrow(LiveSessionError);
+    expect(() => requestedNavigationDirection({ direction: 1, position: 5 })).toThrow(LiveSessionError);
+  });
+});
+
+const originalUrl = 'https://www.youtube.com/watch?v=abcdefghijk';
+const clipSource = `quiz-asset:safe-quiz/${'a'.repeat(64)}`;
+function originalVideo(): PrivateSlide {
+  return { ...questionSlide(), kind: 'video', mediaSource: clipSource, clipStartSeconds: 0, clipEndSeconds: 12,
+    originalMediaSource: originalUrl };
+}
 
 function session(overrides: Partial<PrivateLiveSession> = {}): PrivateLiveSession {
   return {
@@ -362,4 +445,127 @@ test('player explanation is revealed explicitly and moderator note remains priva
   const after = buildPublicSessionState(session({answerRevealed:true}),slide);
   expect(after.answerExplanation).toBe('PRIVATE-EXPLANATION');
   expectNoPrivateFields(after);
+});
+
+test('original YouTube source is private and only an explicit revealed play substitutes the prepared clip', () => {
+  const slide = originalVideo();
+  const hidden = buildPublicSessionState(session(), slide);
+  expect(hidden.mediaSource).toBe(clipSource);
+  expect(JSON.stringify(hidden)).not.toContain('abcdefghijk');
+  expect(() => applyLiveSessionAction(session(), { type: 'play-media', mode: 'original' }, 1, 'moderator', now, slide)).toThrow(/revealed answer/u);
+  const revealed = applyLiveSessionAction(session(), { type: 'reveal-answer' }, 1, 'moderator', now, slide);
+  expect(buildPublicSessionState(revealed, slide).mediaSource).toBe(clipSource);
+  const playing = applyLiveSessionAction(revealed, { type: 'play-media', mode: 'original' }, 2, 'moderator', now, slide);
+  const published = buildPublicSessionState(playing, slide);
+  expect(published).toMatchObject({ mediaSource: originalUrl, mediaPlaybackMode: 'original', clipStartSeconds: 0, answerRevealed: true, renderMode: 'recap' });
+  expect(published).not.toHaveProperty('clipEndSeconds');
+  expect(published).not.toHaveProperty('originalMediaSource');
+  expect(published).not.toHaveProperty('driveImportProvenance');
+  const mapped = mapPublicLiveState(playing.sessionId, published);
+  expect(parsePublicLiveState(mapped)?.mediaPlaybackMode).toBe('original');
+  expect(sanitizedChannelState(mapped).mediaSource).toBe(originalUrl);
+  expect(parsePublicLiveState({ ...mapped, answerRevealed: false })).toBeUndefined();
+  expect(parsePublicLiveState({ ...mapped, clipEndSeconds: 12 })).toBeUndefined();
+  expect(() => mapPublicLiveState(playing.sessionId, { ...published, answerRevealed: false })).toThrow();
+  const clip = applyLiveSessionAction(playing, { type: 'play-media' }, 3, 'moderator', now, slide);
+  expect(buildPublicSessionState(clip, slide).mediaSource).toBe(clipSource);
+  expect(clip).not.toHaveProperty('mediaPlaybackMode');
+});
+
+test('original mode resets on hide, navigation, recap selection and rejects missing source', () => {
+  const slide = originalVideo();
+  const playing = session({ answerRevealed: true, mediaPlaybackMode: 'original', mediaCommand: 'play', mediaPlaybackState: 'playing' });
+  expect(applyLiveSessionAction(playing, { type: 'hide-answer' }, 1, 'moderator', now, slide)).not.toHaveProperty('mediaPlaybackMode');
+  expect(applyLiveSessionAction(playing, { type: 'go-to-slide', position: 2, slideId: 'slide-002' }, 1, 'moderator', now, questionSlide(2))).not.toHaveProperty('mediaPlaybackMode');
+  expect(applyLiveSessionAction({ ...playing, presentationMode: 'recap', currentSlidePosition: 3 }, { type: 'select-recap-question', position: 1, slideId: slide.id }, 1, 'moderator', now, slide)).not.toHaveProperty('mediaPlaybackMode');
+  expect(() => applyLiveSessionAction(session({ answerRevealed: true }), { type: 'play-media', mode: 'original' }, 1, 'moderator', now, { ...slide, originalMediaSource: undefined })).toThrow();
+  expect(buildPublicSessionState({ ...playing, answerRevealed: false }, slide).mediaSource).toBe(clipSource);
+});
+
+test('private mapping extracts only canonical original YouTube and redacts it without answer authority', () => {
+  const importJobId = 'b'.repeat(64), assetId = createHash('sha256').update(JSON.stringify(['drive-asset-v1', importJobId])).digest('hex');
+  const raw = { ...questionSlide(), kind: 'audio', mediaSource: `quiz-asset:safe-quiz/${assetId}`,
+    driveImportProvenance: { mediaSource: { importJobId, field: 'mediaSource', source: { type: 'youtube', videoId: 'abcdefghijk', privateToken: 'SECRET' } } } };
+  expect(mapEditorSlide('slide', raw).originalMediaSource).toBe(originalUrl);
+  expect(slideView('slide', raw, true, true).originalMediaSource).toBe(originalUrl);
+  expect(slideView('slide', raw, false, true).originalMediaSource).toBeUndefined();
+  expect(verifiedOriginalYoutubeSource(raw)).toBe(originalUrl);
+  expect(slideView('slide', { ...raw, mediaSource: clipSource }, true, true).originalMediaSource).toBeUndefined();
+  expect(originalYoutubeSource({ ...raw, mediaSource: 'https://example.test/other.mp4' })).toBeUndefined();
+  expect(originalYoutubeSource({ ...raw, driveImportProvenance: { mediaSource: { field: 'mediaSource', source: { type: 'youtube', videoId: '<script>' } } } })).toBeUndefined();
+  expect(JSON.stringify(mapEditorSlide('slide', raw))).not.toContain('SECRET');
+});
+
+test.each(['slide', 'recap'] as const)('results entry and %s return preserve explicit answer intent without resurrecting original playback', presentationMode => {
+  const question = { ...originalVideo(), roundId: 'round' };
+  const current = presentationMode === 'recap' ? { ...questionSlide(3), kind: 'recap', isQuestion: false, roundId: 'round' } : question;
+  const playing = session({ snapshotId: 'snapshot', currentSlidePosition: current.position, currentSlideId: current.id, presentationMode,
+    answerRevealed: true, mediaPlaybackMode: 'original', mediaCommand: 'play', mediaPlaybackState: 'playing',
+    ...(presentationMode === 'recap' ? { recapQuestionPosition: question.position, recapQuestionId: question.id } : {}) });
+  const intent = captureInterimReturn(playing, current);
+  expect(intent).not.toHaveProperty('mediaPlaybackMode');
+  expect(() => parseInterimReturn({ ...intent, mediaPlaybackMode: 'original' })).toThrow();
+  // Both result controllers enter/hide/resume through this navigation action.
+  const entered = applyLiveSessionAction(playing, { type: 'go-to-slide', position: current.position, slideId: current.id }, playing.revision, 'moderator', now, current);
+  expect(entered).not.toHaveProperty('mediaPlaybackMode');
+  expect(entered).toMatchObject({ answerRevealed: false, mediaCommand: 'idle', mediaPlaybackState: 'idle' });
+  const backdrop = staticInterimBackdrop(playing, current);
+  expect(JSON.stringify(backdrop)).not.toContain('abcdefghijk');
+  const restored = restoreInterimReturn({ ...entered, interimReturn: intent }, current, presentationMode === 'recap' ? question : undefined, true, 'moderator', now);
+  expect(restored.restored).toBe(true);
+  expect(restored.session).not.toHaveProperty('mediaPlaybackMode');
+  expect(restored.session).toMatchObject({ answerRevealed: true, mediaCommand: 'idle', mediaPlaybackState: 'idle' });
+  expect(buildPublicSessionState(restored.session, restored.slide).mediaSource).toBe(clipSource);
+});
+
+test('event cancellation closure strips original mode and publishes no media source', () => {
+  const writes: Array<{ path: string; value: unknown }> = [];
+  const transaction = { set: (reference: { path: string }, value: unknown) => { writes.push({ path: reference.path, value }); } };
+  const playing = session({ answerRevealed: true, mediaPlaybackMode: 'original', mediaCommand: 'play', mediaPlaybackState: 'playing' });
+  const reference = { path: 'sessions/' + playing.sessionId } as unknown as Parameters<typeof closeSessions>[1][number]['ref'];
+  closeSessions(transaction as unknown as Parameters<typeof closeSessions>[0], [{ ref: reference, session: playing }], 'moderator');
+  expect(writes).toHaveLength(2);
+  const privateState = writes.find(write => write.path.startsWith('sessions/'))!.value;
+  const publicState = writes.find(write => write.path.startsWith('publicSessions/'))!.value;
+  expect(privateState).not.toHaveProperty('mediaPlaybackMode');
+  expect(privateState).not.toHaveProperty('finalReveal');
+  expect(privateState).toMatchObject({ status: 'ended', answerRevealed: false, mediaCommand: 'idle' });
+  expect(publicState).not.toHaveProperty('mediaSource');
+  expect(publicState).not.toHaveProperty('mediaPlaybackMode');
+  expect(JSON.stringify(publicState)).not.toContain('abcdefghijk');
+});
+
+test.each(['active', 'ended'] as const)('event closure retains confirmed history for a %s session and clears public overlays', status => {
+  const finalReveal = { versionId: 'f'.repeat(64), visible: true, mode: 'table' as const, revealedCount: 2, totalGroups: 2, rank: null, page: 1, pageCount: 2, presentationStyle: 'show' as const, pageSize: 6 as const };
+  const current = session({ status, eventId: 'event', snapshotId: 'snapshot', finalReveal,
+    interimResults: { versionId: 'i'.repeat(64), roundNumber: 1, page: 0, pageCount: 1 },
+    interimReturn: { snapshotId: 'snapshot', slideId: 'slide-001', slidePosition: 1, presentationMode: 'slide', answerRevealed: true, capturedRevision: 1 },
+    showCue: { id: 'c'.repeat(64), kind: 'winners', startedAt: 1, durationMs: 1000, motion: 'static', intensity: 'subtle', topThree: true, winnerAnimation: true },
+    ...(status === 'ended' ? { endedAt: now } : {}) });
+  const reference = { path: 'sessions/' + current.sessionId } as unknown as Parameters<typeof closeSessions>[1][number]['ref'];
+  const writes = new Map<string, unknown>();
+  const transaction = { set: (ref: { path: string }, value: unknown) => { writes.set(ref.path, value); } } as unknown as Parameters<typeof closeSessions>[0];
+  closeSessions(transaction, [{ ref: reference, session: current }], 'owner');
+  const ended = writes.get(reference.path) as PrivateLiveSession;
+  expect(ended.finalReveal).toEqual({ ...finalReveal, visible: false });
+  expect(ended).toMatchObject({ status: 'ended', eventId: 'event', snapshotId: 'snapshot', revision: current.revision + (status === 'ended' ? 0 : 1) });
+  if (status === 'ended') expect(ended.endedAt).toBe(now);
+  for (const field of ['interimResults', 'interimReturn', 'showCue']) expect(ended).not.toHaveProperty(field);
+  const published = writes.get('publicSessions/' + current.sessionId);
+  expect(published).toMatchObject({ status: 'ended', answerRevealed: false, mediaCommand: 'idle', mediaPlaybackState: 'idle' });
+  for (const field of ['finalReveal', 'interimResults', 'interimBackdrop', 'showCue', 'revealedAnswer', 'answerImage', 'mediaSource', 'snapshotId', 'eventId']) expect(published).not.toHaveProperty(field);
+  closeSessions(transaction, [{ ref: reference, session: ended }], 'owner');
+  expect(writes.get(reference.path)).toEqual(ended);
+  expect(writes.get('publicSessions/' + current.sessionId)).toEqual(published);
+});
+
+test('explicit slide navigation hides a confirmed finale while retaining its private version', () => {
+  const finalReveal = { versionId: 'f'.repeat(64), visible: true, mode: 'intro' as const, revealedCount: 0, totalGroups: 2, rank: null, page: 0, pageCount: 1 };
+  const current = session({ finalReveal, answerRevealed: true, mediaCommand: 'play', mediaPlaybackState: 'playing' });
+  const target = questionSlide(2);
+  const navigated = applyLiveSessionAction(current, { type: 'go-to-slide', position: 2, slideId: target.id }, current.revision, 'moderator', now, target);
+  expect(navigated.finalReveal).toEqual({ ...finalReveal, visible: false });
+  expect(navigated).toMatchObject({ answerRevealed: false, mediaCommand: 'idle', mediaPlaybackState: 'idle' });
+  expect(buildPublicSessionState(navigated, target)).not.toHaveProperty('finalReveal');
+  expect(buildPublicSessionState(navigated, target)).not.toHaveProperty('revealedAnswer');
 });

@@ -8,7 +8,7 @@ export function AssetImage(props: AssetImageProps) {
 }
 function ResolvedAssetImage({ source, alt, sessionId }: AssetImageProps) {
   const snapshotId = useContext(SnapshotMediaContext);
-  const [loaded, setLoaded] = useState<{ source: string; sessionId?: string | undefined; url: string }>();
+  const [loaded, setLoaded] = useState<{ source: string; sessionId?: string | undefined; snapshotId?: string | undefined; url: string }>();
   const [failure, setFailure] = useState<string>();
   const [retry, setRetry] = useState(0);
   const owned = Boolean(parseQuizAsset(source));
@@ -18,11 +18,11 @@ function ResolvedAssetImage({ source, alt, sessionId }: AssetImageProps) {
     if (owned) void readQuizMediaBlob(source, abort.signal, sessionId, snapshotId).then(blob => {
       if (abort.signal.aborted) return;
       window.clearTimeout(timeout);
-      setFailure(undefined); objectUrl = URL.createObjectURL(blob); setLoaded({ source, sessionId, url: objectUrl });
-    }).catch(() => { if (!abort.signal.aborted) setFailure(source); });
+      setFailure(undefined); objectUrl = URL.createObjectURL(blob); setLoaded({ source, sessionId, snapshotId, url: objectUrl });
+    }).catch(() => { window.clearTimeout(timeout); if (!abort.signal.aborted) setFailure(source); });
     else window.clearTimeout(timeout);
     return () => { abort.abort(); window.clearTimeout(timeout); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [owned, source, sessionId, snapshotId, retry]);
-  const url = owned ? loaded?.source === source && loaded.sessionId === sessionId ? loaded.url : undefined : isSafeHttpUrl(source) ? source : undefined;
+  const url = owned ? loaded?.source === source && loaded.sessionId === sessionId && loaded.snapshotId === snapshotId ? loaded.url : undefined : isSafeHttpUrl(source) ? source : undefined;
   return failure === source ? <span role="status">Obrázek není dostupný. <button type="button" onClick={() => { setFailure(undefined); setLoaded(undefined); setRetry(n => n + 1); }}>Zkusit načíst znovu</button></span> : url ? <img key={url + retry} src={url} alt={alt} onError={() => setFailure(source)} /> : <span role="status">Načítám obrázek…</span>;
 }

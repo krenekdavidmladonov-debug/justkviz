@@ -32,6 +32,6 @@ export function RegistrationSharePanel({ event }: { event: EventRecord }) {
       <div className="team-tool-actions"><button className="secondary-button" type="button" onClick={() => void copy()}>Kopírovat odkaz</button><a className="secondary-link" href={url} target="_blank" rel="noopener noreferrer">Otevřít formulář</a><button className="secondary-button" type="button" disabled={pending} onClick={() => { setPending(true); void registrationQr(url).then(setQr).catch(() => setNotice('QR se nepodařilo vytvořit.')).finally(() => setPending(false)); }}>Zobrazit QR</button></div>
       {notice && <p role="status">{notice}</p>}
       {qr && <dialog ref={dialog} className="team-tool-dialog qr-dialog" aria-labelledby="registration-qr-title" onCancel={() => setQr(null)}><h2 id="registration-qr-title">QR pro přihlášení týmů</h2><p>{event.title}</p><img src={qr.png} alt="QR pro přihlášení týmů" /><p className="registration-share-url">{url}</p><div className="team-tool-actions"><a className="secondary-link" href={qr.png} download={`${qrFilename(event.title)}.png`}>Stáhnout PNG</a><a className="secondary-link" href={qr.svg} download={`${qrFilename(event.title)}.svg`}>Stáhnout SVG</a><button className="secondary-button" type="button" onClick={() => setQr(null)}>Zavřít</button></div></dialog>}
-    </> : <Link className="secondary-link" to={`/admin/events/${event.id}/registrations#registration-settings`}>Nastavení zveřejnění</Link>}
+    </> : <Link className="secondary-link" to={`/admin/events/${event.id}`}>Zveřejnění na detailu akce</Link>}
   </section>;
 }

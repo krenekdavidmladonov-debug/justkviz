@@ -3,11 +3,18 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { assertLocalRequest, assertPlan, assertExport, records, ports, sanitizedEnvironment } from './restart-acceptance.mjs';
+import net from 'node:net';
+import { assertLocalRequest, assertPlan, assertExport, records, ports, sanitizedEnvironment, portsFree, assertEmulatorRegistry } from './restart-acceptance.mjs';
 
 const directory = mkdtempSync(path.join(tmpdir(), 'synthetic-restart-guards-'));
 const plan = { directory, projectId: 'demo-restart-012345abcdef', ports };
 const env = { GCLOUD_PROJECT: plan.projectId, GOOGLE_CLOUD_PROJECT: plan.projectId, FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9399', FIRESTORE_EMULATOR_HOST: '127.0.0.1:8380', FUNCTIONS_EMULATOR_HOST: '127.0.0.1:5301', FIREBASE_STORAGE_EMULATOR_HOST: '127.0.0.1:9398' };
+test('recovery cannot clean another emulator temporary storage', () => {
+  const isolated = sanitizedEnvironment(directory, plan.projectId, { TEMP: 'shared', TMP: 'shared', TMPDIR: 'shared' });
+  for (const key of ['TEMP', 'TMP', 'TMPDIR']) assert.equal(isolated[key], path.join(directory, 'temp'));
+  const other = sanitizedEnvironment(path.join(directory, 'other'), plan.projectId, isolated);
+  assert.notEqual(other.TEMP, isolated.TEMP);
+});
 test('only explicit loopback network permitted', () => {
   for (const url of ['http://127.0.0.1:9399/test', 'http://localhost:5301/test', 'http://[::1]:8380/test']) assertLocalRequest(url);
   for (const url of ['https://storage.googleapis.com/b', 'https://localhost.example.test', 'file:///tmp/synthetic', 'http://169.254.169.254/metadata', 'http://localhost@evil.example.test/']) assert.throws(() => assertLocalRequest(url));
@@ -61,4 +68,32 @@ test('junction or symbolic link snapshot cannot be imported as verified', () => 
   const dir = snapshot('linked'), target = path.join(directory, 'foreign'); mkdirSync(target); writeFileSync(path.join(target, 'content'), 'foreign');
   symlinkSync(target, path.join(dir, 'link'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.throws(() => records(dir));
+});
+
+test('recovery owns auxiliary Firebase ports instead of implicit defaults', () => {
+  for (const name of ['eventarc', 'tasks']) assert(Number.isInteger(ports[name]), 'Explicit auxiliary port: ' + name);
+  const all = [...Object.values(ports), ports.firestore + 1];
+  assert.equal(new Set(all).size, all.length);
+});
+
+test('busy owned auxiliary listener is rejected before any emulator start', async () => {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(ports.tasks, '127.0.0.1', resolve); });
+  try { await assert.rejects(portsFree(), new RegExp('PORT_UNAVAILABLE:' + ports.tasks)); }
+  finally { await new Promise(resolve => server.close(resolve)); }
+  await portsFree();
+});
+
+test('actual registry must match every loopback endpoint and websocket without fallback', () => {
+  const registry = Object.fromEntries(Object.entries(ports).map(([name, port]) => [name, { name, host: '127.0.0.1', port }]));
+  Object.assign(registry.firestore, { webSocketHost: '127.0.0.1', webSocketPort: ports.firestore + 1, reservedPorts: [ports.firestore + 1] });
+  assertEmulatorRegistry(registry);
+  for (const mutate of [r => { r.tasks.port++; }, r => { r.eventarc.host='remote.example.test'; }, r => { delete r.functions; }, r => { r.firestore.webSocketPort++; }, r => { r.foreign={host:'127.0.0.1',port:9499}; }]) {
+    const changed=structuredClone(registry); mutate(changed); assert.throws(() => assertEmulatorRegistry(changed));
+  }
+});
+
+test('inherited auxiliary emulator overrides are removed before explicit child mapping', () => {
+  const isolated = sanitizedEnvironment(directory, plan.projectId, { PUBSUB_EMULATOR_HOST: 'synthetic-foreign', CLOUD_TASKS_EMULATOR_HOST: 'synthetic-foreign', EVENTARC_EMULATOR: 'synthetic-foreign' });
+  assert(!isolated.PUBSUB_EMULATOR_HOST && !isolated.CLOUD_TASKS_EMULATOR_HOST && !isolated.EVENTARC_EMULATOR);
 });

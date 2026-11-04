@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import net from 'node:net';
 
 const self = fileURLToPath(import.meta.url), root = realpathSync(path.resolve(path.dirname(self), '../..'));
-export const ports = Object.freeze({ auth: 9399, functions: 5301, firestore: 8380, storage: 9398, hub: 4503, logging: 4603 });
+export const ports = Object.freeze({ auth: 9399, functions: 5301, firestore: 8380, storage: 9398, hub: 4503, logging: 4603, eventarc: 9477, tasks: 9478 });
 const hash = value => createHash('sha256').update(value).digest('hex');
 const save = (file, value) => writeFileSync(file, JSON.stringify(value, null, 2), { flag: 'wx', mode: 0o600 });
 const read = file => JSON.parse(readFileSync(file, 'utf8'));
@@ -79,14 +79,28 @@ export function assertExport(directory) {
 }
 export function sanitizedEnvironment(directory, projectId, inherited = process.env) {
   const env = { ...inherited };
-  for (const key of Object.keys(env)) if (/^(GOOGLE_|GCLOUD_|CLOUDSDK_|CLOUD_RUNTIME_CONFIG$|FIREBASE_|FIRESTORE_|FUNCTIONS_|VITE_|GMAIL_|EMAIL_|NODE_OPTIONS$|NODE_EXTRA_CA_CERTS$)/u.test(key)) delete env[key];
+  for (const key of Object.keys(env)) if (/^(GOOGLE_|GCLOUD_|CLOUDSDK_|CLOUD_RUNTIME_CONFIG$|FIREBASE_|FIRESTORE_|FUNCTIONS_|PUBSUB_|CLOUD_TASKS_|EVENTARC_|VITE_|GMAIL_|EMAIL_|NODE_OPTIONS$|NODE_EXTRA_CA_CERTS$)/u.test(key)) delete env[key];
   // google-auth-library checks APPDATA/gcloud on Windows and HOME/.config/gcloud on Unix.
   // Neither inherited credential location may be inspected by these demo children.
   delete env.HOME;
+  if (process.platform === 'win32') {
+    const windowsRoot = inherited.SystemRoot ?? inherited.SYSTEMROOT ?? inherited.WINDIR ?? process.env.SystemRoot ?? process.env.WINDIR;
+    assert(windowsRoot && path.isAbsolute(windowsRoot), 'WINDOWS_SYSTEM_ROOT_REQUIRED');
+    const pathKeys = Object.keys(env).filter(key => key.toUpperCase() === 'PATH');
+    const toolPath = pathKeys.map(key => env[key]).filter(Boolean).join(path.delimiter);
+    for (const key of pathKeys) delete env[key];
+    // Playwright invokes taskkill by name. Native runtime PATH may contain only
+    // bundled tools; missing System32 leaves its owned web server alive forever.
+    env.PATH = path.join(windowsRoot, 'System32') + path.delimiter + toolPath;
+  }
   return { ...env, GCLOUD_PROJECT: projectId, GOOGLE_CLOUD_PROJECT: projectId,
     FIREBASE_AUTH_EMULATOR_HOST: `127.0.0.1:${ports.auth}`, FIRESTORE_EMULATOR_HOST: `127.0.0.1:${ports.firestore}`,
     FUNCTIONS_EMULATOR_HOST: `127.0.0.1:${ports.functions}`, FIREBASE_STORAGE_EMULATOR_HOST: `127.0.0.1:${ports.storage}`,
-    XDG_CONFIG_HOME: path.join(directory, 'cli-config'), APPDATA: path.join(directory, 'cli-config'), CLOUDSDK_CONFIG: path.join(directory, 'cli-config'), CI: 'true', FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true',
+    XDG_CONFIG_HOME: path.join(directory, 'cli-config'), APPDATA: path.join(directory, 'cli-config'), CLOUDSDK_CONFIG: path.join(directory, 'cli-config'),
+    // Storage Emulator clears its fixed temp subtree on shutdown. Port isolation
+    // alone cannot protect another suite sharing the inherited OS temp directory.
+    TEMP: path.join(directory, 'temp'), TMP: path.join(directory, 'temp'), TMPDIR: path.join(directory, 'temp'),
+    CI: 'true', FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true',
     EVENT_NIGHT_RESTART_NETWORK_GUARD: '1', NODE_OPTIONS: `--import=${pathToFileURL(self).href}` };
 }
 function run(executable, args, options) {
@@ -100,8 +114,21 @@ function run(executable, args, options) {
     child.once('exit', (code, signal) => code === 0 && !signal ? resolve() : reject(new Error(`OWN_CHILD_FAILED:${code ?? signal}`)));
   });
 }
-async function portsFree() {
-  for (const port of Object.values(ports)) await new Promise((resolve, reject) => {
+export function assertEmulatorRegistry(registry) {
+  assert(registry && typeof registry === 'object' && !Array.isArray(registry), 'INVALID_EMULATOR_REGISTRY');
+  assert.deepEqual(Object.keys(registry).sort(), Object.keys(ports).sort(), 'UNEXPECTED_EMULATOR_REGISTRY');
+  for (const [name, port] of Object.entries(ports)) {
+    const actual = registry[name];
+    assert(actual?.name === name && actual.host === '127.0.0.1' && actual.port === port, 'SHIFTED_EMULATOR_ENDPOINT:' + name);
+    if (actual.listen !== undefined) assert(Array.isArray(actual.listen) && actual.listen.length > 0 && actual.listen.every(item => item.address === '127.0.0.1' && item.port === port), 'FOREIGN_EMULATOR_LISTENER:' + name);
+  }
+  assert.equal(registry.firestore.webSocketHost, '127.0.0.1', 'FOREIGN_FIRESTORE_WEBSOCKET');
+  assert.equal(registry.firestore.webSocketPort, ports.firestore + 1, 'SHIFTED_FIRESTORE_WEBSOCKET');
+  assert.deepEqual(registry.firestore.reservedPorts, [ports.firestore + 1], 'UNEXPECTED_FIRESTORE_RESERVED_PORTS');
+}
+
+export async function portsFree() {
+  for (const port of [...Object.values(ports), ports.firestore + 1]) await new Promise((resolve, reject) => {
     const server = net.createServer(); server.once('error', () => reject(new Error(`PORT_UNAVAILABLE:${port}`)));
     server.listen(port, '127.0.0.1', () => server.close(resolve));
   });
@@ -122,8 +149,9 @@ New-EventNightSnapshotManifest $p.SnapshotDirectory $p
 New-EventNightSnapshotManifest $p.ExportStaging $p
 $prior=@(Get-EventNightFileRecords $p.SnapshotDirectory @()) | ConvertTo-Json -Depth 5 -Compress
 $script:Canonical=$p.SnapshotDirectory; $script:Interrupted=$false
-function Move-Item { [CmdletBinding()]param([string]$LiteralPath,[string]$Destination)
- & (Get-Command Move-Item -Module Microsoft.PowerShell.Management) -LiteralPath $LiteralPath -Destination $Destination
+$script:RealSnapshotMove = (Get-Command Move-EventNightSnapshotPath -CommandType Function).ScriptBlock
+function Move-EventNightSnapshotPath { [CmdletBinding()]param([string]$RepoRoot,[string]$LiteralPath,[string]$Destination)
+ & $script:RealSnapshotMove @PSBoundParameters
  if($LiteralPath -eq $script:Canonical -and -not $script:Interrupted){$script:Interrupted=$true;throw 'ACCEPTANCE_INTERRUPTION_BETWEEN_RENAMES'}
 }
 $failed=$false
@@ -147,6 +175,7 @@ async function controller(powerShell) {
   // Keep real Firestore backup paths below Windows PowerShell 5's legacy path limit.
   const parent = path.join(root, '.local-data/en-restart'); mkdirSync(parent, { recursive: true }); assert.equal(realpathSync(parent), parent);
   const directory = mkdtempSync(path.join(parent, 'run-')), projectId = 'demo-restart-' + randomUUID().replaceAll('-', '').slice(0, 12);
+  mkdirSync(path.join(directory, 'temp'));
   const env = sanitizedEnvironment(directory, projectId), sandbox = path.join(directory, 'sandbox');
   const plan = { directory, projectId, ports, sourceSha256: hash(readFileSync(self)), sources: [self, ...['tools/event-night/EventNight.Common.ps1', 'functions/lib/dev/seed-auth.js', 'functions/lib/dev/seed-quizzes.js', 'functions/package.json', 'firestore.rules', 'firestore.indexes.json', 'storage.rules'].map(file => path.join(root, file))].map(file => ({ path: path.relative(root, file), sha256: hash(readFileSync(file)) })), functionBuild: records(path.join(root, 'functions/lib')), domainBuild: records(path.join(root, 'packages/quiz-domain/lib')) };
   save(path.join(directory, 'plan.json'), plan); assertPlan(plan, directory, env);
@@ -155,12 +184,15 @@ async function controller(powerShell) {
   cpSync(path.join(root, 'functions/lib'), path.join(runtime, 'lib'), { recursive: true, errorOnExist: true, force: false });
   writeFileSync(path.join(runtime, 'package.json'), readFileSync(path.join(root, 'functions/package.json')), { flag: 'wx' });
   symlinkSync(realpathSync(path.join(root, 'functions/node_modules')), path.join(runtime, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+  // pnpm's Windows .bin shims resolve relative to the invoking run directory.
+  // Preserve that workspace dependency root as well as the Functions packages.
+  symlinkSync(realpathSync(path.join(root, 'node_modules')), path.join(directory, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.deepEqual(records(path.join(runtime, 'lib')), plan.functionBuild);
   for (const name of ['firestore.rules', 'firestore.indexes.json', 'storage.rules']) writeFileSync(path.join(directory, name), readFileSync(path.join(root, name)), { flag: 'wx' });
-  const config = { functions: { source: 'functions-runtime' }, firestore: { rules: 'firestore.rules', indexes: 'firestore.indexes.json' }, storage: { rules: 'storage.rules' }, emulators: { ...Object.fromEntries(Object.entries(ports).map(([name, port]) => [name, { host: '127.0.0.1', port }])), ui: { enabled: false }, singleProjectMode: true } };
+  const config = { functions: { source: 'functions-runtime' }, firestore: { rules: 'firestore.rules', indexes: 'firestore.indexes.json' }, storage: { rules: 'storage.rules' }, emulators: { ...Object.fromEntries(Object.entries(ports).map(([name, port]) => [name, { host: '127.0.0.1', port }])), firestore: { host: '127.0.0.1', port: ports.firestore, websocketPort: ports.firestore + 1 }, ui: { enabled: false }, singleProjectMode: true } };
   save(path.join(directory, 'firebase.json'), config);
   const cli = path.join(root, 'node_modules/firebase-tools/lib/bin/firebase.js');
-  assert.equal(createRequire(import.meta.url)('firebase-tools/package.json').version, '15.28.2');
+  assert.equal(createRequire(import.meta.url)('firebase-tools/package.json').version, '15.34.2');
   const cycle = async (phase, snapshot) => {
     await portsFree();
     const command = [process.execPath, self, '--worker', phase, '--run-dir', directory].map(quote).join(' ');
@@ -196,6 +228,7 @@ async function worker(phase, directory) {
   const plan = read(path.join(directory, 'plan.json')); assertPlan(plan, directory, process.env);
   assert.equal(plan.sourceSha256, hash(readFileSync(self)), 'HARNESS_SOURCE_CHANGED');
   const status = await fetch(`http://127.0.0.1:${ports.hub}/`); assert.equal(status.status, 200); assert.equal((await status.json()).pid, read(path.join(directory, phase + '-suite-process.json')).pid, 'FOREIGN_HUB');
+  const registry = await fetch(`http://127.0.0.1:${ports.hub}/emulators`); assert.equal(registry.status, 200); assertEmulatorRegistry(await registry.json());
   if (phase === 'fresh') {
     for (const name of ['seed-auth', 'seed-quizzes']) await run(process.execPath, [path.join(root, `functions/lib/dev/${name}.js`)], { cwd: directory, env: process.env, log: path.join(directory, name + '.log') });
   }
@@ -224,7 +257,7 @@ async function worker(phase, directory) {
     }
     await authSdk.signInWithEmailAndPassword(clientAuth, 'admin@example.test', 'LocalQuiz123!');
     if (phase === 'fresh') {
-      const { eventId } = await call('createEvent', { expectedRevision: 0, event: { title: 'Synthetic restart acceptance', startsAt: '2031-01-01T18:00:00Z', timeZone: 'Europe/Prague', venue: { name: 'Synthetic', publicLocation: 'Synthetic' }, teamCapacity: 10, peopleCapacity: 40, teamSizeMin: 2, teamSizeMax: 6 } });
+      const { eventId } = await call('createEvent', { expectedRevision: 0, event: { title: 'Synthetic restart acceptance', startsAt: '2031-01-01T18:00:00Z', timeZone: 'Europe/Prague', venue: { name: 'Synthetic', publicLocation: 'Synthetic' }, teamCapacity: 10, peopleCapacity: 40, teamSizeMin: 2, teamSizeMax: 4 } });
       const team = await call('adminAddEventTeam', { eventId, requestId: randomUUID(), teamName: 'Synthetic retained team', memberCount: 2 }); assert.equal(team.contactEmail, null);
       const event = (await db.doc(`events/${eventId}`).get()).data();
       const { snapshotId } = await call('lockEventQuiz', { eventId, expectedRevision: event.revision, quizId: 'preflight-ready-e2e', expectedQuizRevision: 0, acknowledgeWarnings: false });
@@ -244,7 +277,7 @@ async function worker(phase, directory) {
     }
     const cli = path.join(root, 'node_modules/firebase-tools/lib/bin/firebase.js');
     await run(process.execPath, [cli, 'emulators:export', path.join(directory, phase === 'fresh' ? 'checkpoint-1' : phase === 'restart' ? 'checkpoint-2' : 'checkpoint-3'), '--project', plan.projectId, '--config', path.join(directory, 'firebase.json'), '--non-interactive'], { cwd: directory, env: process.env, log: path.join(directory, phase + '-export.log') });
-    save(path.join(directory, phase + '-result.json'), { mode: 'PHASE_PASS', projectId: plan.projectId, phase, importedIdentityVerified: phase !== 'fresh', scoreRevision: phase === 'fresh' ? 1 : 2, storageBytesSha256: hash(payload), receiptReplayVerified: phase !== 'fresh', staleScoreRejected: phase !== 'fresh' });
+    save(path.join(directory, phase + '-result.json'), { mode: 'PHASE_PASS', projectId: plan.projectId, phase, emulatorRegistryVerified: true, importedIdentityVerified: phase !== 'fresh', scoreRevision: phase === 'fresh' ? 1 : 2, storageBytesSha256: hash(payload), receiptReplayVerified: phase !== 'fresh', staleScoreRejected: phase !== 'fresh' });
   } finally { await deleteApp(client); await admin.deleteApp(app); }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === self) {

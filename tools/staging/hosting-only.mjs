@@ -8,6 +8,12 @@ export function deploymentMode(args) {
   throw new Error('Only the explicit --hosting-only option is accepted; no resource overrides.');
 }
 
+export function assertNoObsoleteHostingDeployment(mode, config) {
+  if ((mode === 'full' || mode === 'hosting-only') && config?.hosting?.site === STAGING_PROJECT) {
+    throw new Error('The obsolete staging Hosting deployment path is retired.');
+  }
+}
+
 export const TEAM_TOOL_FUNCTIONS = ['adminAddEventTeam', 'adminUpdateEventTeam'];
 export function teamToolFunctionArgs(project, env, config, configPath) {
   assertStagingProject(project);
@@ -41,6 +47,7 @@ export function assertHostingOnlyConfig(config) {
 
 export function hostingOnlyArgs(project, env, config, configPath) {
   assertStagingProject(project);
+  assertNoObsoleteHostingDeployment('hosting-only', config);
   assertStagingEnvironment(env);
   assertHostingOnlyConfig(config);
   return ['deploy', '--project', project, '--config', configPath, '--only', 'hosting', '--non-interactive'];

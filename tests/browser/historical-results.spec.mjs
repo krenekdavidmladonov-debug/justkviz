@@ -1,5 +1,6 @@
 /* global document, innerWidth */
 import { expect, test } from '@playwright/test';
+import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { finalFixture } from '../e2e/final-reveal-fixture.mjs';
 
@@ -21,9 +22,13 @@ async function readOnlyMember(f) {
   await f.db.doc(`memberships/${f.moderator.uid}`).update({ permissions: ['event.read'], quizzes: { mode: 'none', ids: [] }, events: { mode: 'selected', ids: [f.eventId] }, version: 2 });
 }
 test('completed detail → confirmed history, mobile/reload, later source edits and missing roster cause no mutation', async ({ page }) => {
-  const f = await finalFixture(4);
+  const f = await finalFixture(4); let sourceQuizId;
   try {
-    await f.db.doc('quizzes/synthetic-library').set({ revision: 0, title: 'Synthetic immutable quiz' });
+    // Keep the source quiz valid for other library clients and owned by this fixture.
+    ({ quizId: sourceQuizId } = await f.admin.call('createQuiz', { title: 'Synthetic immutable quiz', requestId: randomUUID() }));
+    await f.db.doc(`events/${f.eventId}`).update({ 'quizAssignment.quizId': sourceQuizId });
+    await f.db.doc(`quizSnapshots/${f.snapshotId}`).update({ quizId: sourceQuizId });
+    await f.db.doc(`sessions/${f.sessionId}`).update({ quizId: sourceQuizId });
     const names = ['QA Alfa', 'QA Beta — dlouhý název týmu pro kontrolu mobilního pořadí', 'QA Delta', 'QA Gamma'];
     const halfPoints = [[12,12,10],[9,7,10],[5,8,6],[0,4,2]];
     for (let i = 0; i < 4; i++) {
@@ -34,6 +39,8 @@ test('completed detail → confirmed history, mobile/reload, later source edits 
     for (let i = 0; i < 4; i++) await f.command('reveal');
     await f.command('table');
     await f.call('endLiveSession', { sessionId: f.sessionId, expectedRevision: (await f.session()).revision });
+    // Session END and lifecycle completion are distinct current application operations.
+    await f.admin.call('completeEvent', { eventId: f.eventId, expectedRevision: (await f.db.doc(`events/${f.eventId}`).get()).get('revision'), requestId: randomUUID() });
     await readOnlyMember(f);
     await login(page, f);
     await page.goto(`/admin/events/${f.eventId}`);
@@ -58,7 +65,7 @@ test('completed detail → confirmed history, mobile/reload, later source edits 
     await page.reload(); await expect(table.locator('tbody tr')).toHaveCount(4); expect(await rows()).toEqual(expected);
     expect(await protectedState(f)).toEqual(before);
     // These changes are local emulator fixtures only, after the immutable confirmation.
-    await f.db.doc('quizzes/synthetic-library').update({ revision: 31, title: 'Later library content' });
+    await f.db.doc(`quizzes/${sourceQuizId}`).update({ revision: 31, title: 'Later library content' });
     await f.db.doc(`events/${f.eventId}/registrations/${f.teamIds[1]}`).delete();
     await page.reload(); await expect(table.locator('tbody tr')).toHaveCount(4); expect(await rows()).toEqual(expected);
     expect(await protectedState(f)).toEqual(before);
@@ -66,7 +73,17 @@ test('completed detail → confirmed history, mobile/reload, later source edits 
     await f.db.doc(`memberships/${f.moderator.uid}`).update({ events: { mode: 'none', ids: [] }, version: 3 });
     await expect(table).toHaveCount(0);
     await expect(page.getByRole('alert')).toContainText('nemáte přístup');
-  } finally { await f.close(); }
+  } finally {
+    try {
+      if (sourceQuizId) {
+        const source = await f.db.doc(`quizzes/${sourceQuizId}`).get();
+        if (source.exists) {
+          expect(source.get('createdBy') === f.admin.uid).toBe(true);
+          await f.db.recursiveDelete(source.ref);
+        }
+      }
+    } finally { await f.close(); }
+  }
 });
 
 test('live event has no historical shortcut; completed event without confirmation reports unavailable', async ({ page }) => {
@@ -78,6 +95,8 @@ test('live event has no historical shortcut; completed event without confirmatio
     await page.goto(`/admin/events/${f.eventId}/results`);
     await expect(page.getByText('Akce ještě není dokončená. Její průběh otevřete z detailu akce.')).toBeVisible();
     await f.call('endLiveSession', { sessionId: f.sessionId, expectedRevision: (await f.session()).revision });
+    // Session END and lifecycle completion are distinct current application operations.
+    await f.admin.call('completeEvent', { eventId: f.eventId, expectedRevision: (await f.db.doc(`events/${f.eventId}`).get()).get('revision'), requestId: randomUUID() });
     const before = await protectedState(f);
     await page.reload(); await expect(page.getByText('Konečné výsledky této akce nejsou k dispozici.')).toBeVisible();
     await expect(page.getByRole('table')).toHaveCount(0);

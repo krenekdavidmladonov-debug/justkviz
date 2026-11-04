@@ -8,7 +8,8 @@ import { createEventFormData, eventFormRecord } from './browser/events-form-ux.d
 const values: EventFormValues = {
   title: 'Nová akce', startsAt: '2030-10-20T19:00', timeZone: 'Europe/Prague',
   venueName: 'Testovací sál', publicLocation: 'Testovací lokalita',
-  teamCapacity: 20, peopleCapacity: 120, teamSizeMin: 2, teamSizeMax: 6,
+  teamCapacity: 20, peopleCapacity: 80, teamSizeMin: 2, teamSizeMax: 4,
+  pricingMode: 'per-team', pricingAmountCzk: 350,
 };
 
 // Exercise the real repository mapper with Firestore date values, without initializing Firebase.
@@ -22,6 +23,24 @@ function storedData(record: EventRecord): Record<string, unknown> {
 }
 
 describe('isolated event form data contract', () => {
+  test('maps legacy pricing to the default and preserves explicit private-event pricing', () => {
+    const record = eventFormRecord();
+    expect(mapEvent(record.id, { ...storedData(record), pricing: undefined }).pricing).toEqual({ mode: 'per-team', amountCzk: 350 });
+    for (const pricing of [{ mode: 'per-event', amountCzk: 15000 }, { mode: 'agreement', amountCzk: null }, { mode: 'per-event', amountCzk: 15000, hidden: true }]) {
+      expect(mapEvent(record.id, { ...storedData(record), pricing }).pricing).toEqual(pricing);
+    }
+  });
+  test('hidden pricing survives save/reload and showing it again retains the private amount', () => {
+    const data = createEventFormData();
+    data.updateEvent('synthetic-event', 2, { ...values, pricingMode: 'per-event', pricingAmountCzk: 12500, pricingHidden: true });
+    const reloaded = data.getEvent('synthetic-event')!;
+    expect(mapEvent(reloaded.id, storedData(reloaded)).pricing).toEqual({ mode: 'per-event', amountCzk: 12500, hidden: true });
+    data.updateEvent(reloaded.id, reloaded.revision, { ...values, pricingMode: 'per-event', pricingAmountCzk: reloaded.pricing!.amountCzk!, pricingHidden: false });
+    expect(data.getEvent(reloaded.id)?.pricing).toEqual({ mode: 'per-event', amountCzk: 12500 });
+  });
+  test.each([null, { mode: 'agreement', amountCzk: 350 }, { mode: 'per-team', amountCzk: -1 }, { mode: 'per-team', amountCzk: 1.5 }, { mode: 'per-event', amountCzk: 1000001 }, { mode: 'unknown', amountCzk: 350 }])('rejects malformed explicit pricing %j', pricing => {
+    expect(() => mapEvent('event', { ...storedData(eventFormRecord()), pricing })).toThrow('Neplatná cena akce.');
+  });
   test('the initial detail record passes the real configuration validator and mapper', () => {
     const record = eventFormRecord();
     expect(validateEventConfiguration(record)).toEqual([]);

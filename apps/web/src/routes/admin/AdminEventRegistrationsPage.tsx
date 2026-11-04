@@ -5,11 +5,13 @@ import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthProvider';
 import { ManualTeamDialog } from '../../features/events/ManualTeamDialog';
 import { RegistrationSharePanel } from '../../features/events/RegistrationSharePanel';
+import { registrationManagementUrl } from '../../features/events/registrationSharing';
 import { adminCancelRegistration, configureEventRegistration, reissueRegistrationLink, registrationActionError } from '../../features/events/registrationApi';
 import { getEvent, listEventRegistrations } from '../../features/events/eventRepository';
 import type { EventRecord, RegistrationRecord } from '../../features/events/types';
 import { QuizErrorState } from '../../features/quizzes/QuizErrorState';
 import { QuizLoading } from '../../features/quizzes/QuizLoading';
+import { readFirebaseConfig } from '../../services/firebase/config';
 
 const localDateTime = pragueDateTime;
 export function AdminEventRegistrationsPage() {
@@ -19,7 +21,6 @@ export function AdminEventRegistrationsPage() {
   const [registrations, setRegistrations] = useState<readonly RegistrationRecord[]>([]);
   const [opensAt, setOpensAt] = useState('');
   const [closesAt, setClosesAt] = useState('');
-  const [published, setPublished] = useState(false);
   const [opensOffset, setOpensOffset] = useState(''), [closesOffset, setClosesOffset] = useState('');
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
@@ -37,14 +38,13 @@ export function AdminEventRegistrationsPage() {
       if (nextEvent) {
         setOpensAt(localDateTime(nextEvent.registrationOpensAt ?? new Date()));
         setClosesAt(localDateTime(nextEvent.registrationClosesAt ?? nextEvent.startsAt));
-        setPublished(nextEvent.registrationPublished);
       }
     } catch { setError('Registrace se nepodařilo načíst.'); } finally { setLoading(false); }
   }, [eventId]);
   useEffect(() => { void load(); }, [load]);
   const configure = async () => {
     if (!event) return; setPending(true); setError(null); setNotice(null);
-    try { await configureEventRegistration(event.id, event.revision, opensAt, closesAt, published, opensOffset, closesOffset); setNotice('Nastavení registrací bylo uloženo.'); await load(); }
+    try { await configureEventRegistration(event.id, event.revision, opensAt, closesAt, undefined, opensOffset, closesOffset); setNotice('Nastavení registrací bylo uloženo.'); await load(); }
     catch (reason) { setError(registrationActionError(reason)); } finally { setPending(false); }
   };
   const cancel = async (registration: RegistrationRecord) => {
@@ -56,14 +56,19 @@ export function AdminEventRegistrationsPage() {
   const reissue = async (team: RegistrationRecord) => {
     if (!event || !window.confirm('Vydat nový odkaz týmu ' + team.teamName + '? Dosavadní odkaz přestane platit. Nový odkaz se neodešle e-mailem.')) return;
     setPending(true); setNewLink(''); setError(null);
-    try { const result = await reissueRegistrationLink(event.id, team.id, team.revision ?? 0); if (result.managementToken) setNewLink(window.location.origin + '/events/' + event.id + '/registration/manage#registration=' + encodeURIComponent(team.id) + '&token=' + encodeURIComponent(result.managementToken)); await load(); }
+    try {
+      const config = readFirebaseConfig();
+      const result = await reissueRegistrationLink(event.id, team.id, team.revision ?? 0);
+      if (result.managementToken) setNewLink(registrationManagementUrl(event.id, team.id, result.managementToken, { projectId: config.options.projectId ?? '', useEmulators: config.useEmulators }, window.location.origin));
+      await load();
+    }
     catch (reason) { setError(registrationActionError(reason)); } finally { setPending(false); }
   };
   if (loading) return <QuizLoading label="Načítám registrace…" />;
   if (error && !event) return <QuizErrorState message={error} onRetry={() => void load()} />;
   if (!event) return <section className="quiz-state-card"><h2>Akce neexistuje</h2></section>;
   const admin = can('event.manage') && can('event.contacts') && eventOperational(event);
-  return <article className="event-detail-page"><Link className="back-link" to={`/admin/events/${event.id}`}>← Zpět na akci</Link><header className="event-page-heading"><div><p className="eyebrow">Akce · Registrace</p><h1>{event.title}</h1><p className="lead">{event.acceptedTeams} / {event.teamCapacity} týmů · {event.acceptedPeople} / {event.peopleCapacity} osob</p></div><span className={`quiz-status status-${event.registrationStatus}`}>{{ scheduled: 'Otevřou se později', open: 'Otevřené', paused: 'Pozastavené', full: 'Naplněno', closed: 'Uzavřené' }[event.registrationStatus]}</span></header>
+  return <article className="event-detail-page"><Link className="back-link" to={`/admin/events/${event.id}`}>← Zpět na akci</Link><header className="event-page-heading"><div><p className="eyebrow">Akce · Registrace</p><h1>{event.title}</h1><p className="lead">{event.acceptedTeams} / {event.teamCapacity} týmů</p></div><span className={`quiz-status status-${event.registrationStatus}`}>{{ scheduled: 'Otevřou se později', open: 'Otevřené', paused: 'Pozastavené', full: 'Naplněno', closed: 'Uzavřené' }[event.registrationStatus]}</span></header>
     {error && <p className="round-editor-error" role="alert">{error}</p>}{notice && <p className="event-notice" role="status">{notice}</p>}
     {newLink && <section className="event-notice" role="status"><p>Nový odkaz uložte a předejte týmu. E-mail nebyl odeslán.</p><label className="form-field">Nový soukromý odkaz<input readOnly value={newLink} onFocus={e => e.target.select()} /></label><button className="secondary-button" onClick={() => setNewLink('')}>Skrýt odkaz</button></section>}
     <RegistrationSharePanel event={event} />
@@ -72,6 +77,6 @@ export function AdminEventRegistrationsPage() {
       {registrations.some(item => item.emailDelivery) && <p className="event-muted">Odesláno znamená, že zprávu přijal poskytovatel. Doručení do schránky tím není potvrzené. Pokud zpráva vyžaduje kontrolu, před dalším odesláním ověřte u týmu a správce, zda už dorazila.</p>}
     </section>
     {admin && teamDialog && <ManualTeamDialog event={event} {...(teamDialog === 'new' ? {} : { team: teamDialog })} onClose={() => setTeamDialog(null)} onSaved={async (id, name) => { setTeamDialog(null); setSelectedId(id); setNotice(`Tým ${name} byl uložen.`); await load(); }} />}
-    <section className="event-section" id="registration-settings"><h2>Doba registrace · český čas</h2>{admin ? <form className="registration-form" onSubmit={(e) => { e.preventDefault(); void configure(); }}><label className="form-field"><span>Otevření</span><input required type="datetime-local" value={opensAt} onChange={(e) => setOpensAt(e.target.value)} /></label><label className="form-field"><span>Uzavření</span><input required type="datetime-local" value={closesAt} onChange={(e) => setClosesAt(e.target.value)} /></label>{[[opensOffset, setOpensOffset, 'Časové pásmo začátku'], [closesOffset, setClosesOffset, 'Časové pásmo konce']].map(([value, setter, label]) => <label className="form-field" key={String(label)}><span>{String(label)} — při opakovaném podzimním čase</span><select value={value as string} onChange={e => (setter as (value: string) => void)(e.target.value)}><option value="">Automaticky</option><option value="+02:00">Letní čas (+02:00)</option><option value="+01:00">Zimní čas (+01:00)</option></select></label>)}<label className="warning-confirmation"><input type="checkbox" checked={published} onChange={(e) => setPublished(e.target.checked)} /> Zveřejnit registraci</label><button className="primary-button" disabled={pending}>Uložit nastavení</button></form> : <p>Moderátor má přístup pouze pro čtení.</p>}</section>
+    <section className="event-section" id="registration-settings"><h2>Doba registrace · český čas</h2><p>Zveřejnění akce nastavíte samostatně na detailu akce. Uložení času viditelnost nemění.</p>{admin ? <form className="registration-form" onSubmit={(e) => { e.preventDefault(); void configure(); }}><label className="form-field"><span>Otevření</span><input required type="datetime-local" value={opensAt} onChange={(e) => setOpensAt(e.target.value)} /></label><label className="form-field"><span>Uzavření</span><input required type="datetime-local" value={closesAt} onChange={(e) => setClosesAt(e.target.value)} /></label>{[[opensOffset, setOpensOffset, 'Časové pásmo začátku'], [closesOffset, setClosesOffset, 'Časové pásmo konce']].map(([value, setter, label]) => <label className="form-field" key={String(label)}><span>{String(label)} — při opakovaném podzimním čase</span><select value={value as string} onChange={e => (setter as (value: string) => void)(e.target.value)}><option value="">Automaticky</option><option value="+02:00">Letní čas (+02:00)</option><option value="+01:00">Zimní čas (+01:00)</option></select></label>)}<button className="primary-button" disabled={pending}>Uložit nastavení</button></form> : <p>Moderátor má přístup pouze pro čtení.</p>}</section>
   </article>;
 }

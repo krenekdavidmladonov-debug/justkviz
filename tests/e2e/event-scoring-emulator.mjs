@@ -32,7 +32,7 @@ try {
   await Promise.all([login(staff, 'admin'), login(moderator, 'moderator'), login(ordinary, 'user')]);
   const { eventId } = await staff.call('createEvent', { expectedRevision: 0, event: {
     title: 'Synthetic scoring E2E', startsAt: '2031-01-01T18:00:00Z', timeZone: 'Europe/Prague',
-    venue: { name: 'Synthetic', publicLocation: 'Synthetic' }, teamCapacity: 10, peopleCapacity: 40, teamSizeMin: 2, teamSizeMax: 6,
+    venue: { name: 'Synthetic', publicLocation: 'Synthetic' }, teamCapacity: 10, peopleCapacity: 40, teamSizeMin: 2, teamSizeMax: 4,
   } });
   const eventRef = db.doc(`events/${eventId}`);
   const eventData = async () => (await eventRef.get()).data();
@@ -120,7 +120,28 @@ try {
     const current = (await eventRef.collection('scores').where('teamId', '==', online.registrationId).get()).docs[0].data();
     await write({ teamId: online.registrationId, expectedRevision: current.revision, halfPoints: current.halfPoints + 1, reason: 'Operational phase' });
   }
-  console.log('PASS: scoring transactions, current authorization, immutable rounds, private publication, history and lifecycle (demo emulators only).');
+  // A whole-round intent uses the same ledger and fails atomically on one stale team.
+  const batchPublicBefore = (await db.doc(`publicEvents/${eventId}`).get()).data();
+  const batchTeams = ['round-a-' + randomUUID(), 'round-b-' + randomUUID()];
+  for (const teamId of batchTeams) await eventRef.collection('registrations').doc(teamId).set({ eventId, teamName: 'Synthetic round team', status: 'accepted' });
+  const roundInput = { eventId, snapshotId, roundId, requestId: randomUUID(), scores: batchTeams.map((teamId, index) => ({ teamId, expectedRevision: 0, halfPoints: index === 0 ? 0 : 5, reason: '' })) };
+  const roundWrite = (input = roundInput, caller = staff) => caller.call('saveEventScore', input);
+  await denied(roundWrite(roundInput, publicClient), 'unauthenticated');
+  await denied(roundWrite(roundInput, ordinary), 'permission-denied');
+  const batch = await roundWrite(); assert.equal(batch.scores.length, 2); assert.equal(batch.scores[0].revision, 1);
+  assert.deepEqual(await roundWrite({ ...roundInput, scores: [...roundInput.scores].reverse() }), batch);
+  await denied(roundWrite({ ...roundInput, scores: [{ ...roundInput.scores[0], halfPoints: 7 }] }), 'already-exists');
+  const staleRound = { ...roundInput, requestId: randomUUID(), scores: roundInput.scores.map((score, index) => ({ ...score, expectedRevision: index === 0 ? 0 : 1, halfPoints: 8, reason: 'Synthetic conflict' })) };
+  await denied(roundWrite(staleRound, moderator), 'aborted');
+  for (const score of batch.scores) {
+    const ref = eventRef.collection('scores').doc(score.scoreId); assert.equal((await ref.get()).data().revision, 1); assert.equal((await ref.collection('history').get()).size, 1);
+  }
+  await seedEmulatorMembership(staff.auth.currentUser.uid, 'user');
+  try { await denied(roundWrite(), 'permission-denied'); } finally { await seedEmulatorMembership(staff.auth.currentUser.uid, 'admin'); }
+  const clearedRound = await roundWrite({ ...roundInput, requestId: randomUUID(), scores: roundInput.scores.map(score => ({ ...score, expectedRevision: 1, halfPoints: null, reason: 'Synthetic clearing' })) });
+  assert(clearedRound.scores.every(score => score.revision === 2 && score.halfPoints === null));
+  assert.deepEqual((await db.doc(`publicEvents/${eventId}`).get()).data(), batchPublicBefore);
+  console.log('PASS: single and atomic round scoring, current authorization, immutable rounds, private publication, history and lifecycle (demo emulators only).');
 } finally {
   await Promise.all([staff, moderator, ordinary, publicClient].map(client => deleteApp(client.app)));
   await adminSdk.deleteApp(adminApp);

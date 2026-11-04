@@ -48,7 +48,7 @@ export function AdminShell() {
   }
 
   const accountLabel = membership ? roleLabels[membership.role] : 'Uživatel';
-  const isStaging = import.meta.env.VITE_APP_ENV === 'staging';
+  const environmentTitle = `Projekt V2: ${import.meta.env.VITE_FIREBASE_PROJECT_ID}`;
 
   return (
     <div className="admin-shell" data-area={area}>
@@ -57,7 +57,7 @@ export function AdminShell() {
           <NavLink className="admin-brand" to="/admin" aria-label={`${productConfig.adminLabel} – přehled`}>
             <span><strong><Brand /></strong><small>Administrace</small></span>
           </NavLink>
-          {isStaging && <span className="admin-environment-label" title="Samostatné prostředí V2 pro ověření vydání">V2 staging</span>}
+          <span className="admin-environment-label" title={environmentTitle}>V2</span>
         </div>
         <AdminNavigation />
         <div className="admin-account">
@@ -74,7 +74,7 @@ export function AdminShell() {
           <NavLink className="admin-brand" to="/admin" aria-label={`${productConfig.adminLabel} – přehled`}>
             <strong><Brand /></strong>
           </NavLink>
-          {isStaging && <span className="admin-environment-label" title="Samostatné prostředí V2 pro ověření vydání">V2 staging</span>}
+          <span className="admin-environment-label" title={environmentTitle}>V2</span>
         </div>
         <details className="admin-nav-disclosure">
           <summary aria-label="Otevřít navigaci administrace">Menu</summary>

@@ -1,6 +1,6 @@
 import type { MediaPlaybackState } from '../presentation/types';
 import type { PublicLiveState, PublicMedia } from './types';
-import { normalizeSlideDesign, parseInterimBackdrop, parseShowCue, type SlideDesign } from '@filmovy-kviz/quiz-domain';
+import { youtubeVideoId, normalizeSlideDesign, parseInterimBackdrop, parseShowCue, type SlideDesign } from '@filmovy-kviz/quiz-domain';
 import { parseResultPage } from '../leaderboard/types';
 import { parseFinalPage } from '../final-reveal/types';
 
@@ -29,6 +29,7 @@ const stateKeys = new Set([
   'introGeneration', 'questionNumber', 'questionCount', 'backgroundImage', 'questionImage', 'mediaSource',
   'backgroundOverlay', 'clipStartSeconds', 'clipEndSeconds', 'answerRevealed', 'revealedAnswer', 'answerImage',
   'recapQuestionPosition', 'revision',
+  'mediaPlaybackMode',
   'design', 'roundTitle', 'subtitle', 'imageLayout', 'answerExplanation', 'showCue', 'interimBackdrop', 'interimResults', 'finalReveal',
 ]);
 const presentationKeys = new Set(['backgroundOverlay', 'answerOverlay', 'sourceQuestionNumber']);
@@ -152,7 +153,10 @@ export function parsePublicLiveState(value: unknown): PublicLiveState | undefine
 
   const normalAudio = data.presentationMode === 'slide'
     && (data.slideKind === 'audio' || data.slideKind === 'music');
-  if (normalAudio && (Object.hasOwn(data, 'mediaSource')
+  if (Object.hasOwn(data, 'mediaPlaybackMode') && (data.mediaPlaybackMode !== 'original' || !data.answerRevealed || data.status !== 'active'
+    || data.renderMode !== 'recap' || typeof data.mediaSource !== 'string' || !youtubeVideoId(data.mediaSource)
+    || data.clipStartSeconds !== 0 || Object.hasOwn(data, 'clipEndSeconds'))) return undefined;
+  if (normalAudio && data.mediaPlaybackMode !== 'original' && (Object.hasOwn(data, 'mediaSource')
     || media.some((item) => item.kind === 'audio' || item.kind === 'video'))) return undefined;
 
   const result = additions.interimResults ?? additions.finalReveal;
@@ -166,6 +170,7 @@ export function parsePublicLiveState(value: unknown): PublicLiveState | undefine
 
   return {
     ...additions,
+    ...(data.mediaPlaybackMode === 'original' ? { mediaPlaybackMode: 'original' as const } : {}),
     ...(data.roundTitle === undefined ? {} : { roundTitle: data.roundTitle as string }),
     ...(data.subtitle === undefined ? {} : { subtitle: data.subtitle as string }),
     ...(data.imageLayout === undefined ? {} : { imageLayout: data.imageLayout as string }),
@@ -204,6 +209,7 @@ export function parsePublicLiveState(value: unknown): PublicLiveState | undefine
 
 export function sanitizedChannelState(state: PublicLiveState): PublicLiveState {
   const candidate = {
+    ...(state.mediaPlaybackMode === undefined ? {} : { mediaPlaybackMode: state.mediaPlaybackMode }),
     ...(state.design === undefined ? {} : { design: state.design }),
     ...(state.roundTitle === undefined ? {} : { roundTitle: state.roundTitle }),
     ...(state.subtitle === undefined ? {} : { subtitle: state.subtitle }),

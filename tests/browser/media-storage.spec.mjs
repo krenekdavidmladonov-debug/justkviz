@@ -1,6 +1,29 @@
 /* global window, getComputedStyle */
 import { test, expect } from '@playwright/test';
 import { mediaFixture, syntheticImage, syntheticAudio } from '../e2e/media-fixture.mjs';
+async function openRounds(page) { await expect(page.locator('.outline-round').first()).toBeVisible(); while (await page.locator('.outline-collapse[aria-expanded="false"]').count()) await page.locator('.outline-collapse[aria-expanded="false"]').first().click(); }
+
+async function observeClipEnd(page, endSeconds) {
+  await expect.poll(() => page.locator('audio').evaluate(audio => typeof audio.ontimeupdate)).toBe('function');
+  await page.locator('audio').evaluate((audio, end) => {
+    window.__JUSTKVIZ_CLIP_END__ = null; window.__JUSTKVIZ_CLIP_MAX__ = audio.currentTime;
+    audio.addEventListener('timeupdate', () => {
+      const time = audio.currentTime; window.__JUSTKVIZ_CLIP_MAX__ = Math.max(window.__JUSTKVIZ_CLIP_MAX__, time);
+      if (time >= end && window.__JUSTKVIZ_CLIP_END__ === null) window.__JUSTKVIZ_CLIP_END__ = { time, duration: audio.duration, paused: audio.paused };
+    });
+  }, endSeconds);
+}
+async function stoppedAtFirstCrossing(page, endSeconds) {
+  await expect.poll(() => page.evaluate(() => window.__JUSTKVIZ_CLIP_END__)).not.toBeNull();
+  const sample = await page.evaluate(() => window.__JUSTKVIZ_CLIP_END__);
+  expect(Number.isFinite(sample.time) && Number.isFinite(sample.duration)).toBe(true);
+  expect(sample.time).toBeGreaterThanOrEqual(endSeconds); expect(sample.time).toBeLessThan(sample.duration); expect(sample.paused).toBe(true);
+  expect(await page.evaluate(() => window.__JUSTKVIZ_CLIP_MAX__)).toBeLessThanOrEqual(sample.time);
+  await expect(page.locator('[data-media-lifecycle]')).toHaveAttribute('data-media-lifecycle', 'FINISHED');
+  await expect(page.locator('.projector-media-error')).toHaveCount(0);
+  return sample;
+}
+
 test('synthetic owned image/audio upload, editor preview, immutable projector image and manual audio lifecycle', async ({page,context,browser}) => {
   const f=await mediaFixture();let projectorContext, unsubscribe, phase='login';
   const playbackStates=[];
@@ -11,7 +34,7 @@ test('synthetic owned image/audio upload, editor preview, immutable projector im
     await page.goto('/admin/login');await page.getByLabel('E-mail').fill(f.loginEmail);await page.getByLabel('Heslo').fill(f.loginPassword);await page.getByRole('button',{name:'Přihlásit se'}).click();
     await expect(page).toHaveURL(/\/admin$/);
     phase='editor selection';console.log('Media browser: logged in');
-    await page.goto('/admin/quizzes/'+f.quizId+'/edit');
+    await page.goto('/admin/quizzes/'+f.quizId+'/edit'); await openRounds(page);
     await page.locator('.outline-question').filter({hasText:'Syntetický obrázek'}).click();
     phase='image upload';
     let releaseUpload;
@@ -50,7 +73,7 @@ test('synthetic owned image/audio upload, editor preview, immutable projector im
     await expect.poll(()=>page.locator('audio').evaluate(a=>a.paused)).toBe(true);
     await expect(page.getByText('Ukázka je zastavená.',{exact:true})).toBeVisible();
     expect(await page.evaluate(()=>window.__FILMOVY_KVIZ_MEDIA_DEBUG__.peakPlayers)).toBe(1);
-    await page.screenshot({path:'.local-data/media-authoring/editor-audio.png'});
+
     phase='snapshot/projector';console.log('Media browser: editor audio completed');
     await f.lock();const sessionId=await f.live();
     await new Promise((resolve,reject)=>{unsubscribe=f.db.doc('sessions/'+sessionId).onSnapshot(snapshot=>{playbackStates.push(snapshot.data()?.mediaPlaybackState);resolve();},reject);});
@@ -62,7 +85,7 @@ test('synthetic owned image/audio upload, editor preview, immutable projector im
     const projected=projector.locator('.question-image-frame img');
     await expect.poll(()=>projected.evaluate(img=>img.naturalWidth)).toBe(8);
     expect(await projected.evaluate(img=>getComputedStyle(img).objectFit)).toBe('contain');
-    await projector.screenshot({path:'.local-data/media-authoring/projector-image.png'});
+
     await expect(projector.getByText('Soukromá odpověď',{exact:true})).toHaveCount(0);
     phase='moderator audio';
     await f.navigate(sessionId,4);await expect(projector.getByText('Syntetické audio',{exact:true})).toBeVisible();
@@ -81,14 +104,39 @@ test('synthetic owned image/audio upload, editor preview, immutable projector im
     const session=(await f.db.doc('sessions/'+sessionId).get()).data();
     await f.admin.call('selectRecapQuestion',{sessionId,expectedRevision:session.revision,position:4});
     await expect(projector.locator('audio')).toHaveCount(1);
+    const recapProjection = (await f.db.doc('publicSessions/'+sessionId).get()).data();
+    expect(recapProjection.clipStartSeconds).toBe(1); expect(recapProjection.clipEndSeconds).toBe(2);
+    await projector.locator('audio').evaluate(audio => { window.__JUSTKVIZ_RECAP_AUDIO_START__ = null; audio.addEventListener('playing', () => { window.__JUSTKVIZ_RECAP_AUDIO_START__ = audio.currentTime; }, { once: true }); });
+    await observeClipEnd(projector, 2);
     // Establish a real user gesture in the projector before manual recap playback.
     await projector.locator('body').click({position:{x:10,y:10}});
     await page.getByRole('button',{name:'Play',exact:true}).click();
     await expect.poll(()=>projector.locator('audio').evaluate(a=>a.paused)).toBe(false);
-    expect(await projector.locator('audio').evaluate(a=>a.currentTime)).toBeLessThan(1);
-    await expect.poll(()=>projector.locator('audio').evaluate(a=>a.currentTime)).toBeGreaterThan(2.5);
+    await expect.poll(()=>projector.evaluate(()=>window.__JUSTKVIZ_RECAP_AUDIO_START__)).not.toBeNull();
+    const startedAt = await projector.evaluate(()=>window.__JUSTKVIZ_RECAP_AUDIO_START__);
+    expect(startedAt).toBeGreaterThanOrEqual(1); expect(startedAt).toBeLessThan(1.25);
+    await expect.poll(()=>projector.locator('audio').evaluate(a=>a.currentTime)).toBeGreaterThanOrEqual(2);
+    await expect.poll(()=>projector.locator('audio').evaluate(a=>a.paused)).toBe(true);
+    const anonymousClip = await stoppedAtFirstCrossing(projector, 2);
     expect(await projector.evaluate(()=>window.__FILMOVY_KVIZ_MEDIA_DEBUG__.peakPlayers)).toBe(1);
     await f.navigate(sessionId,6);await expect(projector.locator('audio')).toHaveCount(0);
     expect(await projector.evaluate(()=>window.__FILMOVY_KVIZ_MEDIA_DEBUG__.activePlayers)).toBe(0);
-  } catch(error) { console.error('Media browser failed during '+phase); if(phase!=='login') { console.error((await page.locator('body').innerText()).slice(0,9000)); await page.screenshot({path:'.local-data/media-authoring/browser-failure.png'}); } throw error; } finally {unsubscribe?.();await projectorContext?.close();await context.close();await f.dispose();}
+    // Separate same-profile transport phase; anonymous-context privacy/lifecycle checks above remain intact.
+    await projectorContext.close(); projectorContext = undefined;
+    await f.navigate(sessionId,5); const current = (await f.db.doc('sessions/'+sessionId).get()).data();
+    await f.admin.call('selectRecapQuestion',{sessionId,expectedRevision:current.revision,position:4});
+    const sameProfileProjector = await context.newPage(); await sameProfileProjector.goto('/projector/'+sessionId);
+    await expect(sameProfileProjector.locator('audio')).toHaveCount(1);
+    await sameProfileProjector.locator('body').click({position:{x:10,y:10}});
+    await observeClipEnd(sameProfileProjector, 2);
+    await page.getByRole('button',{name:'Play',exact:true}).click();
+    await expect.poll(async()=>(await f.db.doc('sessions/'+sessionId).get()).data().mediaPlaybackState).toBe('finished');
+    await expect.poll(()=>sameProfileProjector.locator('audio').evaluate(a=>a.paused)).toBe(true);
+    const sameProfileClip = await stoppedAtFirstCrossing(sameProfileProjector, 2);
+    console.log('NATIVE_CLIP_OBSERVATIONS '+JSON.stringify({ anonymousClip, sameProfileClip, contract: 'Paused at first real native end crossing before source EOF; no timing SLA' }));
+    await f.navigate(sessionId,6); await expect(sameProfileProjector.locator('audio')).toHaveCount(0);
+    expect(await sameProfileProjector.evaluate(()=>window.__FILMOVY_KVIZ_MEDIA_DEBUG__.activePlayers)).toBe(0);
+    await sameProfileProjector.close();
+
+  } catch(error) { console.error('Media browser failed during '+phase);  throw error; } finally {unsubscribe?.();await projectorContext?.close();await context.close();await f.dispose();}
 });

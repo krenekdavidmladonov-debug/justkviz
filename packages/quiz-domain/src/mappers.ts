@@ -1,3 +1,4 @@
+import { originalYoutubeSource } from './original-media.js';
 import {
   editableSlideKinds,
   type EditableSlideKind,
@@ -108,6 +109,7 @@ export function mapEditorSlide(id: string, data: DocumentData): EditorSlide {
     && !Object.hasOwn(data, 'clipEndSeconds');
   return {
     id,
+    ...(originalYoutubeSource(data) === undefined ? {} : { originalMediaSource: originalYoutubeSource(data) }),
     position,
     ...(typeof data.hidden === 'boolean' ? { hidden: data.hidden } : {}),
     ...(object(data.design) ? { design: normalizeSlideDesign(data.design) } : {}),
@@ -156,6 +158,7 @@ export function mapEditorQuiz(id: string, data: DocumentData, slides: readonly E
     id,
     title: requiredString(data, 'title'),
     description: requiredString(data, 'description'),
+    status: data.status === 'ready' || data.status === 'archived' ? data.status : 'draft',
     revision,
     slideCount,
     questionCount: requiredCount(data, 'questionCount'),

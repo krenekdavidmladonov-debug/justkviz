@@ -1,0 +1,5 @@
+.quiz-status-control { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .4rem .65rem; }
+.quiz-status-control .text-button { padding: .25rem 0; font-size: .8rem; text-align: left; }
+.quiz-status-control [role="alert"] { flex-basis: 100%; font-size: .8rem; }
+.quiz-start-control { display: grid; gap: .6rem; }
+@media (pointer: coarse) { .quiz-status-control .text-button { min-height: 44px; } }

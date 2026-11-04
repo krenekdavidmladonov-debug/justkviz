@@ -1,10 +1,35 @@
 import { describe, expect, it } from 'vitest';
-import { calculateResults } from '../functions/src/leaderboard/model';
+import { calculateResults, calculateCurrentResults } from '../functions/src/leaderboard/model';
 import { parseResultPage } from '../apps/web/src/features/leaderboard/types';
 const rounds = [1, 2, 3].map(i => ({ id: 'r' + i, title: 'Kolo ' + i, position: i }));
 const teams = ['Alfa', 'Beta', 'Gama', 'Delta'].map((name, i) => ({ id: 't' + i, name, revision: 1 }));
 const scores = teams.flatMap((t, i) => [20, [20, 15, 15, 10][i]!, 999].map((halfPoints, r) => ({ teamId: t.id, roundId: 'r' + (r + 1), halfPoints, revision: 1 })));
 describe('interim cumulative results', () => {
+    it('current standings sum entered cells from all rounds while retaining incomplete coverage', () => {
+        const entered = [
+            { teamId: 't0', roundId: 'r1', halfPoints: 7, revision: 1 },
+            { teamId: 't0', roundId: 'r3', halfPoints: 5, revision: 1 },
+            { teamId: 't1', roundId: 'r2', halfPoints: 0, revision: 2 },
+            { teamId: 't2', roundId: 'r1', halfPoints: null, revision: 3 },
+            { teamId: 'cancelled', roundId: 'r3', halfPoints: 1000, revision: 1 },
+            { teamId: 't3', roundId: 'foreign', halfPoints: 1000, revision: 1 },
+        ];
+        const before = structuredClone(entered);
+        const result = calculateCurrentResults(rounds, teams, entered);
+        expect(result.rows.map(r => r.halfPoints)).toEqual([12, 0, 0, 0]);
+        expect(result).toMatchObject({ roundNumber: 3, expectedScoreCount: 12, presentScoreCount: 3, missingScoreCount: 9, complete: false });
+        expect(result.missing).toContainEqual({ teamId: 't2', teamName: 'Gama', roundId: 'r1', roundTitle: 'Kolo 1' });
+        expect(result.missing).not.toContainEqual(expect.objectContaining({ teamId: 't1', roundId: 'r2' }));
+        expect(entered).toEqual(before);
+        expect(calculateCurrentResults([...rounds].reverse(), [...teams].reverse(), [...entered].reverse())).toEqual(result);
+        expect(calculateCurrentResults(rounds, teams, entered.map(s => s.roundId === 'r3' ? { ...s, halfPoints: 6, revision: 2 } : s)).sourceFingerprint).not.toBe(result.sourceFingerprint);
+    });
+    it('current standings support the single/final round but require an entered score for an accepted team', () => {
+        const zero = [{ teamId: 't0', roundId: 'r1', halfPoints: 0, revision: 1 }];
+        expect(calculateCurrentResults(rounds.slice(0, 1), [teams[0]!], zero)).toMatchObject({ complete: true, presentScoreCount: 1 });
+        for (const [currentTeams, currentScores] of [[[], zero], [teams, []], [teams, [{ ...zero[0]!, halfPoints: null }]], [teams, [{ ...zero[0]!, teamId: 'cancelled' }]]] as const)
+            expect(() => calculateCurrentResults(rounds, [...currentTeams], [...currentScores])).toThrow(/alespoň jedno skóre/);
+    });
     it('uses snapshot order, integer half points and dense 1/2/2/3 ranking', () => {
         const p = calculateResults([...rounds].reverse(), 'r2', teams, scores);
         expect(p.complete).toBe(true);

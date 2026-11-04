@@ -21,7 +21,7 @@ afterEach(async () => { for (const root of mounted.splice(0)) await act(async ()
 describe('approved show presentation', () => {
   test('interim uses only the server page and previous-publication movements', () => {
     const html = renderToStaticMarkup(<ShowModeRenderer state={state({ interimResults: { versionId, roundNumber: 3, page: 1, pageCount: 2, presentationStyle: 'show', pageSize: 6, rows: [{ ...row(6, 'Klub rváčů'), movement: 2 }, row(7, 'Poslední skauti')] }, interimBackdrop: { renderMode: 'question', slideKind: 'question', title: 'Filmové dvojice', text: 'Syntetická otázka', options: ['A', 'B'] } })} />);
-    expect(html).toContain('Jak si stojíte?'); expect(html).toContain('Filmové dvojice'); expect(html).toContain('Klub rváčů'); expect(html).toContain('↑ 2'); expect(html).toContain('44,5'); expect(html).toContain('Strana 2 / 2');
+    expect(html).toContain('Průběžné výsledky'); expect(html).toContain('Filmové dvojice'); expect(html).toContain('Klub rváčů'); expect(html).toContain('↑ 2'); expect(html).toContain('44,5'); expect(html).toContain('Strana 2 / 2');
     expect(html).not.toContain('SPRÁVNÁ ODPOVĚĎ'); expect(html).not.toContain('VÍTĚZOVÉ');
   });
   test('final third place contains only its group and explicitly supplied lower history', () => {
@@ -33,7 +33,12 @@ describe('approved show presentation', () => {
       const names = Array.from({ length: count }, (_, index) => `Společný vítěz ${index + 1} s opravdu dlouhým názvem týmu a filmovým příběhem`);
       const html = renderToStaticMarkup(<ShowModeRenderer state={state({ finalReveal: group({ rank: 1, groupSize: count > 5 ? 10 : count, pageCount: count > 5 ? 2 : 1, rows: names.map(name => row(1, name)) }) })} />);
       for (const name of names) expect(html).toContain(name);
-      expect(html).toContain(`sm-count-${count}`); expect(html).toContain('VÍTĚZOVÉ DNEŠNÍHO VEČERA'); expect(html).toContain(count > 5 ? 'Strana 1 / 2' : 'Strana 1 / 1');
+      expect(html).toContain(`sm-count-${count}`); expect(html).toContain('VÍTĚZOVÉ DNEŠNÍHO VEČERA');
+      if (count > 5) expect(html).toContain('Strana 1 / 2');
+      else expect(html).not.toContain('Strana 1 / 1');
+      expect(html).not.toContain('POSTUPNÉ ODHALOVÁNÍ');
+      expect(html).not.toContain('sm-trophy');
+      expect(html).not.toContain('sm-celebration');
     }
   });
   test('template title, subtitle, colors and custom logo survive the show renderer', () => {

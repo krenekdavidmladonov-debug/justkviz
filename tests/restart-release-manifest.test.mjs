@@ -11,11 +11,20 @@ const manifest = json('tools/staging/restart-release-manifest.json');
 const access = json('tools/access/deployment-manifest.json');
 const events = json('tools/event-management/deployment-manifest.json');
 const show = json('tools/show-mode/deployment-manifest.json');
+const drive = json('tools/drive/deployment-manifest.json');
+const driveMedia = json('tools/drive-media/deployment-manifest.json');
+const driveLocal = json('tools/drive-local/deployment-manifest.json');
 const sorted = values => [...values].sort();
 const union = values => sorted(new Set(values));
 const emailExports = [
   'dispatchRegistrationEmail', 'deliverEmailTask',
   'previewEventTeamMessage', 'createEventTeamMessage', 'listEventTeamMessages', 'getEventTeamMessage',
+];
+// Later releases are accounted for separately; none expands the frozen restart
+// entrypoint or changes its email/infrastructure exclusions.
+const laterFeatureExports = [
+  ...show.newFunctions, ...drive.functions, ...driveMedia.newFunctions, ...driveLocal.newFunctions,
+  'restoreQuiz', 'trashQuiz', 'completeEvent',
 ];
 
 function sourceExports() {
@@ -39,7 +48,7 @@ function sourceExports() {
   return sorted(exports);
 }
 
-function assertInventory(candidate, laterShowExports = show.newFunctions) {
+function assertInventory(candidate, laterExports = laterFeatureExports) {
   const required = union([...editorReleaseFunctions, ...existingDependencies, ...access.functions, ...events.functions]);
   assert.equal(new Set(candidate.functions).size, candidate.functions.length, 'Duplicate release functions');
   assert.deepEqual(candidate.functions, sorted(candidate.functions), 'Keep release functions sorted');
@@ -49,11 +58,10 @@ function assertInventory(candidate, laterShowExports = show.newFunctions) {
   assert.deepEqual(candidate.existingFunctionDependencies.includedInFunctions, existingDependencies);
   const accounted = [...candidate.functions, ...Object.keys(candidate.existingFunctionDependencies.retainedOutsideRelease), ...Object.keys(candidate.excludedFunctions)];
   assert.equal(new Set(accounted).size, accounted.length, 'Export groups overlap');
-  // The restart inventory is a frozen 77-export release contract. Later SHOW
-  // endpoints belong to their own reviewed inventory, not that historical deploy.
-  assert.deepEqual(sorted(laterShowExports), ['configureEventShow', 'readEventShowPreferences']);
-  assert(laterShowExports.every(name => show.functions.includes(name)), 'SHOW additions must belong to the SHOW inventory');
-  const currentAccounted = [...accounted, ...laterShowExports];
+  // Every later export also has an explicit historical-access exclusion. A role
+  // in this accounting contract grants no deployment or activation authority.
+  assert(laterExports.every(name => typeof access.unchangedExcluded[name] === 'string'), 'Later exports require explicit scope accounting');
+  const currentAccounted = [...accounted, ...laterExports];
   assert.equal(new Set(currentAccounted).size, currentAccounted.length, 'Current release export groups overlap');
   assert.deepEqual(sorted(currentAccounted), sourceExports(), 'Every current application export must be included or explicitly accounted for');
   assert.deepEqual(candidate.counts, {
@@ -69,16 +77,32 @@ function assertInventory(candidate, laterShowExports = show.newFunctions) {
   });
 }
 
-test('frozen restart inventory and explicit later SHOW additions account for current exports without expanding the old release', () => {
+test('frozen restart inventory and separate later features account for current exports without expanding the old release', () => {
   assertInventory(manifest);
   assert.equal(manifest.counts.releaseFunctions, 70);
   assert.equal(manifest.counts.sourceExports, 77);
-  assert.equal(sourceExports().length, 79);
+  assert.equal(sourceExports().length, 94);
   assert.deepEqual(manifest.sourceManifests, [
     'tools/staging/editor-release-manifest.mjs',
     'tools/access/deployment-manifest.json',
     'tools/event-management/deployment-manifest.json',
   ]);
+});
+
+test('later exports belong to their feature manifests or documented quiz-trash/completion contract', () => {
+  assert.deepEqual(sorted(show.newFunctions), ['configureEventShow', 'readEventShowPreferences']);
+  assert.deepEqual(sorted(drive.functions), ['beginDriveConnection', 'completeDriveConnection', 'disconnectDriveConnection', 'getDriveFolderPicker', 'readDriveConnection', 'selectDriveFolder']);
+  assert.deepEqual(sorted(driveMedia.newFunctions), ['createDriveMediaFolder', 'processDriveMediaImport', 'readDriveMediaImport', 'requestDriveMediaImport']);
+  assert.deepEqual(sorted(driveLocal.newFunctions), ['configureDriveMediaCompanion', 'driveMediaCompanion']);
+  for (const feature of [show, driveMedia, driveLocal]) assert(feature.newFunctions.every(name => feature.functions.includes(name)));
+  assert.equal(show.projectId, null); // The historical SHOW inventory grants no cloud target.
+  assert.equal(show.region, manifest.region);
+  for (const feature of [drive, driveMedia, driveLocal]) {
+    assert.equal(feature.projectId, manifest.projectId);
+    assert.equal(feature.region, manifest.region);
+  }
+  for (const name of ['restoreQuiz', 'trashQuiz']) assert(read('docs/QUIZ_TRASH.md').includes('`' + name + '`'));
+  assert(read('docs/EVENT_MANAGEMENT.md').includes('completeEvent'));
 });
 
 test('omitted legacy handlers, duplicates and accidental email activation fail the inventory contract', () => {
@@ -93,8 +117,9 @@ test('omitted legacy handlers, duplicates and accidental email activation fail t
   worker.functions.sort();
   assert.throws(() => assertInventory(worker));
   assert.throws(() => assertInventory(manifest, []));
-  assert.throws(() => assertInventory(manifest, [...show.newFunctions, show.newFunctions[0]]));
-  assert.throws(() => assertInventory(manifest, [...show.newFunctions, 'unreviewedHandler']));
+  assert.throws(() => assertInventory(manifest, [...laterFeatureExports, laterFeatureExports[0]]));
+  assert.throws(() => assertInventory(manifest, [...laterFeatureExports, 'unreviewedHandler']));
+  for (const name of laterFeatureExports) assert.throws(() => assertInventory(manifest, laterFeatureExports.filter(value => value !== name)));
 });
 
 test('runtime/domain dependencies match package metadata and the vendored artifact lock', () => {

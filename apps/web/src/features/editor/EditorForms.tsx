@@ -1,6 +1,6 @@
 import { parseQuizAsset, directMediaKind, type EditorAppearance } from '@filmovy-kviz/quiz-domain';
 import { MediaUploadField } from '../media/MediaUploadField';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { SlidePreview } from '../presentation/SlidePreview';
 import { MediaPlayer } from '../presentation/MediaPlayer';
@@ -11,6 +11,15 @@ import { questionTypeLabels, semanticQuestionType } from './semanticModel';
 import { clipDuration, formatHumanTime, parseHumanTime } from './time';
 import type { EditorQuiz, EditorSlide, EditorValidationIssue } from './types';
 import { correctOptionIndex, validateQuestion } from './validation';
+
+/** Closed design controls do not need to render on each keystroke. */
+export function EditorDisclosure({ title, children, busy = false, field }: { readonly title: string; readonly children: () => ReactNode; readonly busy?: boolean; readonly field?: string }) {
+  const [open, setOpen] = useState(false);
+  return <details className="editor-extra" data-preflight-field={field} open={open} onToggle={event => {
+    if (!event.currentTarget.open && busy) { event.currentTarget.open = true; return; }
+    setOpen(event.currentTarget.open);
+  }}><summary>{title}</summary>{open && children()}</details>;
+}
 
 function FieldIssues({ field, issues, visible }: { readonly field: string; readonly issues: readonly EditorValidationIssue[]; readonly visible: boolean }) {
   if (!visible) return null;
@@ -58,8 +67,8 @@ export function QuizSettingsForm({
     <section className="editor-form-stack" aria-labelledby="quiz-settings-title">
       <header className="content-form-heading"><span>Kvíz</span><h2 id="quiz-settings-title">Základní údaje</h2><p>{quiz.roundCount} kol · {quiz.questionCount} otázek</p></header>
       <label className="form-field" data-preflight-field="quizTitle">Název kvízu *<input disabled={disabled} value={title} onChange={(event) => onTitle(event.target.value)} /></label>
-      <label className="form-field">Popis<textarea rows={5} disabled={disabled} value={description} onChange={(event) => onDescription(event.target.value)} /></label>
-      <p className="field-help">Další nastavení upravíte v části Úvod kvízu. Změny se uloží až tlačítkem Uložit.</p>
+      <details className="editor-extra"><summary>Popis kvízu (volitelný)</summary><label className="form-field">Popis<textarea rows={3} disabled={disabled} value={description} onChange={(event) => onDescription(event.target.value)} /></label></details>
+      <p className="field-help">Začněte názvem, přidejte kolo a napište první otázku. Vzhled je připravený automaticky. Změny ukládáte tlačítkem Uložit.</p>
     </section>
   );
 }
@@ -289,10 +298,10 @@ function MediaTimingFields(props: QuestionFormFieldProps) {
   return (
     <fieldset className="editor-fieldset media-timing-editor">
       <legend>Ukázka</legend>
-      <MediaUploadField key={slide.id + ':source'} kind={semanticQuestionType(slide) === 'audio' ? 'audio' : 'video'} label="Zdroj ukázky" value={slide.mediaSource} disabled={disabled} onReady={value => {
+      <div data-preflight-field="mediaSource"><MediaUploadField key={slide.id + ':source'} kind={semanticQuestionType(slide) === 'audio' ? 'audio' : 'video'} label="Zdroj ukázky" value={slide.mediaSource} disabled={disabled} onReady={value => {
         setCurrentTimeRequest(0); setCommand('stop'); setGeneration(g => g + 1); setMediaStatus(value ? 'Zdroj rozpoznán. Načtěte přehrávač a zkontrolujte nové časování.' : 'Zdroj odebrán.');
         onChange({ ...slide, mediaSource: value, clipStartSeconds: null, clipEndSeconds: null });
-      }} />
+      }} /><FieldIssues field="mediaSource" issues={issues} visible={showIssues('mediaSource')} /></div>
       {youtubeVideoId(slide.mediaSource) && <p className="field-help">YouTube zobrazuje svůj přehrávač a může omezit vložení. Pro zvuk bez názvu a náhledu použijte vlastní audio.</p>}
       <div className="media-time-grid">
         <TimeField key={slide.id + slide.mediaSource + ":start"} label="Začátek ukázky" field="clipStartSeconds" value={slide.clipStartSeconds} disabled={disabled} issues={issues} showIssue={showIssues('clipStartSeconds')} touch={() => touch('clipStartSeconds')} onChange={(value) => onChange({ ...slide, clipStartSeconds: value })} />
@@ -305,6 +314,7 @@ function MediaTimingFields(props: QuestionFormFieldProps) {
           key={slide.id + slide.mediaSource}
           source={slide.mediaSource}
           command={command}
+          onPlayRequest={() => run('play')}
           generation={generation}
           startSeconds={slide.clipStartSeconds ?? 0}
           {...(slide.clipEndSeconds === null ? {} : { endSeconds: slide.clipEndSeconds })}
@@ -340,6 +350,7 @@ export function QuestionForm({
   touched,
   onTouch,
   onChange,
+  onNext,
 }: {
   readonly answersReadable?: boolean;
   readonly answersEditable?: boolean;
@@ -355,6 +366,7 @@ export function QuestionForm({
   readonly touched: ReadonlySet<string>;
   readonly onTouch: (field: string) => void;
   readonly onChange: (slide: EditorSlide) => void;
+  readonly onNext?: () => void;
 }) {
   const type = semanticQuestionType(slide);
   const issues = validateQuestion(slide).filter(issue => answersReadable || issue.field !== 'correctAnswer');
@@ -363,35 +375,41 @@ export function QuestionForm({
     showIssues: (field) => showAllIssues || touched.has(field),
   };
   const choices = slide.answerMode === 'choice' || (slide.answerMode !== 'open' && (type === 'choice' || slide.options.length > 0));
+  const changeMedia = (next: 'text' | 'image' | 'audio' | 'video') => {
+    if (next !== type && (slide.questionImage || slide.mediaSource) && !window.confirm('Změna zadání odpojí nynější médium otázky a časování. Soubor zůstane v knihovně, odpověď, poznámka a pozadí se zachovají. Pokračovat?')) return;
+    onChange({ ...slide, kind: next, questionImage: '', mediaSource: '', clipStartSeconds: next === 'audio' || next === 'video' ? 0 : null, clipEndSeconds: null, answerMode: choices ? 'choice' : 'open' });
+  };
   const changeMode = (mode: 'open' | 'choice') => {
     if (mode === 'open' && slide.options.length > 0 && !window.confirm('Přechod na volnou odpověď odpojí všechny možnosti. Zadání, média a text správné odpovědi zůstanou. Pokračovat?')) return;
     onChange({ ...slide, kind: mode === 'choice' && slide.kind === 'free' ? 'text' : slide.kind, answerMode: mode, options: mode === 'choice' ? slide.options.length ? slide.options : ['', '', '', ''] : [] });
   };
   return (
     <section className="editor-form-stack question-form" data-question-type={type} data-preflight-field={type === 'legacy' || type === 'legacy-pl' ? 'legacy' : undefined}>
-      <header className="content-form-heading"><span>Otázka {number}</span><h2>{questionTypeLabels[type]}</h2></header>
+      <header className="content-form-heading"><span>Otázka {number}</span><h2>Zadání a odpověď</h2><p>{questionTypeLabels[type]}</p></header>
       {type === 'legacy-pl' && <div className="legacy-notice"><strong>Starší typ Pravda / Lež</strong><p>Typ je uzamčený, ale obsah a odpověď můžete upravit bez ztráty původních dat.</p></div>}
       {type === 'legacy' && <div className="legacy-notice"><strong>Obsah obsahuje starší nastavení.</strong><p>Neznámé části zůstanou při uložení beze změny.</p></div>}
-      {!type.startsWith('legacy') && <div className="question-settings">
-        <label className="form-field">Způsob zadání<select disabled={disabled || !answersEditable} value={['image','audio','video'].includes(type) ? type : 'text'} onChange={event => {
-          const next = event.target.value as 'text' | 'image' | 'audio' | 'video';
-          if (next !== type && (slide.questionImage || slide.mediaSource) && !window.confirm('Změna zadání odpojí nynější médium otázky a časování. Soubor zůstane v knihovně, odpověď, poznámka a pozadí se zachovají. Pokračovat?')) return;
-          onChange({ ...slide, kind: next, questionImage: '', mediaSource: '', clipStartSeconds: null, clipEndSeconds: null, answerMode: choices ? 'choice' : 'open' });
-        }}><option value="text">Text</option><option value="image">Obrázek</option><option value="audio">Audio</option><option value="video">Video</option></select></label>
-        <label className="form-field">Způsob odpovědi<select disabled={disabled || !answersEditable || slide.options.length > 6} value={choices ? 'choice' : 'open'} onChange={event => changeMode(event.target.value as 'open' | 'choice')}><option value="open">Volná odpověď</option><option value="choice">ABCD – jedna možnost</option></select></label>
-      </div>}
       <PromptField {...props} />
 
       {!answersReadable && <p className="system-content-note">Správná odpověď je pro váš účet skrytá. Při uložení zadání zůstane zachována na serveru.</p>}
       {choices ? <ChoiceFields {...props} /> : answersReadable ? type === 'legacy-pl' ? <PlAnswerField {...props} disabled={disabled || !answersEditable} /> : <FreeAnswerField {...props} disabled={disabled || !answersEditable} /> : null}
-      {type === 'image' && <MediaUploadField key={slide.id + ':question'} kind="image" label="Obrázek otázky" value={slide.questionImage} disabled={disabled} onReady={value => onChange({ ...slide, questionImage: value })} />}
+      {!type.startsWith('legacy') && <div className="question-content-options">
+        <button type="button" className="text-button" disabled={disabled || !answersEditable || slide.options.length > 6} onClick={() => changeMode(choices ? 'open' : 'choice')}>{choices ? 'Použít volnou odpověď' : 'Nabídnout možnosti odpovědi'}</button>
+        <div className="question-media-actions" aria-label="Média otázky">{(['image', 'audio', 'video'] as const).map(kind => <button key={kind} type="button" className="secondary-button compact-button" aria-pressed={type === kind} disabled={disabled || !answersEditable} onClick={() => { if (type !== kind) changeMedia(kind); }}>{kind === 'image' ? 'Přidat obrázek' : kind === 'audio' ? 'Přidat zvuk' : 'Přidat video'}</button>)}</div>
+      </div>}
+      {type === 'image' && <div data-preflight-field="questionImage"><MediaUploadField key={slide.id + ':question'} kind="image" label="Obrázek otázky" value={slide.questionImage} disabled={disabled} onReady={value => onChange({ ...slide, questionImage: value })} /><FieldIssues field="questionImage" issues={issues} visible={props.showIssues('questionImage')} /></div>}
       {(type === 'audio' || type === 'video') && <MediaTimingFields {...props} />}
-      {answersReadable && <details className="editor-extra"><summary>Odpověď po odhalení</summary>
+      {onNext && <div className="question-save-actions"><button type="button" className="primary-button" disabled={disabled} onClick={onNext}>Uložit a přidat další</button><span className="field-help">Uloží změny a otevře další otázku v tomto kole.</span></div>}
+      {!type.startsWith('legacy') && <details className="editor-extra"><summary>Typ otázky a odpovědi</summary><div className="question-settings">
+        <label className="form-field">Způsob zadání<select disabled={disabled || !answersEditable} value={['image','audio','video'].includes(type) ? type : 'text'} onChange={event => changeMedia(event.target.value as 'text' | 'image' | 'audio' | 'video')}><option value="text">Text</option><option value="image">Obrázek</option><option value="audio">Zvuk</option><option value="video">Video</option></select></label>
+        <label className="form-field">Způsob odpovědi<select disabled={disabled || !answersEditable || slide.options.length > 6} value={choices ? 'choice' : 'open'} onChange={event => changeMode(event.target.value as 'open' | 'choice')}><option value="open">Volná odpověď</option><option value="choice">ABCD – jedna možnost</option></select></label>
+      </div></details>}
+      {answersReadable && <EditorDisclosure field="answerImage" title={slide.answerImage ? 'Odpověď po odhalení · fotografie přidána' : 'Odpověď po odhalení · přidat fotografii (volitelné)'} busy={disabled}>{() => <>
+        <p className="field-help">Fotografie je volitelná a zobrazí se až po odhalení správné odpovědi.</p>
         <MediaUploadField key={slide.id + ':answer'} kind="image" label="Obrázek odpovědi (soukromý)" value={slide.answerImage} disabled={disabled || !answersEditable} onReady={value => onChange({ ...slide, answerImage: value })} />
         <label className="form-field">Vysvětlení pro hráče po odhalení<textarea disabled={disabled || !answersEditable} value={slide.answerExplanation ?? ''} onChange={event => onChange({ ...slide, answerExplanation: event.target.value })} /></label>
-      </details>}
+      </>}</EditorDisclosure>}
       {notesReadable && <details className="editor-extra"><summary>Poznámka moderátora</summary><label className="form-field">Poznámka moderátora<textarea rows={3} disabled={disabled || !notesEditable} value={slide.moderatorNote} onChange={event => onChange({ ...slide, moderatorNote: event.target.value })} /></label></details>}
-      {(showAllIssues || issues.some((issue) => issue.severity === 'warning')) && <ReadinessSummary slide={slide} />}
+      {showAllIssues && <ReadinessSummary slide={slide} />}
     </section>
   );
 }
@@ -417,10 +435,16 @@ export function EditorPreview({ slide, quizTitle, showAnswer, onShowAnswer, onEd
   readonly onEdit?: () => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const expandButtonRef = useRef<HTMLButtonElement>(null);
+  const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
   useEffect(() => {
+    if (expanded) dialogRef.current?.showModal();
+  }, [expanded]);
+  useEffect(() => {
     let observer: ResizeObserver | undefined;
-    const frame = requestAnimationFrame(() => {
+    const timer = window.setTimeout(() => {
       const stage = stageRef.current?.querySelector<HTMLElement>('.slide-renderer');
       if (!stage) return;
       const check = () => {
@@ -432,15 +456,18 @@ export function EditorPreview({ slide, quizTitle, showAnswer, onShowAnswer, onEd
       };
       check();
       if (typeof ResizeObserver !== 'undefined') { observer = new ResizeObserver(check); observer.observe(stage); }
-    });
-    return () => { cancelAnimationFrame(frame); observer?.disconnect(); };
-  }, [slide, showAnswer]);
+    }, 180);
+    return () => { window.clearTimeout(timer); observer?.disconnect(); };
+  }, [slide, showAnswer, expanded]);
+  const projection = <div ref={stageRef}><SlidePreview slide={slide} quizTitle={quizTitle} position={slide.position} showAnswer={showAnswer} /></div>;
+  const answerToggle = slide.isQuestion && <label className="answer-preview-toggle"><input type="checkbox" checked={showAnswer} onChange={(event) => onShowAnswer(event.target.checked)} /> Náhled odpovědi</label>;
+  const closePreview = () => { dialogRef.current?.close(); setExpanded(false); requestAnimationFrame(() => expandButtonRef.current?.focus()); };
   return (
     <aside className="round-editor-preview editor-panel-preview">
-      <header className="preview-heading"><span>Náhled</span><strong>Co uvidí projektor</strong>{onEdit && <button type="button" className="secondary-button" onClick={onEdit}>Upravit slide</button>}</header>
+      <header className="preview-heading"><span>Náhled projekce</span><button ref={expandButtonRef} type="button" className="secondary-button" onClick={() => setExpanded(true)}>Zvětšit náhled</button>{onEdit && <button type="button" className="text-button preview-return-button" onClick={onEdit}>Zpět k editaci</button>}</header>
       <div className="local-preview-label">Lokální náhled · nepublikováno</div>
-      <div ref={stageRef}><SlidePreview slide={slide} quizTitle={quizTitle} position={slide.position} showAnswer={showAnswer} /></div>
-      {slide.isQuestion && <label className="answer-preview-toggle"><input type="checkbox" checked={showAnswer} onChange={(event) => onShowAnswer(event.target.checked)} /> Náhled odpovědi</label>}
+      {!expanded && <>{projection}{answerToggle}</>}
+      {expanded && <dialog ref={dialogRef} className="editor-preview-dialog" aria-label="Zvětšený náhled projekce" onCancel={event => { event.preventDefault(); closePreview(); }}><header><strong>Náhled projekce</strong><button type="button" className="secondary-button" autoFocus onClick={closePreview}>Zpět k editaci</button></header>{projection}{answerToggle}<p className="field-help">Lokální náhled rozepsaných změn. Nic se nepublikuje.</p></dialog>}
       {slide.text.length + slide.title.length + slide.options.join('').length > 650 && <p className="field-validation warning" role="status">Slide obsahuje mnoho textu. Zkontrolujte zalomení a velikost v náhledu; uložení je možné.</p>}
       {overflowing && <p className="field-validation warning" role="status">Část obsahu přesahuje promítanou plochu. Zmenšete text nebo zvolte vhodnější rozložení; uložení je možné.</p>}
       <p className="field-help">Reaguje na rozepsané změny bez uložení a nic neposílá do živé relace.</p>

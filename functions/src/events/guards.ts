@@ -4,6 +4,13 @@ export function assertEventOperational(event: Record<string, unknown> | undefine
   if (!event) throw new HttpsError('not-found', 'Akce není dostupná.');
   if (!event || !eventOperational(event)) throw new HttpsError('failed-precondition', 'Akce je uzavřená, v archivu nebo v koši. Provozní změny nejsou povolené.');
 }
+/** A completed active event may only be hidden; this never reopens its operations. */
+export function isCompletedEventHide(event: Record<string, unknown>, request: unknown): boolean {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) return false;
+  const data = request as Record<string, unknown>;
+  return eventDisposition(event) === 'active' && event.lifecycleStatus === 'completed'
+    && data.published === false && data.registrationOpensAt === undefined && data.registrationClosesAt === undefined;
+}
 export function assertEventReadable(event: Record<string, unknown> | undefined, member: Membership, management = false): asserts event is Record<string, unknown> {
   if (!event) throw new HttpsError('not-found', 'Akce není dostupná.');
   const disposition = eventDisposition(event);

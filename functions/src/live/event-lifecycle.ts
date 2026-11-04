@@ -3,7 +3,7 @@ import { HttpsError } from 'firebase-functions/v2/https';
 import { parseSession } from './callables.js';
 import { applyLiveSessionAction } from './session-machine.js';
 import { buildPublicSessionState } from './publication.js';
-// Called before event writes, in that same transaction. No results survive closure.
+// Called before event writes, in that same transaction. Public results never survive closure.
 export async function eventSessions(tx: Transaction, eventId: string, allowMissingPointer = false) {
   const rows = await tx.get(getFirestore().collection('sessions').where('eventId', '==', eventId).limit(201));
   if (rows.size > 200) throw new HttpsError('resource-exhausted', 'Akce má příliš mnoho relací pro bezpečné atomické uzavření.');
@@ -18,9 +18,11 @@ export async function eventSessions(tx: Transaction, eventId: string, allowMissi
 }
 export function closeSessions(tx: Transaction, sessions: Awaited<ReturnType<typeof eventSessions>>, actorUid: string) {
   for (const { ref, session } of sessions) {
-    const { interimResults, finalReveal, interimReturn, showCue, ...clean } = session;
-    void interimResults; void finalReveal; void interimReturn; void showCue;
-    const ended = session.status === 'ended' ? clean : applyLiveSessionAction(clean, { type: 'end-session' }, session.revision, actorUid, Timestamp.now());
+    const { interimResults, interimReturn, showCue, ...clean } = session;
+    void interimResults; void interimReturn; void showCue;
+    // The confirmed private version is historical authority, independent of publication.
+    const hidden = { ...clean, ...(session.finalReveal ? { finalReveal: { ...session.finalReveal, visible: false } } : {}) };
+    const ended = session.status === 'ended' ? hidden : applyLiveSessionAction(hidden, { type: 'end-session' }, session.revision, actorUid, Timestamp.now());
     tx.set(ref, ended);
     tx.set(getFirestore().doc('publicSessions/' + session.sessionId), buildPublicSessionState(ended));
   }

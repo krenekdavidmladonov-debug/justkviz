@@ -14,6 +14,9 @@ const iframeApiMock = `
       queueMicrotask(() => options.events.onReady());
     }
     cueVideoById(options) { this.videoId = options.videoId; }
+    addEventListener(event, listener) { this.options.events[event] = window[listener]; }
+    removeEventListener(event) { this.options.events[event] = () => {}; }
+    playVideo() { this.loadVideoById({ videoId: this.videoId }); }
     loadVideoById(options) {
       this.videoId = options.videoId;
       const attempt = (attempts.get(this.videoId) || 0) + 1;
