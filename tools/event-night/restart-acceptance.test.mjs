@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync, lstatSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
-import { assertLocalRequest, assertPlan, assertExport, records, ports, sanitizedEnvironment, portsFree, assertEmulatorRegistry, safeFailureDiagnostic, safeChildDiagnostics, run } from './restart-acceptance.mjs';
+import { createRequire } from 'node:module';
+import { assertLocalRequest, assertPlan, assertExport, records, ports, sanitizedEnvironment, portsFree, assertEmulatorRegistry, safeFailureDiagnostic, safeChildDiagnostics, run, prepareIsolatedFunctionsRuntime } from './restart-acceptance.mjs';
 
 const directory = mkdtempSync(path.join(tmpdir(), 'synthetic-restart-guards-'));
 const plan = { directory, projectId: 'demo-restart-012345abcdef', ports };
@@ -164,4 +165,68 @@ test('own source positions relay without exposing absolute stack paths or arbitr
   const child = safeChildDiagnostics('RESTART_ACCEPTANCE_DIAGNOSTIC ' + JSON.stringify({ stage: 'fresh:plan', code: 'ERR_ASSERTION', signature: 'UNCLASSIFIED', frame: { file: 'tools/event-night/restart-acceptance.mjs', line: 321, column: 17, absolute: '/private' } }));
   assert.deepEqual(child[0].frame, diagnostic.frame);
   assert(!JSON.stringify(child).includes('/private'));
+});
+
+test('pinned CLI discovery loses parent isolation; owned launcher restores guard before SDK code', async () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), 'justkviz-sdk-discovery-'));
+  const source = path.join(fixture, 'functions'), modules = path.join(source, 'node_modules');
+  const sdk = path.join(modules, 'firebase-functions'), legacyBin = path.join(modules, '.bin');
+  mkdirSync(path.join(source, 'lib'), { recursive: true }); mkdirSync(sdk, { recursive: true }); mkdirSync(legacyBin);
+  writeFileSync(path.join(source, 'package.json'), JSON.stringify({ name: '@filmovy-kviz/functions', main: 'lib/index.js', dependencies: { 'firebase-functions': '6.6.0' } }));
+  writeFileSync(path.join(source, 'lib/index.js'), 'module.exports = {};');
+  writeFileSync(path.join(source, '.env'), 'SYNTHETIC_PRIVATE_VALUE=must-not-copy');
+  writeFileSync(path.join(sdk, 'package.json'), JSON.stringify({ name: 'firebase-functions', version: '6.6.0', main: 'index.cjs', exports: { '.': './index.cjs' }, bin: { 'firebase-functions': 'bin.cjs' } }));
+  writeFileSync(path.join(sdk, 'index.cjs'), 'module.exports = {};');
+  writeFileSync(path.join(sdk, 'bin.cjs'), `const fs=require('node:fs');
+(async()=>{
+ const guarded=process.env.EVENT_NIGHT_RESTART_NETWORK_GUARD==='1'; let blocked=false;
+ if(guarded){try{await fetch('https://example.invalid/never-requested');}catch(error){blocked=error.message==='NON_LOOPBACK_NETWORK_BLOCKED';}}
+ fs.writeFileSync(process.env.FUNCTIONS_MANIFEST_OUTPUT_PATH,JSON.stringify({guarded,blocked,nodeImportGuard:!!process.env.NODE_OPTIONS,isolatedConfig:process.env.CLOUDSDK_CONFIG===process.env.EXPECTED_SYNTHETIC_CONFIG,homeAbsent:!process.env.HOME,emailOff:process.env.REGISTRATION_EMAIL_MODE==='off'&&process.env.REGISTRATION_OWNER_NOTIFICATION_MODE==='off'}));
+})();`);
+  const shellQuote = value => `'${value.replaceAll("'", "'\\''")}'`;
+  writeFileSync(path.join(legacyBin, 'firebase-functions'), `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(path.join(sdk, 'bin.cjs'))} "$@"\n`, { mode: 0o700 });
+  writeFileSync(path.join(legacyBin, 'firebase-functions.cmd'), `@echo off\r\n"${process.execPath.replaceAll('%', '%%')}" "${path.join(sdk, 'bin.cjs').replaceAll('%', '%%')}" %*\r\n`);
+  const owned = path.join(fixture, 'owned'); mkdirSync(owned); mkdirSync(path.join(owned, 'temp'));
+  const isolated = sanitizedEnvironment(owned, plan.projectId);
+  const { Delegate } = createRequire(import.meta.url)('firebase-tools/lib/deploy/functions/runtimes/node/index.js');
+  async function discovery(functionsDir, label) {
+    const output = path.join(owned, label + '.json');
+    const delegate = new Delegate(plan.projectId, fixture, functionsDir, 'nodejs22');
+    // The real CLI passes emulator envs, not the parent NODE_OPTIONS/ADC homes.
+    const child = delegate.execAdmin({}, { GCLOUD_PROJECT: plan.projectId, EXPECTED_SYNTHETIC_CONFIG: isolated.CLOUDSDK_CONFIG }, output);
+    const code = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
+    assert.equal(code, 0);
+    return JSON.parse(readFileSync(output, 'utf8'));
+  }
+  const legacy = await discovery(source, 'legacy');
+  assert.equal(legacy.guarded, false, 'Actual pinned CLI drops the parent network guard before SDK discovery');
+  assert.equal(legacy.nodeImportGuard, false);
+  assert.equal(legacy.isolatedConfig, false);
+  const runtime = prepareIsolatedFunctionsRuntime(fixture, owned, isolated);
+  assert(!lstatSync(path.join(runtime, 'node_modules')).isSymbolicLink(), 'Owned shims must never modify installed dependencies through a junction');
+  assert(!existsSync(path.join(runtime, '.env')));
+  const restored = await discovery(runtime, 'guarded');
+  assert.deepEqual(restored, { guarded: true, blocked: true, nodeImportGuard: true, isolatedConfig: true, homeAbsent: true, emailOff: true });
+  assert.throws(() => prepareIsolatedFunctionsRuntime(fixture, owned, isolated), /EEXIST/u, 'Runtime preparation is create-only');
+  assert.throws(() => prepareIsolatedFunctionsRuntime(fixture, owned, { ...isolated, GCLOUD_PROJECT: 'live-project' }), /DEMO_PROJECT_REQUIRED/u);
+  assert.throws(() => prepareIsolatedFunctionsRuntime(fixture, owned, { ...isolated, FIRESTORE_EMULATOR_HOST: 'cloud.example.test:8080' }), /LOOPBACK_EMULATOR_REQUIRED/u);
+});
+
+test('missing-module diagnostics expose only known public package aliases, never paths', () => {
+  const privatePath = 'C:\\private\\synthetic@example.test\\node_modules\\firebase-functions\\lib\\bin\\firebase-functions.js';
+  const diagnostic = safeFailureDiagnostic(new Error(`Cannot find module '${privatePath}'`));
+  assert.equal(diagnostic.moduleAlias, 'firebase-functions');
+  assert(!JSON.stringify(diagnostic).includes('private'));
+  assert(!JSON.stringify(diagnostic).includes('@example.test'));
+  const child = safeChildDiagnostics(`Error: Cannot find module '${privatePath}'`);
+  assert(child.some(item => item.moduleAlias === 'firebase-functions'));
+  assert(!JSON.stringify(child).includes('private'));
+  assert(!Object.hasOwn(safeFailureDiagnostic(new Error("Cannot find module 'synthetic-private-module'")), 'moduleAlias'));
+});
+
+test('inherited registration delivery activation is removed and both synthetic delivery modes are off', () => {
+  const env = sanitizedEnvironment(directory, plan.projectId, { REGISTRATION_EMAIL_MODE: 'cloud', REGISTRATION_OWNER_NOTIFICATION_MODE: 'cloud', REGISTRATION_EMAIL_KEY: 'synthetic-private-key' });
+  assert.equal(env.REGISTRATION_EMAIL_MODE, 'off');
+  assert.equal(env.REGISTRATION_OWNER_NOTIFICATION_MODE, 'off');
+  assert(!env.REGISTRATION_EMAIL_KEY);
 });

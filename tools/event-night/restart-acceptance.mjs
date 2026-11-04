@@ -18,6 +18,11 @@ const workerSteps = ['plan', 'registry', 'seeds', 'sdk', 'load-state', 'login', 
 const diagnosticStages = new Set(['arguments', 'preflight', 'setup', 'recovery', 'verify-result', ...phases.map(phase => `${phase}-suite`), ...phases.flatMap(phase => workerSteps.map(step => `${phase}:${step}`))]);
 const diagnosticCodes = new Set(['ERR_ASSERTION', 'ENOENT', 'EPERM', 'EACCES', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EADDRINUSE', 'ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED', 'ERR_REQUIRE_ESM', 'ERR_REQUIRE_ASYNC_MODULE', 'ERR_INVALID_ARG_TYPE', 'ABORT_ERR', 'OWN_CHILD_FAILED', ...['internal', 'unavailable', 'deadline-exceeded', 'permission-denied', 'unauthenticated', 'aborted', 'not-found', 'failed-precondition', 'resource-exhausted', 'invalid-argument'].map(code => `functions/${code}`)]);
 const diagnosticLogs = new Set(['fresh-suite.log', 'restart-suite.log', 'recovered-suite.log', 'seed-auth.log', 'seed-quizzes.log', 'fresh-export.log', 'restart-export.log', 'recovered-export.log', 'recovery.log']);
+const diagnosticModules = new Set(['firebase-functions', 'firebase-admin', 'firebase-tools', '@filmovy-kviz/quiz-domain', '@fontsource/noto-sans', '@pdf-lib/fontkit', 'pdf-lib']);
+function publicMissingModule(message) {
+  const missing = /Cannot find (?:package|module) ['"]([^'"]+)['"]/u.exec(message)?.[1]?.replaceAll('\\', '/');
+  return missing === undefined ? undefined : [...diagnosticModules].find(name => missing === name || missing.startsWith(name + '/') || missing.includes('/' + name + '/'));
+}
 const failureSignatures = [
   ['NON_LOOPBACK_NETWORK_BLOCKED', /NON_LOOPBACK_NETWORK_BLOCKED/u],
   ['EMULATOR_DOWNLOAD_OBSERVED', /download.*(?:emulator|runtime)|(?:emulator|runtime).*download/iu],
@@ -58,6 +63,7 @@ function sanitizedDiagnosticEntry(value, depth = 0) {
   if (diagnosticStages.has(value.stage)) result.stage = value.stage;
   if (diagnosticCodes.has(value.code) || value.code === 'UNCLASSIFIED') result.code = value.code;
   if (diagnosticLogs.has(value.logFile)) result.logFile = value.logFile;
+  if (diagnosticModules.has(value.moduleAlias)) result.moduleAlias = value.moduleAlias;
   if (validExitCode(value.exitCode)) result.exitCode = value.exitCode;
   if (['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGABRT'].includes(value.signal)) result.signal = value.signal;
   if (diagnosticCodes.has(value.causeCode)) result.causeCode = value.causeCode;
@@ -74,6 +80,8 @@ export function safeFailureDiagnostic(error, stage = activeStage, logFile, depth
     signature: failureSignatures.find(([, pattern]) => pattern.test(message))?.[0] ?? 'UNCLASSIFIED',
   };
   if (diagnosticLogs.has(logFile)) result.logFile = logFile;
+  const moduleAlias = publicMissingModule(message);
+  if (moduleAlias) result.moduleAlias = moduleAlias;
   if (validExitCode(error?.childExitCode)) result.exitCode = error.childExitCode;
   if (['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGABRT'].includes(error?.childSignal)) result.signal = error.childSignal;
   if (error?.cause && depth < 2) {
@@ -100,6 +108,8 @@ export function safeChildDiagnostics(output) {
     } catch { /* Raw child output is deliberately never echoed. */ }
   }
   for (const [signature, pattern] of failureSignatures) if (pattern.test(tail)) diagnostics.push({ signature });
+  const moduleAlias = publicMissingModule(tail);
+  if (moduleAlias) diagnostics.push({ signature: 'MODULE_NOT_FOUND', moduleAlias });
   return diagnostics.slice(-8);
 }
 export function assertLocalRequest(input) {
@@ -168,7 +178,7 @@ export function assertExport(directory) {
 }
 export function sanitizedEnvironment(directory, projectId, inherited = process.env) {
   const env = { ...inherited };
-  for (const key of Object.keys(env)) if (/^(GOOGLE_|GCLOUD_|CLOUDSDK_|CLOUD_RUNTIME_CONFIG$|FIREBASE_|FIRESTORE_|FUNCTIONS_|PUBSUB_|CLOUD_TASKS_|EVENTARC_|VITE_|GMAIL_|EMAIL_|NODE_OPTIONS$|NODE_EXTRA_CA_CERTS$)/u.test(key)) delete env[key];
+  for (const key of Object.keys(env)) if (/^(GOOGLE_|GCLOUD_|CLOUDSDK_|CLOUD_RUNTIME_CONFIG$|FIREBASE_|FIRESTORE_|FUNCTIONS_|PUBSUB_|CLOUD_TASKS_|EVENTARC_|VITE_|GMAIL_|EMAIL_|REGISTRATION_|NODE_OPTIONS$|NODE_EXTRA_CA_CERTS$)/u.test(key)) delete env[key];
   // google-auth-library checks APPDATA/gcloud on Windows and HOME/.config/gcloud on Unix.
   // Neither inherited credential location may be inspected by these demo children.
   delete env.HOME;
@@ -189,8 +199,72 @@ export function sanitizedEnvironment(directory, projectId, inherited = process.e
     // Storage Emulator clears its fixed temp subtree on shutdown. Port isolation
     // alone cannot protect another suite sharing the inherited OS temp directory.
     TEMP: path.join(directory, 'temp'), TMP: path.join(directory, 'temp'), TMPDIR: path.join(directory, 'temp'),
-    CI: 'true', FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true',
+    CI: 'true', FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true', REGISTRATION_EMAIL_MODE: 'off', REGISTRATION_OWNER_NOTIFICATION_MODE: 'off',
     EVENT_NIGHT_RESTART_NETWORK_GUARD: '1', NODE_OPTIONS: `--import=${pathToFileURL(self).href}` };
+}
+
+/** Physical, run-owned dependency directory: never change installed pnpm shims.
+ * Pinned CLI discovery deliberately constructs a new env and otherwise loses the
+ * parent's NODE_OPTIONS and credential-home isolation. Restore only fixed demo
+ * settings and install the HTTP(S)/fetch guard before importing the SDK binary.
+ */
+export function prepareIsolatedFunctionsRuntime(repositoryRoot, directory, environment) {
+  assert.equal(realpathSync(repositoryRoot), repositoryRoot);
+  assert.equal(realpathSync(directory), directory);
+  assert.notEqual(repositoryRoot, directory);
+  const projectId = environment.GCLOUD_PROJECT;
+  assert(/^demo-[a-z0-9-]+$/u.test(projectId ?? '') && environment.GOOGLE_CLOUD_PROJECT === projectId, 'DEMO_PROJECT_REQUIRED');
+  const isolated = {
+    GCLOUD_PROJECT: projectId, GOOGLE_CLOUD_PROJECT: projectId,
+    FIREBASE_CONFIG: JSON.stringify({ projectId, storageBucket: projectId + '.appspot.com', databaseURL: `https://${projectId}.firebaseio.com` }),
+    APPDATA: path.join(directory, 'cli-config'), XDG_CONFIG_HOME: path.join(directory, 'cli-config'), CLOUDSDK_CONFIG: path.join(directory, 'cli-config'),
+    TEMP: path.join(directory, 'temp'), TMP: path.join(directory, 'temp'), TMPDIR: path.join(directory, 'temp'),
+    NODE_OPTIONS: `--import=${pathToFileURL(self).href}`, EVENT_NIGHT_RESTART_NETWORK_GUARD: '1', FUNCTIONS_EMULATOR: 'true',
+    CI: 'true', FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true', REGISTRATION_EMAIL_MODE: 'off', REGISTRATION_OWNER_NOTIFICATION_MODE: 'off',
+  };
+  for (const key of ['FIREBASE_AUTH_EMULATOR_HOST', 'FIRESTORE_EMULATOR_HOST', 'FUNCTIONS_EMULATOR_HOST', 'FIREBASE_STORAGE_EMULATOR_HOST']) {
+    const match = /^(?:127\.0\.0\.1|localhost|\[::1\]):([1-9]\d{0,4})$/u.exec(environment[key] ?? '');
+    assert(match && Number(match[1]) <= 65535, 'LOOPBACK_EMULATOR_REQUIRED');
+    isolated[key] = environment[key];
+  }
+  for (const key of ['PATH', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'ComSpec', 'PATHEXT']) if (typeof environment[key] === 'string') isolated[key] = environment[key];
+  const source = path.join(repositoryRoot, 'functions'), packageFile = path.join(source, 'package.json');
+  const manifest = read(packageFile);
+  assert.equal(manifest.name, '@filmovy-kviz/functions');
+  // The SDK intentionally doesn't export package.json. Read its declared direct
+  // dependency directory without relying on an unexported package subpath.
+  const sdkRoot = realpathSync(path.join(source, 'node_modules/firebase-functions'));
+  const sdkManifest = read(path.join(sdkRoot, 'package.json'));
+  assert.equal(sdkManifest.name, 'firebase-functions');
+  assert.equal(typeof sdkManifest.bin?.['firebase-functions'], 'string');
+  const sdkBin = realpathSync(path.resolve(sdkRoot, sdkManifest.bin['firebase-functions']));
+  assert(sdkBin.startsWith(sdkRoot + path.sep) && lstatSync(sdkBin).isFile(), 'SDK_BINARY_OUTSIDE_PACKAGE');
+  const runtime = path.join(directory, 'functions-runtime');
+  mkdirSync(runtime); // Create-only: a previous runtime is never overwritten.
+  cpSync(path.join(source, 'lib'), path.join(runtime, 'lib'), { recursive: true, errorOnExist: true, force: false });
+  writeFileSync(path.join(runtime, 'package.json'), readFileSync(packageFile), { flag: 'wx' });
+  const modules = path.join(runtime, 'node_modules'); mkdirSync(modules);
+  for (const name of Object.keys(manifest.dependencies)) {
+    assert(/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/iu.test(name), 'INVALID_DEPENDENCY_NAME');
+    const target = path.join(modules, name);
+    if (name.startsWith('@')) mkdirSync(path.dirname(target), { recursive: true });
+    symlinkSync(realpathSync(path.join(source, 'node_modules', name)), target, process.platform === 'win32' ? 'junction' : 'dir');
+  }
+  const launcher = path.join(runtime, 'discovery-launcher.mjs');
+  writeFileSync(launcher, `import { pathToFileURL } from 'node:url';
+for (const key of Object.keys(process.env)) if (/^(GOOGLE_|GCLOUD_|CLOUDSDK_|CLOUD_RUNTIME_CONFIG$|FIREBASE_|FIRESTORE_|FUNCTIONS_EMULATOR$|PUBSUB_|CLOUD_TASKS_|EVENTARC_|VITE_|GMAIL_|EMAIL_|REGISTRATION_|HOME$|NODE_OPTIONS$|NODE_PATH$|NODE_EXTRA_CA_CERTS$)/u.test(key)) delete process.env[key];
+Object.assign(process.env, ${JSON.stringify(isolated)});
+await import(${JSON.stringify(pathToFileURL(self).href)});
+process.argv = [process.execPath, ${JSON.stringify(sdkBin)}, ...process.argv.slice(2)];
+await import(pathToFileURL(${JSON.stringify(sdkBin)}).href);
+`, { flag: 'wx', mode: 0o600 });
+  const bin = path.join(modules, '.bin'); mkdirSync(bin);
+  const shellQuote = value => `'${value.replaceAll("'", "'\\''")}'`;
+  writeFileSync(path.join(bin, 'firebase-functions'), `#!/bin/sh\nexec ${shellQuote(process.execPath)} "$(dirname "$0")/../../discovery-launcher.mjs" "$@"\n`, { flag: 'wx', mode: 0o700 });
+  // Only the known executable is embedded; CLI arguments retain cross-spawn's
+  // normal .cmd escaping, and the owned launcher is relative to this .bin file.
+  writeFileSync(path.join(bin, 'firebase-functions.cmd'), `@echo off\r\n"${process.execPath.replaceAll('%', '%%')}" "%~dp0..\\..\\discovery-launcher.mjs" %*\r\n`, { flag: 'wx', mode: 0o600 });
+  return runtime;
 }
 export function run(executable, args, options) {
   return new Promise((resolve, reject) => {
@@ -283,10 +357,7 @@ async function controller(powerShell) {
   const plan = { directory, projectId, ports, sourceSha256: hash(readFileSync(self)), sources: [self, ...['tools/event-night/EventNight.Common.ps1', 'functions/lib/dev/seed-auth.js', 'functions/lib/dev/seed-quizzes.js', 'functions/package.json', 'firestore.rules', 'firestore.indexes.json', 'storage.rules'].map(file => path.join(root, file))].map(file => ({ path: path.relative(root, file), sha256: hash(readFileSync(file)) })), functionBuild: records(path.join(root, 'functions/lib')), domainBuild: records(path.join(root, 'packages/quiz-domain/lib')) };
   save(path.join(directory, 'plan.json'), plan); assertPlan(plan, directory, env);
   // The CLI reads dotenv in functions.source. Copy only build/package, never root .env files.
-  const runtime = path.join(directory, 'functions-runtime'); mkdirSync(runtime);
-  cpSync(path.join(root, 'functions/lib'), path.join(runtime, 'lib'), { recursive: true, errorOnExist: true, force: false });
-  writeFileSync(path.join(runtime, 'package.json'), readFileSync(path.join(root, 'functions/package.json')), { flag: 'wx' });
-  symlinkSync(realpathSync(path.join(root, 'functions/node_modules')), path.join(runtime, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+  const runtime = prepareIsolatedFunctionsRuntime(root, directory, env);
   // pnpm's Windows .bin shims resolve relative to the invoking run directory.
   // Preserve that workspace dependency root as well as the Functions packages.
   symlinkSync(realpathSync(path.join(root, 'node_modules')), path.join(directory, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
