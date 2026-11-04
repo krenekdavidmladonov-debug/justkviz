@@ -1,7 +1,8 @@
 # Event-night simplification: bounded release checklist
 
 This checklist describes the integrated candidate, not a deployment receipt.
-The standing owner approval in `AGENTS.md` applies after required checks pass.
+Publication and deployment each require concrete owner approval after the
+corresponding checks pass; this checklist does not grant that approval.
 
 ## Exact target and resources
 
@@ -17,7 +18,7 @@ Round batching uses an explicit alternate request shape on the **existing**
 `saveEventScore`/`saveRefereeScore` callables. There must be no newly deployed
 `saveEventRoundScores` or `saveRefereeRoundScores` service. A new Gen 2 callable
 normally requires a new resource-local `allUsers → roles/run.invoker` binding;
-standing approval excludes new access grants. Reusing the existing endpoint and
+new access grants require separate approval. Reusing the existing endpoint and
 its existing ACL avoids that additional grant and keeps authorization in the
 current membership/capability transaction. Do not disable invoker checks.
 

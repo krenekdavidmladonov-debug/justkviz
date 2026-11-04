@@ -17,9 +17,18 @@ function decode(value: unknown): unknown {
 }
 export async function accessCall<T>(name: string, data: Record<string, unknown> = {}): Promise<T> {
   const current = epoch;
-  const result = await httpsCallable<Record<string, unknown>, T>(getFirebaseServices().functions, name)(data);
-  if (current !== epoch) throw new Error('Přihlášení nebo oprávnění se změnilo.');
-  return decode(result.data) as T;
+  try {
+    const result = await httpsCallable<Record<string, unknown>, T>(getFirebaseServices().functions, name)(data);
+    if (current !== epoch) throw new Error('Přihlášení nebo oprávnění se změnilo.');
+    return decode(result.data) as T;
+  } catch (failure) {
+    const code = failure && typeof failure === 'object' && 'code' in failure && typeof failure.code === 'string' ? failure.code : 'unknown';
+    if (failure instanceof Error) {
+      failure.message = `${failure.message} (${name}: ${code})`;
+      throw failure;
+    }
+    throw Object.assign(new Error(`Požadavek nelze dokončit. (${name}: ${code})`, { cause: failure }), { code });
+  }
 }
 export const privateRead = <T,>(operation: string, data: Record<string, unknown> = {}) => accessCall<T>('readAccessData', { operation, ...data });
 export interface PrivateDocument { id: string; data: Record<string, unknown> }

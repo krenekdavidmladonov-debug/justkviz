@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { canDelegate, grantErrors, permissionLabels, permissions, roleLabels, rolePresets, type AccessGrant, type AccessRole, type AccessScope, type Membership } from '@filmovy-kviz/quiz-domain';
 import { useAuth } from '../../auth/AuthProvider';
 import { accessCall, privateRead, type PrivateDocument } from '../../features/access/api';
@@ -7,14 +7,29 @@ import { readFirebaseConfig } from '../../services/firebase/config';
 
 interface AccessUser extends Membership { lastLoginAt: string | null; emailVerified: boolean }
 interface Invitation { inviteId: string; email: string; grant: AccessGrant; version: number; status: string; expiresAt: number }
-interface Overview { users: AccessUser[]; invitations: Invitation[] }
-interface AuditEntry { id: string; actorUid: string; kind: string; targetId: string; at: string; changes: Record<string, unknown> }
+interface Overview { users: AccessUser[]; invitations: Invitation[]; collaborationEnabled?: boolean }
+interface AuditEntry { id: string; actorUid: string; kind: string; targetId: string; at: string | null; changes: Record<string, unknown> }
 const emptyGrant = (): AccessGrant => ({ role: 'viewer', permissions: [...rolePresets.viewer], quizzes: { mode: 'none', ids: [] }, events: { mode: 'none', ids: [] } });
 const scopeLabels = { none: 'Žádné', own: 'Vlastní nově vytvořené', selected: 'Vybrané', all: 'Všechny' } as const;
 const statusLabels: Record<string, string> = { active: 'Aktivní', suspended: 'Pozastavený', invited: 'Pozván', expired: 'Vypršela', revoked: 'Odvolána', accepted: 'Přijata' };
 const auditLabels: Record<string, string> = { 'membership-changed': 'Změna přístupu', 'invitation-created': 'Vytvoření pozvánky', 'invitation-accepted': 'Přijetí pozvánky', 'invitation-revoke': 'Odvolání pozvánky', 'invitation-reissue': 'Nový odkaz na pozvánku', 'sessions-revoked': 'Odhlášení všech zařízení', 'resource-created': 'Přístup k novému obsahu', 'approved-owner-bootstrap': 'Schválené předání vlastnictví' };
+function readError(operation: string, failure: unknown) {
+  const code = failure && typeof failure === 'object' && 'code' in failure && typeof failure.code === 'string' ? failure.code : 'unknown';
+  const hint = code.endsWith('permission-denied') ? 'Pro tento požadavek nemáte oprávnění.'
+    : code.endsWith('unauthenticated') ? 'Přihlaste se znovu.'
+      : code.endsWith('not-found') ? 'Služba není dostupná. Správce musí ověřit nasazenou verzi.'
+        : 'Službu se nepodařilo načíst. Zkuste požadavek znovu.';
+  return `${hint} (${operation}: ${code})`;
+}
 function AuditGrant({ title, value }: { title: string; value: unknown }) {
-  if (!value || typeof value !== 'object' || !('permissions' in value) || !Array.isArray(value.permissions)) return null;
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const validScope = (scope: unknown): scope is AccessScope => !!scope && typeof scope === 'object' && 'mode' in scope && typeof scope.mode === 'string'
+    && Object.hasOwn(scopeLabels, scope.mode) && 'ids' in scope && Array.isArray(scope.ids) && scope.ids.every(id => typeof id === 'string');
+  if (typeof record.role !== 'string' || !Object.hasOwn(roleLabels, record.role) || !Array.isArray(record.permissions)
+    || record.permissions.some(p => typeof p !== 'string' || !Object.hasOwn(permissionLabels, p)) || !validScope(record.quizzes) || !validScope(record.events)) {
+    return <p>{title}: podrobnosti staršího záznamu nejsou dostupné.</p>;
+  }
   const grant = value as AccessGrant;
   return <div className="access-audit-grant"><strong>{title}: {roleLabels[grant.role]}</strong><p>Kvízy: {scopeLabels[grant.quizzes.mode]}{grant.quizzes.mode === 'selected' ? ` (${grant.quizzes.ids.length})` : ''} · Akce: {scopeLabels[grant.events.mode]}{grant.events.mode === 'selected' ? ` (${grant.events.ids.length})` : ''}</p><ul>{grant.permissions.map(p => <li key={p}>{permissionLabels[p]}</li>)}</ul></div>;
 }
@@ -35,18 +50,46 @@ export function UsersAccessPage() {
   const [grant, setGrant] = useState<AccessGrant>(emptyGrant), [email, setEmail] = useState(''), [status, setStatus] = useState<'active' | 'suspended'>('active');
   const [pending, setPending] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState(''), [link, setLink] = useState('');
   const [filter, setFilter] = useState('');
-  async function load() {
-    const [next, entries] = await Promise.all([accessCall<Overview>('listAccessUsers'), accessCall<AuditEntry[]>('listAccessAudit')]);
-    setOverview(next); setAudit(entries);
-  }
+  const [usersLoading, setUsersLoading] = useState(true), [usersLoaded, setUsersLoaded] = useState(false), [usersError, setUsersError] = useState('');
+  const [auditLoading, setAuditLoading] = useState(true), [auditError, setAuditError] = useState('');
+  const authorized = !!actor && can('users.manage');
+  const authorityKey = `${actor?.uid ?? ''}:${actor?.version ?? 0}:${authorized}`;
+  const authority = useRef(authorityKey); authority.current = authorityKey;
+  const alive = useRef(false), requests = useRef({ users: 0, audit: 0 });
+  const loadUsers = useCallback(async () => {
+    const request = ++requests.current.users;
+    const current = () => alive.current && authority.current === authorityKey && requests.current.users === request;
+    setUsersLoading(true); setUsersError('');
+    try { const next = await accessCall<Overview>('listAccessUsers'); if (current()) { setOverview(next); setUsersLoaded(true); } }
+    catch (failure) {
+      if (current()) {
+        setUsersError(readError('listAccessUsers', failure));
+        const code = failure && typeof failure === 'object' && 'code' in failure ? String(failure.code) : '';
+        if (code.endsWith('permission-denied') || code.endsWith('unauthenticated')) {
+          setOverview({ users: [], invitations: [] }); setUsersLoaded(false); setSelected(null); setEditing(false); setLink('');
+          requests.current.audit++; setAudit([]); setAuditLoading(false); setAuditError('');
+        }
+      }
+    } finally { if (current()) setUsersLoading(false); }
+  }, [authorityKey]);
+  const loadAudit = useCallback(async () => {
+    const request = ++requests.current.audit;
+    const current = () => alive.current && authority.current === authorityKey && requests.current.audit === request;
+    setAuditLoading(true); setAuditError('');
+    try { const next = await accessCall<AuditEntry[]>('listAccessAudit'); if (current()) setAudit(next); }
+    catch (failure) { if (current()) { setAudit([]); setAuditError(readError('listAccessAudit', failure)); } }
+    finally { if (current()) setAuditLoading(false); }
+  }, [authorityKey]);
   useEffect(() => {
-    if (!can('users.manage')) return;
+    alive.current = true;
+    setOverview({ users: [], invitations: [] }); setUsersLoaded(false); setAudit([]); setLink(''); setEditing(false);
+    if (!authorized) return () => { alive.current = false; };
     let active = true;
-    void load().catch(() => { if (active) setError('Přístupy se nepodařilo načíst.'); });
+    void loadUsers(); void loadAudit();
     void Promise.all([can('quiz.read') ? privateRead<PrivateDocument[]>('quizzes') : Promise.resolve([]), can('event.read') ? privateRead<PrivateDocument[]>('events') : Promise.resolve([])])
       .then(([q, e]) => { if (active) { setQuizzes(q); setEvents(e); } }).catch(() => { if (active) setError('Výběr obsahu není dostupný.'); });
-    return () => { active = false; };
-  }, [actor?.version]); // The provider remounts private UI when identity or authority changes.
+    return () => { active = false; alive.current = false; requests.current.users++; requests.current.audit++; };
+  }, [authorityKey, authorized, loadUsers, loadAudit]);
   if (!actor || !can('users.manage')) return <p role="alert">Pro správu uživatelů nemáte oprávnění.</p>;
   // These choices come from scoped server reads. The server rechecks ownership in its transaction.
   const delegationActor: Membership = { ...actor,
@@ -55,7 +98,10 @@ export function UsersAccessPage() {
   const errors = grantErrors(grant), delegable = canDelegate(delegationActor, grant);
   async function run(action: () => Promise<void>) {
     setPending(true); setError(''); setNotice('');
-    try { await action(); await load(); } catch (failure) { setError(failure instanceof Error ? failure.message : 'Změnu nelze dokončit.'); } finally { setPending(false); }
+    const key = authorityKey;
+    try { await action(); if (alive.current && authority.current === key) { await loadUsers(); void loadAudit(); } }
+    catch (failure) { if (alive.current && authority.current === key) setError(failure instanceof Error ? failure.message : 'Změnu nelze dokončit.'); }
+    finally { if (alive.current && authority.current === key) setPending(false); }
   }
   function invitationLink(inviteId: string, token: string) {
     const config = readFirebaseConfig();
@@ -66,17 +112,22 @@ export function UsersAccessPage() {
     setEmail(user?.email ?? ''); setStatus(user?.status ?? 'active'); setEditing(true); setError(''); setLink('');
   }
   const visible = overview.users.filter(u => `${u.displayName} ${u.email}`.toLowerCase().includes(filter.toLowerCase()));
+  const invitationsEnabled = overview.collaborationEnabled === true && !usersError;
   return <div className="users-access-page">
-    <header className="page-header"><div><p className="eyebrow">Administrace</p><h1>Uživatelé a přístupy</h1><p>Osobní účty, jasná oprávnění a přístup jen k vybranému obsahu.</p></div><button className="primary-button" onClick={() => edit(null)}>Pozvat člověka</button></header>
+    <header className="page-header"><div><p className="eyebrow">Administrace</p><h1>Uživatelé a přístupy</h1><p>Osobní účty, jasná oprávnění a přístup jen k vybranému obsahu.</p></div><button className="primary-button" disabled={!invitationsEnabled} onClick={() => edit(null)}>Pozvat člověka</button></header>
+    <p>Seznam obsahuje účty s přiděleným členstvím. Samotná registrace účtu přístup neuděluje a nevytváří žádost o schválení. Novému i již registrovanému člověku přidělíte přístup pozvánkou na jeho ověřený e-mail.</p>
+    {usersLoaded && overview.collaborationEnabled !== true && <p role="status">Pozvánky nejsou dostupné: bezpečná aktivace modulu nebyla potvrzena. Stávající členství lze nadále spravovat.</p>}
     {error && <p role="alert" className="error-message">{error}</p>}{notice && <p role="status">{notice}</p>}
     {link && <section className="account-card"><h2>Pozvánka je připravená</h2><p>Odkaz zkopírujte a předejte pozvanému člověku. Platí 7 dní a lze jej použít jednou. Po zavření stránky lze vytvořit nový odkaz.</p>
       <label>Odkaz na pozvánku<input readOnly value={link} onFocus={e => e.currentTarget.select()} /></label>
       <button className="primary-button" onClick={() => void navigator.clipboard.writeText(link).then(() => setNotice('Odkaz zkopírován.')).catch(() => setNotice('Označte a zkopírujte odkaz z pole.'))}>Kopírovat odkaz</button>
     </section>}
-    <section className="account-card"><label>Najít člověka<input type="search" value={filter} onChange={e => setFilter(e.target.value)} placeholder="Jméno nebo e-mail" /></label>
+    <section className="account-card"><button className="secondary-button" disabled={pending} onClick={() => void loadUsers()}>Znovu načíst uživatele</button>
+      {usersLoading && <p role="status">Načítám uživatele a pozvánky…</p>}{usersError && <p role="alert" className="error-message">{usersError}</p>}
+      <label>Najít člověka<input type="search" value={filter} onChange={e => setFilter(e.target.value)} placeholder="Jméno nebo e-mail" /></label>
       <div className="access-table-scroll"><table className="access-table"><thead><tr><th>Člověk</th><th>Role</th><th>Rozsah</th><th>Stav</th><th>Poslední přihlášení</th><th>Správa</th></tr></thead><tbody>
         {visible.map(u => <tr key={u.uid}><td><strong>{u.displayName || 'Bez jména'}</strong><br />{u.email}</td><td>{roleLabels[u.role]}</td><td>Kvízy: {scopeLabels[u.quizzes.mode]}{u.quizzes.mode === 'selected' ? ` (${u.quizzes.ids.length})` : ''}<br />Akce: {scopeLabels[u.events.mode]}{u.events.mode === 'selected' ? ` (${u.events.ids.length})` : ''}</td><td>{statusLabels[u.status]}</td><td>{u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('cs-CZ') : 'Není k dispozici'}</td><td><button className="quiet-button" onClick={() => edit(u)}>Detail přístupu</button></td></tr>)}
-        {!visible.length && <tr><td colSpan={6}>Žádné odpovídající účty.</td></tr>}
+        {usersLoaded && !usersLoading && !usersError && !visible.length && <tr><td colSpan={6}>Žádné odpovídající účty.</td></tr>}
       </tbody></table></div>
     </section>
     {editing && <section className="account-card access-editor"><h2>{selected ? `Přístup: ${selected.displayName || selected.email}` : 'Nová pozvánka'}</h2>
@@ -96,12 +147,12 @@ export function UsersAccessPage() {
         {errors.map(text => <p key={text} className="error-message">{text}</p>)}
         {!delegable && <p className="error-message">Tato sada přesahuje vaše oprávnění nebo obsahuje vlastnictví, které lze převést jen schváleným postupem.</p>}
         {selected?.uid === actor.uid && <p>Vlastní oprávnění musí změnit jiný oprávněný správce.</p>}
-        <div className="account-actions"><button className="primary-button" disabled={pending || errors.length > 0 || !delegable || selected?.uid === actor.uid}>{selected ? 'Uložit přístup' : 'Vytvořit odkaz s pozvánkou'}</button><button className="quiet-button" type="button" onClick={() => setEditing(false)}>Zavřít</button></div>
+        <div className="account-actions"><button className="primary-button" disabled={pending || errors.length > 0 || !delegable || selected?.uid === actor.uid || (!selected && !invitationsEnabled)}>{selected ? 'Uložit přístup' : 'Vytvořit odkaz s pozvánkou'}</button><button className="quiet-button" type="button" onClick={() => setEditing(false)}>Zavřít</button></div>
       </form>
     </section>}
     <section className="account-card"><h2>Pozvánky</h2>{overview.invitations.length ? overview.invitations.map(invite => <div className="access-invitation" key={invite.inviteId}><div><strong>{invite.email}</strong><p>{roleLabels[invite.grant.role]} · {statusLabels[invite.status]} · platnost do {new Date(invite.expiresAt).toLocaleDateString('cs-CZ')}</p></div>
-      {invite.status !== 'accepted' && <div className="account-actions"><button className="secondary-button" disabled={pending || !canDelegate(delegationActor, invite.grant)} onClick={() => void run(async () => { const result = await accessCall<{ token: string }>('changeAccessInvitation', { inviteId: invite.inviteId, expectedVersion: invite.version, action: 'reissue' }); invitationLink(invite.inviteId, result.token); })}>Vytvořit nový odkaz</button><button className="quiet-button" disabled={pending || invite.status === 'revoked' || !canDelegate(delegationActor, invite.grant)} onClick={() => void run(async () => { await accessCall('changeAccessInvitation', { inviteId: invite.inviteId, expectedVersion: invite.version, action: 'revoke' }); setLink(''); setNotice('Pozvánka byla odvolána.'); })}>Odvolat</button></div>}
-    </div>) : <p>Zatím nebyly vytvořeny žádné pozvánky.</p>}</section>
-    <section className="account-card"><h2>Historie změn přístupů</h2><p>Posledních 100 neměnných záznamů.</p>{audit.map(entry => <details key={entry.id}><summary>{new Date(entry.at).toLocaleString('cs-CZ')} · {auditLabels[entry.kind] ?? 'Změna přístupu'} · {overview.users.find(u => u.uid === entry.actorUid)?.displayName || overview.users.find(u => u.uid === entry.actorUid)?.email || 'Oprávněný operátor'}</summary><p>Pro: {overview.users.find(u => u.uid === entry.targetId)?.displayName || overview.users.find(u => u.uid === entry.targetId)?.email || overview.invitations.find(i => i.inviteId === entry.targetId)?.email || 'Záznam přístupu'}</p>{typeof entry.changes?.status === 'string' && <p>Stav: {statusLabels[entry.changes.status]}</p>}<AuditGrant title="Před změnou" value={entry.changes?.before} /><AuditGrant title="Po změně" value={entry.changes?.after ?? entry.changes?.grant} /></details>)}</section>
+      {invite.status !== 'accepted' && <div className="account-actions"><button className="secondary-button" disabled={pending || !invitationsEnabled || !canDelegate(delegationActor, invite.grant)} onClick={() => void run(async () => { const result = await accessCall<{ token: string }>('changeAccessInvitation', { inviteId: invite.inviteId, expectedVersion: invite.version, action: 'reissue' }); invitationLink(invite.inviteId, result.token); })}>Vytvořit nový odkaz</button><button className="quiet-button" disabled={pending || invite.status === 'revoked' || !canDelegate(delegationActor, invite.grant)} onClick={() => void run(async () => { await accessCall('changeAccessInvitation', { inviteId: invite.inviteId, expectedVersion: invite.version, action: 'revoke' }); setLink(''); setNotice('Pozvánka byla odvolána.'); })}>Odvolat</button></div>}
+    </div>) : usersLoaded && !usersLoading && !usersError ? <p>Zatím nebyly vytvořeny žádné pozvánky.</p> : <p>Pozvánky zatím nejsou načteny.</p>}</section>
+    <section className="account-card"><h2>Historie změn přístupů</h2><p>Posledních 100 neměnných záznamů.</p><button className="secondary-button" onClick={() => void loadAudit()}>Znovu načíst historii</button>{auditLoading && <p role="status">Načítám historii…</p>}{auditError && <p role="alert" className="error-message">{auditError}</p>}{audit.map(entry => <details key={entry.id}><summary>{entry.at && Number.isFinite(Date.parse(entry.at)) ? new Date(entry.at).toLocaleString('cs-CZ') : 'Čas není k dispozici'} · {auditLabels[entry.kind] ?? 'Změna přístupu'} · {overview.users.find(u => u.uid === entry.actorUid)?.displayName || overview.users.find(u => u.uid === entry.actorUid)?.email || 'Oprávněný operátor'}</summary><p>Pro: {overview.users.find(u => u.uid === entry.targetId)?.displayName || overview.users.find(u => u.uid === entry.targetId)?.email || overview.invitations.find(i => i.inviteId === entry.targetId)?.email || 'Záznam přístupu'}</p>{typeof entry.changes?.status === 'string' && <p>Stav: {statusLabels[entry.changes.status]}</p>}<AuditGrant title="Před změnou" value={entry.changes?.before} /><AuditGrant title="Po změně" value={entry.changes?.after ?? entry.changes?.grant} /></details>)}</section>
   </div>;
 }

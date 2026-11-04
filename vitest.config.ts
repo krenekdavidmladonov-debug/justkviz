@@ -4,6 +4,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: [
+      'tests/usersAccessPage.test.tsx',
+      'tests/accessApi.test.ts',
       'tests/privacyNotice.test.tsx', 'tests/registrationAbuse.test.ts',
       'tests/registrationInput.test.tsx',
       'tests/manageRegistrationPage.test.tsx',

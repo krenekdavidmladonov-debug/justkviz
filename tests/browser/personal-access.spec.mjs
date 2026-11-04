@@ -10,6 +10,70 @@ async function login(page, person) {
   await page.goto('/admin/login'); await page.getByLabel('E-mail', { exact: true }).fill(person.email); await page.getByLabel('Heslo', { exact: true }).fill(person.password);
   await page.getByRole('button', { name: 'Přihlásit se', exact: true }).click(); await expect(page).toHaveURL(/\/admin$/);
 }
+
+test('audit failure and stalled audit preserve real users, invitation state and independent retries', async ({ page }) => {
+  await localOnly(page.context());
+  const f = await browserFixture();
+  let mode = 'fail', release = () => {}, held = false;
+  const gate = new Promise(resolve => { release = resolve; });
+  try {
+    await page.route('**/listAccessAudit', async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      if (mode === 'fail') return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: { status: 'INTERNAL', message: 'Synthetic audit failure' } }) });
+      if (mode === 'hold') { held = true; await gate; }
+      return route.continue().catch(() => {});
+    });
+    await login(page, f.owner); await page.goto('/admin/users');
+    await expect(page.getByRole('row').filter({ hasText: f.viewer.email })).toBeVisible();
+    await expect(page.getByRole('alert').filter({ hasText: 'listAccessAudit: functions/internal' })).toBeVisible();
+    await page.getByLabel('Najít člověka').fill(f.viewer.email);
+    await page.getByRole('button', { name: 'Pozvat člověka', exact: true }).click();
+    await page.getByLabel('E-mail', { exact: true }).fill(f.invitedEmail);
+    await page.getByRole('button', { name: 'Znovu načíst uživatele', exact: true }).click();
+    await expect(page.getByRole('row').filter({ hasText: f.viewer.email })).toBeVisible();
+    await expect(page.getByLabel('Najít člověka')).toHaveValue(f.viewer.email);
+    await expect(page.getByLabel('E-mail', { exact: true })).toHaveValue(f.invitedEmail);
+    await page.getByRole('button', { name: 'Vytvořit odkaz s pozvánkou', exact: true }).click();
+    const link = await page.getByLabel('Odkaz na pozvánku').inputValue();
+    expect(link).toContain('#token=');
+    mode = 'pass';
+    await page.getByRole('button', { name: 'Znovu načíst historii', exact: true }).click();
+    await expect(page.getByRole('alert').filter({ hasText: 'listAccessAudit' })).toHaveCount(0);
+    await expect(page.getByLabel('Odkaz na pozvánku')).toHaveValue(link);
+    await expect(page.getByLabel('Najít člověka')).toHaveValue(f.viewer.email);
+    mode = 'hold'; await page.reload();
+    await expect.poll(() => held).toBe(true);
+    await expect(page.getByRole('row').filter({ hasText: f.viewer.email })).toBeVisible();
+    await expect(page.getByText('Načítám historii…', { exact: true })).toBeVisible();
+    release();
+    await expect(page.getByText('Načítám historii…', { exact: true })).toHaveCount(0);
+  } finally { release(); await page.close(); await f.dispose(); }
+});
+
+test('a delayed authorized user list cannot restore access after suspension or reload', async ({ page }) => {
+  await localOnly(page.context());
+  const f = await browserFixture();
+  let release = () => {}, held = false;
+  const gate = new Promise(resolve => { release = resolve; });
+  try {
+    await login(page, f.owner);
+    await page.route('**/listAccessUsers', async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      const response = await route.fetch();
+      held = true; await gate;
+      await route.fulfill({ response }).catch(() => {});
+    });
+    await page.goto('/admin/users'); await expect.poll(() => held).toBe(true);
+    await f.db.doc(`memberships/${f.owner.uid}`).update({ status: 'suspended', version: 2 });
+    await expect(page.getByRole('heading', { name: 'Uživatelé a přístupy', exact: true })).toHaveCount(0);
+    const response = page.waitForResponse(r => r.url().endsWith('/listAccessUsers') && r.request().method() === 'POST');
+    release(); await response;
+    await expect(page.getByText(f.viewer.email, { exact: true })).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole('heading', { name: 'Uživatelé a přístupy', exact: true })).toHaveCount(0);
+    await expect(page.getByText(f.viewer.email, { exact: true })).toHaveCount(0);
+  } finally { release(); await page.close(); await f.dispose(); }
+});
 test('five isolated identities: UI invitation, verified signup, scoped editor, moderator, scoring, viewer and live revocation', async ({ browser }) => {
   const f = await browserFixture(), contexts = [], failures = [];
   const context = async () => { const c = await browser.newContext({ baseURL: 'http://127.0.0.1:5198', viewport: { width: 1366, height: 900 } }); c.setDefaultTimeout(20000); await localOnly(c); contexts.push(c); return c; };
@@ -33,6 +97,20 @@ test('five isolated identities: UI invitation, verified signup, scoped editor, m
     await creator.goto(`/admin/quizzes/${f.quizA}/edit`); await openRounds(creator); await creator.locator('.outline-question').filter({ hasText: 'Otázka pro kolegu' }).click(); await creator.getByLabel('Otázka *', { exact: true }).fill('Upraveno pozvaným tvůrcem');
     await creator.getByRole('button', { name: 'Uložit vše', exact: true }).click(); await expect(creator.locator('.save-state')).toHaveText('Uloženo'); await expect(creator.getByRole('button', { name: 'Smazat', exact: true })).toHaveCount(0);
     await creator.reload(); await openRounds(creator); await creator.locator('.outline-question').filter({ hasText: 'Upraveno pozvaným tvůrcem' }).click();
+    const invitedIdentity = await f.auth.getUserByEmail(f.invitedEmail);
+    await owner.goto('/admin/users');
+    await owner.getByRole('row').filter({ hasText: f.invitedEmail }).getByRole('button', { name: 'Detail přístupu' }).click();
+    await owner.getByLabel('Role jako výchozí sada').selectOption('viewer');
+    await owner.getByRole('button', { name: 'Uložit přístup' }).click();
+    await expect.poll(async () => (await f.db.doc(`memberships/${invitedIdentity.uid}`).get()).get('version')).toBe(2);
+    await openRounds(creator); await creator.locator('.outline-question').filter({ hasText: 'Upraveno pozvaným tvůrcem' }).click();
+    await expect(creator.getByLabel('Otázka *', { exact: true })).toBeDisabled();
+    await owner.getByRole('row').filter({ hasText: f.invitedEmail }).getByRole('button', { name: 'Detail přístupu' }).click();
+    await owner.getByLabel('Role jako výchozí sada').selectOption('creator');
+    await owner.getByRole('button', { name: 'Uložit přístup' }).click();
+    await expect.poll(async () => (await f.db.doc(`memberships/${invitedIdentity.uid}`).get()).get('version')).toBe(3);
+    await openRounds(creator); await creator.locator('.outline-question').filter({ hasText: 'Upraveno pozvaným tvůrcem' }).click();
+    await expect(creator.getByLabel('Otázka *', { exact: true })).toBeEnabled();
     const moderator = await (await context()).newPage(); await login(moderator, f.moderator); await moderator.goto(`/admin/events/${f.eventA.eventId}`);
     await expect(moderator.getByRole('heading', { name: 'Detail akce' })).toBeVisible(); await expect(moderator.getByText('Vybraný kvíz se nepodařilo načíst.')).toHaveCount(0);
     await expect(moderator.getByRole('link', { name: 'Spravovat týmy a registrace' })).toHaveCount(0);
