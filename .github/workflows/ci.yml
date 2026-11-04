@@ -73,7 +73,7 @@ jobs:
       - name: Staging guards, release inventory and synthetic email activation contracts (no cloud access)
         run: |
           node -e "require('node:fs').mkdirSync('.local-data', { recursive: true })"
-          node --test tests/ci-quality-gate.test.mjs tests/staging-guard.test.mjs tests/restart-release-manifest.test.mjs tests/restart-build.test.mjs tools/email/oauth-connect.test.mjs tools/email/build-activation.test.mjs tests/restart-deploy-guard.test.mjs tests/restart-qa.test.mjs tests/access/pause-collaboration.test.mjs tests/access/enable-collaboration.test.mjs tools/email/activation-plan.test.mjs tools/email/activation-execution-policy.test.mjs tools/email/function-deployment-policy.test.mjs tools/event-night/restart-acceptance.test.mjs
+            node --test tests/ci-quality-gate.test.mjs tests/staging-guard.test.mjs tests/restart-release-manifest.test.mjs tests/restart-build.test.mjs tools/email/oauth-connect.test.mjs tools/email/build-activation.test.mjs tests/restart-deploy-guard.test.mjs tests/restart-qa.test.mjs tests/access/pause-collaboration.test.mjs tests/access/enable-collaboration.test.mjs tests/access/p1-hotfix-policy.test.mjs tools/email/activation-plan.test.mjs tools/email/activation-execution-policy.test.mjs tools/email/function-deployment-policy.test.mjs tools/event-night/restart-acceptance.test.mjs
 
       - name: Unit and synthetic migration regression tests
         run: pnpm test:unit
