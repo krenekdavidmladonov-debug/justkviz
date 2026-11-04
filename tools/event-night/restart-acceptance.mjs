@@ -13,6 +13,95 @@ export const ports = Object.freeze({ auth: 9399, functions: 5301, firestore: 838
 const hash = value => createHash('sha256').update(value).digest('hex');
 const save = (file, value) => writeFileSync(file, JSON.stringify(value, null, 2), { flag: 'wx', mode: 0o600 });
 const read = file => JSON.parse(readFileSync(file, 'utf8'));
+const phases = ['fresh', 'restart', 'recovered'];
+const workerSteps = ['plan', 'registry', 'seeds', 'sdk', 'load-state', 'login', 'create-event', 'create-team', 'lock-quiz', 'save-score', 'save-media', 'capture-state', 'replay-score', 'continue-score', 'stale-score', 'verify-history', 'export', 'save-result'];
+const diagnosticStages = new Set(['arguments', 'preflight', 'setup', 'recovery', 'verify-result', ...phases.map(phase => `${phase}-suite`), ...phases.flatMap(phase => workerSteps.map(step => `${phase}:${step}`))]);
+const diagnosticCodes = new Set(['ERR_ASSERTION', 'ENOENT', 'EPERM', 'EACCES', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EADDRINUSE', 'ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED', 'ERR_REQUIRE_ESM', 'ERR_REQUIRE_ASYNC_MODULE', 'ERR_INVALID_ARG_TYPE', 'ABORT_ERR', 'OWN_CHILD_FAILED', ...['internal', 'unavailable', 'deadline-exceeded', 'permission-denied', 'unauthenticated', 'aborted', 'not-found', 'failed-precondition', 'resource-exhausted', 'invalid-argument'].map(code => `functions/${code}`)]);
+const diagnosticLogs = new Set(['fresh-suite.log', 'restart-suite.log', 'recovered-suite.log', 'seed-auth.log', 'seed-quizzes.log', 'fresh-export.log', 'restart-export.log', 'recovered-export.log', 'recovery.log']);
+const failureSignatures = [
+  ['NON_LOOPBACK_NETWORK_BLOCKED', /NON_LOOPBACK_NETWORK_BLOCKED/u],
+  ['EMULATOR_DOWNLOAD_OBSERVED', /download.*(?:emulator|runtime)|(?:emulator|runtime).*download/iu],
+  ['FUNCTIONS_LOAD_FAILED', /Failed to load function definition|Cannot determine backend specification/iu],
+  ['MODULE_NOT_FOUND', /Cannot find (?:module|package)|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/u],
+  ['MISSING_FILE_OR_COMMAND', /not recognized as an internal|command not found|ENOENT/iu],
+  ['JAVA_UNAVAILABLE', /java.*(?:not found|not installed|unsupported|requires)|Could not spawn.*java/iu],
+  ['PORT_UNAVAILABLE', /PORT_UNAVAILABLE|EADDRINUSE|port.*already in use/iu],
+  ['EMULATOR_ENDPOINT_REFUSED', /ECONNREFUSED/u],
+  ['REGISTRY_MISMATCH', /FOREIGN_HUB|EMULATOR_REGISTRY|SHIFTED_EMULATOR|FOREIGN_EMULATOR|FIRESTORE_WEBSOCKET|FIRESTORE_RESERVED_PORTS/u],
+  ['SOURCE_CHANGED', /HARNESS_SOURCE_CHANGED|SOURCE_CHANGED_DURING_RUN/u],
+  ['IMPORTED_CONTENT_CHANGED', /IMPORTED_CONTENT_CHANGED|IMPORTED_RECEIPT_REPLAY_CHANGED|IMPORT_MUTATED_CHECKPOINT/u],
+  ['OWN_CHILD_FAILED', /OWN_CHILD_FAILED/u],
+];
+const diagnosticSignatures = new Set(['UNCLASSIFIED', ...failureSignatures.map(([name]) => name)]);
+const diagnosticMarker = 'RESTART_ACCEPTANCE_DIAGNOSTIC ';
+let activeStage = 'arguments';
+const diagnosticFile = 'tools/event-night/restart-acceptance.mjs';
+const validSourcePosition = value => Number.isSafeInteger(value) && value > 0 && value <= 10_000_000;
+const validExitCode = value => Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff;
+
+function ownHarnessFrame(error) {
+  if (typeof error?.stack !== 'string') return undefined;
+  for (const line of error.stack.slice(0, 16384).split('\n')) {
+    if (!line.includes(self) && !line.includes(pathToFileURL(self).href)) continue;
+    const position = /:(\d+):(\d+)\)?\s*$/u.exec(line);
+    if (position && validSourcePosition(Number(position[1])) && validSourcePosition(Number(position[2]))) {
+      return { file: diagnosticFile, line: Number(position[1]), column: Number(position[2]) };
+    }
+  }
+  return undefined;
+}
+
+/** Fixed identifiers only: no exception text, paths, environment or captured data. */
+function sanitizedDiagnosticEntry(value, depth = 0) {
+  if (!value || typeof value !== 'object' || !diagnosticSignatures.has(value.signature)) return undefined;
+  const result = { signature: value.signature };
+  if (diagnosticStages.has(value.stage)) result.stage = value.stage;
+  if (diagnosticCodes.has(value.code) || value.code === 'UNCLASSIFIED') result.code = value.code;
+  if (diagnosticLogs.has(value.logFile)) result.logFile = value.logFile;
+  if (validExitCode(value.exitCode)) result.exitCode = value.exitCode;
+  if (['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGABRT'].includes(value.signal)) result.signal = value.signal;
+  if (diagnosticCodes.has(value.causeCode)) result.causeCode = value.causeCode;
+  if (diagnosticSignatures.has(value.causeSignature)) result.causeSignature = value.causeSignature;
+  if (value.frame?.file === diagnosticFile && validSourcePosition(value.frame.line) && validSourcePosition(value.frame.column)) result.frame = { file: diagnosticFile, line: value.frame.line, column: value.frame.column };
+  if (depth < 2 && Array.isArray(value.children)) result.children = value.children.slice(-8).map(item => sanitizedDiagnosticEntry(item, depth + 1)).filter(Boolean);
+  return result;
+}
+export function safeFailureDiagnostic(error, stage = activeStage, logFile, depth = 0) {
+  const message = typeof error?.message === 'string' ? error.message.slice(0, 4096) : '';
+  const result = {
+    stage: diagnosticStages.has(stage) ? stage : 'arguments',
+    code: diagnosticCodes.has(error?.code) ? error.code : 'UNCLASSIFIED',
+    signature: failureSignatures.find(([, pattern]) => pattern.test(message))?.[0] ?? 'UNCLASSIFIED',
+  };
+  if (diagnosticLogs.has(logFile)) result.logFile = logFile;
+  if (validExitCode(error?.childExitCode)) result.exitCode = error.childExitCode;
+  if (['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGABRT'].includes(error?.childSignal)) result.signal = error.childSignal;
+  if (error?.cause && depth < 2) {
+    const cause = safeFailureDiagnostic(error.cause, stage, undefined, depth + 1);
+    result.causeCode = cause.code; result.causeSignature = cause.signature;
+  }
+  if (Array.isArray(error?.childDiagnostics)) result.children = error.childDiagnostics.slice(-8).map(item => sanitizedDiagnosticEntry(item)).filter(Boolean);
+  const frame = ownHarnessFrame(error);
+  if (frame) result.frame = frame;
+  return result;
+}
+
+/** Relay only validated markers and fixed signatures from the last 64 KiB. */
+export function safeChildDiagnostics(output) {
+  const tail = output.slice(-65536), diagnostics = [];
+  for (const line of tail.split(/\r?\n/u)) {
+    const marker = line.indexOf(diagnosticMarker);
+    if (marker < 0) continue;
+    try {
+      const parsed = JSON.parse(line.slice(marker + diagnosticMarker.length));
+      if (!diagnosticStages.has(parsed.stage) || !diagnosticCodes.has(parsed.code) && parsed.code !== 'UNCLASSIFIED'
+        || !diagnosticSignatures.has(parsed.signature)) continue;
+      diagnostics.push(sanitizedDiagnosticEntry(parsed));
+    } catch { /* Raw child output is deliberately never echoed. */ }
+  }
+  for (const [signature, pattern] of failureSignatures) if (pattern.test(tail)) diagnostics.push({ signature });
+  return diagnostics.slice(-8);
+}
 export function assertLocalRequest(input) {
   const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
   assert(['http:', 'https:'].includes(url.protocol) && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'NON_LOOPBACK_NETWORK_BLOCKED');
@@ -103,15 +192,27 @@ export function sanitizedEnvironment(directory, projectId, inherited = process.e
     CI: 'true', FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true',
     EVENT_NIGHT_RESTART_NETWORK_GUARD: '1', NODE_OPTIONS: `--import=${pathToFileURL(self).href}` };
 }
-function run(executable, args, options) {
+export function run(executable, args, options) {
   return new Promise((resolve, reject) => {
     const { log, processReceipt, ...childOptions } = options;
+    const stage = activeStage;
+    let tail = '';
     const child = spawn(executable, args, { ...childOptions, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     if (processReceipt) save(processReceipt, { pid: child.pid });
-    child.stdout.on('data', data => appendFileSync(log, data));
-    child.stderr.on('data', data => appendFileSync(log, data));
-    child.once('error', reject);
-    child.once('exit', (code, signal) => code === 0 && !signal ? resolve() : reject(new Error(`OWN_CHILD_FAILED:${code ?? signal}`)));
+    const capture = data => { appendFileSync(log, data); tail = (tail + data.toString('utf8')).slice(-65536); };
+    child.stdout.on('data', capture);
+    child.stderr.on('data', capture);
+    const failure = (code, signal, cause) => {
+      const error = Object.assign(new Error(`OWN_CHILD_FAILED:${code ?? signal ?? 'spawn'}`), {
+        code: 'OWN_CHILD_FAILED', childExitCode: code, childSignal: signal, cause,
+        childDiagnostics: safeChildDiagnostics(tail),
+      });
+      error.safeDiagnostic = safeFailureDiagnostic(error, stage, path.basename(log));
+      return error;
+    };
+    child.once('error', cause => reject(failure(undefined, undefined, cause)));
+    // close follows stdio drain; exit can run before the final failure marker arrives.
+    child.once('close', (code, signal) => code === 0 && !signal ? resolve() : reject(failure(code, signal)));
   });
 }
 export function assertEmulatorRegistry(registry) {
@@ -169,9 +270,11 @@ if($before -ne $after -or $prior -ne $restored -or (Test-Path -LiteralPath $p.Pr
 `;
 }
 async function controller(powerShell) {
+  activeStage = 'preflight';
   assert.equal(process.versions.node.split('.')[0], '22', 'NODE_22_REQUIRED');
   assert(path.isAbsolute(powerShell) && existsSync(powerShell), 'EXPLICIT_POWERSHELL_REQUIRED');
   await portsFree();
+  activeStage = 'setup';
   // Keep real Firestore backup paths below Windows PowerShell 5's legacy path limit.
   const parent = path.join(root, '.local-data/en-restart'); mkdirSync(parent, { recursive: true }); assert.equal(realpathSync(parent), parent);
   const directory = mkdtempSync(path.join(parent, 'run-')), projectId = 'demo-restart-' + randomUUID().replaceAll('-', '').slice(0, 12);
@@ -194,6 +297,7 @@ async function controller(powerShell) {
   const cli = path.join(root, 'node_modules/firebase-tools/lib/bin/firebase.js');
   assert.equal(createRequire(import.meta.url)('firebase-tools/package.json').version, '15.34.2');
   const cycle = async (phase, snapshot) => {
+    activeStage = `${phase}-suite`;
     await portsFree();
     const command = [process.execPath, self, '--worker', phase, '--run-dir', directory].map(quote).join(' ');
     await run(process.execPath, [cli, 'emulators:exec', '--only', 'auth,functions,firestore,storage', '--project', projectId, '--config', path.join(directory, 'firebase.json'), '--non-interactive', ...(snapshot ? ['--import', snapshot] : []), command], { cwd: directory, env, log: path.join(directory, phase + '-suite.log'), processReceipt: path.join(directory, phase + '-suite-process.json') });
@@ -210,9 +314,11 @@ async function controller(powerShell) {
   cpSync(export1, path.join(data, 'emulator-data'), { recursive: true, errorOnExist: true, force: false });
   cpSync(export2, path.join(data, 'export-staging'), { recursive: true, errorOnExist: true, force: false });
   const script = path.join(directory, 'recover.ps1'); writeFileSync(script, '\ufeff' + powerShellScript(), { flag: 'wx' });
+  activeStage = 'recovery';
   await run(powerShell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Common', path.join(root, 'tools/event-night/EventNight.Common.ps1'), '-Sandbox', sandbox, '-Project', projectId], { cwd: directory, env, log: path.join(directory, 'recovery.log') });
   const recovery = JSON.parse(readFileSync(path.join(sandbox, 'recovery-result.json'), 'utf8').replace(/^\uFEFF/u, '')); assert.equal(recovery.mode, 'REAL_RENAME_RECOVERY_PASS'); assert.equal(recovery.backupPreserved, true); assert.equal(recovery.idempotent, true);
   await cycle('recovered', path.join(data, 'emulator-data'));
+  activeStage = 'verify-result';
   assert.deepEqual(assertExport(export1), initialRecords);
   for (const item of plan.sources) assert.equal(hash(readFileSync(path.join(root, item.path))), item.sha256, 'SOURCE_CHANGED_DURING_RUN');
   assert.deepEqual(records(path.join(root, 'functions/lib')), plan.functionBuild); assert.deepEqual(records(path.join(root, 'packages/quiz-domain/lib')), plan.domainBuild);
@@ -224,14 +330,18 @@ async function controller(powerShell) {
 }
 async function worker(phase, directory) {
   assert(['fresh', 'restart', 'recovered'].includes(phase));
+  activeStage = `${phase}:plan`;
   const parent = path.join(root, '.local-data/en-restart'); assert(directory.startsWith(parent + path.sep));
   const plan = read(path.join(directory, 'plan.json')); assertPlan(plan, directory, process.env);
   assert.equal(plan.sourceSha256, hash(readFileSync(self)), 'HARNESS_SOURCE_CHANGED');
+  activeStage = `${phase}:registry`;
   const status = await fetch(`http://127.0.0.1:${ports.hub}/`); assert.equal(status.status, 200); assert.equal((await status.json()).pid, read(path.join(directory, phase + '-suite-process.json')).pid, 'FOREIGN_HUB');
   const registry = await fetch(`http://127.0.0.1:${ports.hub}/emulators`); assert.equal(registry.status, 200); assertEmulatorRegistry(await registry.json());
   if (phase === 'fresh') {
+    activeStage = `${phase}:seeds`;
     for (const name of ['seed-auth', 'seed-quizzes']) await run(process.execPath, [path.join(root, `functions/lib/dev/${name}.js`)], { cwd: directory, env: process.env, log: path.join(directory, name + '.log') });
   }
+  activeStage = `${phase}:sdk`;
   const require = createRequire(path.join(root, 'functions/package.json'));
   const admin = require('firebase-admin/app'), app = admin.initializeApp({ projectId: plan.projectId, storageBucket: plan.projectId + '.appspot.com' }, 'restart-inspector');
   const db = require('firebase-admin/firestore').getFirestore(app), auth = require('firebase-admin/auth').getAuth(app), bucket = require('firebase-admin/storage').getStorage(app).bucket();
@@ -252,36 +362,55 @@ async function worker(phase, directory) {
     };
     let owned;
     if (phase !== 'fresh') {
+      activeStage = `${phase}:load-state`;
       owned = read(path.join(directory, 'owned.json'));
       assert.deepEqual(await capture(), read(path.join(directory, 'state-before.json')), 'IMPORTED_CONTENT_CHANGED');
     }
+    activeStage = `${phase}:login`;
     await authSdk.signInWithEmailAndPassword(clientAuth, 'admin@example.test', 'LocalQuiz123!');
     if (phase === 'fresh') {
+      activeStage = `${phase}:create-event`;
       const { eventId } = await call('createEvent', { expectedRevision: 0, event: { title: 'Synthetic restart acceptance', startsAt: '2031-01-01T18:00:00Z', timeZone: 'Europe/Prague', venue: { name: 'Synthetic', publicLocation: 'Synthetic' }, teamCapacity: 10, peopleCapacity: 40, teamSizeMin: 2, teamSizeMax: 4 } });
+      activeStage = `${phase}:create-team`;
       const team = await call('adminAddEventTeam', { eventId, requestId: randomUUID(), teamName: 'Synthetic retained team', memberCount: 2 }); assert.equal(team.contactEmail, null);
       const event = (await db.doc(`events/${eventId}`).get()).data();
+      activeStage = `${phase}:lock-quiz`;
       const { snapshotId } = await call('lockEventQuiz', { eventId, expectedRevision: event.revision, quizId: 'preflight-ready-e2e', expectedQuizRevision: 0, acknowledgeWarnings: false });
       const roundId = (await db.collection(`quizSnapshots/${snapshotId}/rounds`).get()).docs[0].id;
       const input = { eventId, snapshotId, roundId, teamId: team.registrationId, expectedRevision: 0, halfPoints: 0, reason: '', requestId: randomUUID() };
+      activeStage = `${phase}:save-score`;
       const score = await call('saveEventScore', input); assert.equal(score.revision, 1);
       owned = { input, score }; save(path.join(directory, 'owned.json'), owned);
+      activeStage = `${phase}:save-media`;
       await bucket.file(objectName).save(payload, { resumable: false, contentType: 'application/octet-stream', metadata: { metadata: { synthetic: 'true' } } });
+      activeStage = `${phase}:capture-state`;
       save(path.join(directory, 'state-before.json'), await capture());
     } else {
+      activeStage = `${phase}:replay-score`;
       assert.deepEqual(await call('saveEventScore', owned.input), owned.score, 'IMPORTED_RECEIPT_REPLAY_CHANGED');
+      activeStage = `${phase}:continue-score`;
       const next = await call('saveEventScore', { ...owned.input, requestId: randomUUID(), expectedRevision: 1, halfPoints: 2, reason: 'Continued after verified restart' });
       assert.equal(next.revision, 2); assert.equal(next.halfPoints, 2);
+      activeStage = `${phase}:stale-score`;
       await assert.rejects(call('saveEventScore', { ...owned.input, requestId: randomUUID(), expectedRevision: 1, halfPoints: 3, reason: 'Stale client' }), error => error.code === 'functions/aborted');
+      activeStage = `${phase}:verify-history`;
       const scores = await db.collection(`events/${owned.input.eventId}/scores/${next.scoreId}/history`).orderBy('revision').get(); assert.deepEqual(scores.docs.map(d => d.data().revision), [1, 2]);
       const [bytes] = await bucket.file(objectName).download(); assert.deepEqual(bytes, payload);
     }
+    activeStage = `${phase}:export`;
     const cli = path.join(root, 'node_modules/firebase-tools/lib/bin/firebase.js');
     await run(process.execPath, [cli, 'emulators:export', path.join(directory, phase === 'fresh' ? 'checkpoint-1' : phase === 'restart' ? 'checkpoint-2' : 'checkpoint-3'), '--project', plan.projectId, '--config', path.join(directory, 'firebase.json'), '--non-interactive'], { cwd: directory, env: process.env, log: path.join(directory, phase + '-export.log') });
+    activeStage = `${phase}:save-result`;
     save(path.join(directory, phase + '-result.json'), { mode: 'PHASE_PASS', projectId: plan.projectId, phase, emulatorRegistryVerified: true, importedIdentityVerified: phase !== 'fresh', scoreRevision: phase === 'fresh' ? 1 : 2, storageBytesSha256: hash(payload), receiptReplayVerified: phase !== 'fresh', staleScoreRejected: phase !== 'fresh' });
   } finally { await deleteApp(client); await admin.deleteApp(app); }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === self) {
   const args = process.argv.slice(2);
   const task = args.length === 2 && args[0] === '--powershell' ? controller(args[1]) : args.length === 4 && args[0] === '--worker' && args[2] === '--run-dir' ? worker(args[1], path.resolve(args[3])) : Promise.reject(new Error('Use --powershell ABSOLUTE_EXECUTABLE'));
-  task.catch(error => { console.error('RESTART_ACCEPTANCE_STOP:', error.code ?? '', error.message.split('\n')[0]); process.exitCode = 1; });
+  task.catch(error => {
+    const diagnostic = sanitizedDiagnosticEntry(error.safeDiagnostic) ?? safeFailureDiagnostic(error);
+    console.error(diagnosticMarker + JSON.stringify(diagnostic));
+    console.error('RESTART_ACCEPTANCE_STOP:', diagnostic.code, diagnostic.signature);
+    process.exitCode = 1;
+  });
 }

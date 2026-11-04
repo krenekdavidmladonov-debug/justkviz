@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
-import { assertLocalRequest, assertPlan, assertExport, records, ports, sanitizedEnvironment, portsFree, assertEmulatorRegistry } from './restart-acceptance.mjs';
+import { assertLocalRequest, assertPlan, assertExport, records, ports, sanitizedEnvironment, portsFree, assertEmulatorRegistry, safeFailureDiagnostic, safeChildDiagnostics, run } from './restart-acceptance.mjs';
 
 const directory = mkdtempSync(path.join(tmpdir(), 'synthetic-restart-guards-'));
 const plan = { directory, projectId: 'demo-restart-012345abcdef', ports };
@@ -96,4 +96,72 @@ test('actual registry must match every loopback endpoint and websocket without f
 test('inherited auxiliary emulator overrides are removed before explicit child mapping', () => {
   const isolated = sanitizedEnvironment(directory, plan.projectId, { PUBSUB_EMULATOR_HOST: 'synthetic-foreign', CLOUD_TASKS_EMULATOR_HOST: 'synthetic-foreign', EVENTARC_EMULATOR: 'synthetic-foreign' });
   assert(!isolated.PUBSUB_EMULATOR_HOST && !isolated.CLOUD_TASKS_EMULATOR_HOST && !isolated.EVENTARC_EMULATOR);
+});
+
+test('failure diagnostics allowlist codes and signatures without error text, paths or extra data', () => {
+  const privateText = 'synthetic-private@example.test #registration=synthetic-capability';
+  const cause = Object.assign(new Error('Cannot find module ' + privateText), { code: 'MODULE_NOT_FOUND' });
+  cause.cause = cause; // A malformed cause chain must stay bounded.
+  const error = Object.assign(new Error(privateText), { code: privateText, cause, childDiagnostics: [
+    { stage: 'fresh:login', code: 'functions/unavailable', signature: 'UNCLASSIFIED', token: privateText, logFile: privateText },
+  ], safeDiagnostic: { signature: 'UNCLASSIFIED', payload: privateText }, childExitCode: -7 });
+  const diagnostic = safeFailureDiagnostic(error, privateText, privateText);
+  assert.equal(diagnostic.stage, 'arguments');
+  assert.equal(diagnostic.code, 'UNCLASSIFIED');
+  assert.equal(diagnostic.causeCode, 'MODULE_NOT_FOUND');
+  assert.equal(diagnostic.causeSignature, 'MODULE_NOT_FOUND');
+  assert.equal(diagnostic.children[0].stage, 'fresh:login');
+  assert(!JSON.stringify(diagnostic).includes(privateText));
+  assert(!JSON.stringify(diagnostic).includes('logFile'));
+  assert(!Object.hasOwn(diagnostic, 'exitCode'));
+  assert.equal(safeFailureDiagnostic({ childExitCode: 0xffffffff }).exitCode, 0xffffffff);
+  assert(!Object.hasOwn(safeFailureDiagnostic({ childExitCode: 0x100000000 }), 'exitCode'));
+});
+
+test('child output relays only bounded validated diagnostics and known failure signatures', () => {
+  const privateText = 'synthetic-token-must-stay-in-local-log';
+  const marker = 'RESTART_ACCEPTANCE_DIAGNOSTIC ';
+  const valid = { stage: 'fresh:export', code: 'OWN_CHILD_FAILED', signature: 'OWN_CHILD_FAILED', logFile: 'fresh-export.log', exitCode: 1,
+    children: [{ signature: 'MODULE_NOT_FOUND', raw: privateText }], raw: privateText };
+  const output = [privateText, marker + JSON.stringify({ ...valid, stage: privateText }), marker + JSON.stringify(valid), 'Error: Cannot find module ' + privateText].join('\n');
+  const diagnostics = safeChildDiagnostics(output);
+  assert(diagnostics.some(item => item.stage === 'fresh:export' && item.logFile === 'fresh-export.log' && item.children[0].signature === 'MODULE_NOT_FOUND'));
+  assert(diagnostics.some(item => item.signature === 'MODULE_NOT_FOUND'));
+  assert(!JSON.stringify(diagnostics).includes(privateText));
+  assert(safeChildDiagnostics(output.repeat(100)).length <= 8);
+  assert.deepEqual(safeChildDiagnostics(marker + '{malformed'), []);
+});
+
+test('actual failed child drains final diagnostic before close and retains raw output locally only', async () => {
+  const log = path.join(directory, 'fresh-suite.log'), privateText = 'synthetic-private-child-output';
+  const childCode = `console.error(${JSON.stringify(privateText)}); console.error('RESTART_ACCEPTANCE_DIAGNOSTIC ' + JSON.stringify({stage:'fresh:login',code:'functions/unavailable',signature:'UNCLASSIFIED',payload:${JSON.stringify(privateText)}})); process.exitCode = 7;`;
+  await assert.rejects(run(process.execPath, ['-e', childCode], { log }), error => {
+    assert.equal(error.safeDiagnostic.exitCode, 7);
+    assert.equal(error.safeDiagnostic.logFile, 'fresh-suite.log');
+    assert(error.safeDiagnostic.children.some(item => item.stage === 'fresh:login' && item.code === 'functions/unavailable'));
+    assert(!JSON.stringify(error.safeDiagnostic).includes(privateText));
+    return true;
+  });
+  assert(readFileSync(log, 'utf8').includes(privateText), 'Owned raw failure log remains available for local inspection');
+});
+
+test('actual missing child executable exposes a safe spawn cause instead of hiding ENOENT', async () => {
+  await assert.rejects(run(path.join(directory, 'missing-executable'), [], { log: path.join(directory, 'seed-auth.log') }), error => {
+    assert.equal(error.safeDiagnostic.code, 'OWN_CHILD_FAILED');
+    assert.equal(error.safeDiagnostic.causeCode, 'ENOENT');
+    assert.equal(error.safeDiagnostic.logFile, 'seed-auth.log');
+    assert(!JSON.stringify(error.safeDiagnostic).includes(directory));
+    return true;
+  });
+});
+
+test('own source positions relay without exposing absolute stack paths or arbitrary frames', () => {
+  const harness = new URL('./restart-acceptance.mjs', import.meta.url).href;
+  const diagnostic = safeFailureDiagnostic({ stack: `Error: private\n    at worker (${harness}:321:17)\n    at /private/foreign.mjs:9:2` });
+  assert.deepEqual(diagnostic.frame, { file: 'tools/event-night/restart-acceptance.mjs', line: 321, column: 17 });
+  assert(!JSON.stringify(diagnostic).includes(harness));
+  assert(!Object.hasOwn(safeFailureDiagnostic({ stack: 'at /private/foreign.mjs:9:2' }), 'frame'));
+  const child = safeChildDiagnostics('RESTART_ACCEPTANCE_DIAGNOSTIC ' + JSON.stringify({ stage: 'fresh:plan', code: 'ERR_ASSERTION', signature: 'UNCLASSIFIED', frame: { file: 'tools/event-night/restart-acceptance.mjs', line: 321, column: 17, absolute: '/private' } }));
+  assert.deepEqual(child[0].frame, diagnostic.frame);
+  assert(!JSON.stringify(child).includes('/private'));
 });

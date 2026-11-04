@@ -94,10 +94,28 @@ test('normal UI: shared media quiz, live cancellation, completed archive and sco
     const assignmentA=(await person.db.doc('events/'+a).get()).get('quizAssignment');
     await person.db.doc('quizSnapshots/'+assignmentA.snapshotId).get();
     // A: real UI live start, trash blocked, explicit end-and-cancel neutralizes the projector.
-    await page.goto('/admin/events/'+a);await page.getByRole('button',{name:'Otevřít moderování akce',exact:true}).click();await expect(page).toHaveURL(/\/admin\/live\//);const sessionId=page.url().split('/').at(-1);await person.db.doc('sessions/'+sessionId).get();await page.getByRole('button',{name:'Další →',exact:true}).click();
+    await page.goto('/admin/events/'+a);await page.getByRole('button',{name:'Otevřít moderování akce',exact:true}).click();await expect(page).toHaveURL(/\/admin\/live\//);const sessionId=page.url().split('/').at(-1);
+    const [startResponse]=await Promise.all([page.waitForResponse(r=>r.url().endsWith('/goToSlide')&&r.request().method()==='POST'&&r.request().postDataJSON().data.direction===1),page.getByRole('button',{name:'Další →',exact:true}).click()]);
+    expect((await startResponse.json()).error).toBeUndefined();
+    await expect.poll(async()=>(await person.db.doc('sessions/'+sessionId).get()).get('currentSlidePosition')).toBe(1);
+    await expect(page.locator('.live-control')).toHaveAttribute('data-current-position','1');
     const projector=await browser.newPage();await localOnly(projector.context());await projector.goto(origin+'/projector/'+sessionId);
     const staleControl=await context.newPage();await staleControl.goto('/admin/live/'+sessionId);
-    for(let step=0;step<10&&!await staleControl.getByRole('button',{name:'Play',exact:true}).count();step++) {const previous=(await person.db.doc('sessions/'+sessionId).get()).get('revision');await staleControl.getByRole('button',{name:'Další →',exact:true}).click();await expect.poll(async()=>(await person.db.doc('sessions/'+sessionId).get()).get('revision')).toBeGreaterThan(previous);}
+    await expect(staleControl.locator('.live-control')).toHaveAttribute('data-current-position','1');
+    // Select the authored audio question through the ordinary UI. A server
+    // revision alone does not mean the previous slide has left the browser DOM.
+    const questionSlides=(await person.db.collection('quizSnapshots/'+assignmentA.snapshotId+'/slides').get()).docs.filter(slide=>slide.get('isQuestion')).sort((a,b)=>a.get('position')-b.get('position'));
+    expect(questionSlides).toHaveLength(2);
+    const audioSlide=questionSlides.find(slide=>slide.get('kind')==='audio');
+    expect(audioSlide).toBeTruthy();
+    const audioQuestionNumber=questionSlides.findIndex(slide=>slide.id===audioSlide.id)+1;
+    await staleControl.getByRole('button',{name:'Přejít na otázku',exact:true}).click();
+    const [jumpResponse]=await Promise.all([staleControl.waitForResponse(r=>r.url().endsWith('/goToSlide')&&r.request().method()==='POST'&&r.request().postDataJSON().data.position===audioSlide.get('position')),staleControl.getByRole('dialog',{name:'Přejít na otázku',exact:true}).getByRole('button',{name:'1. kolo, otázka '+audioQuestionNumber,exact:true}).click()]);
+    expect((await jumpResponse.json()).error).toBeUndefined();
+    await expect.poll(async()=>(await person.db.doc('sessions/'+sessionId).get()).get('currentSlideId')).toBe(audioSlide.id);
+    await expect(staleControl.locator('.live-control')).toHaveAttribute('data-current-position',String(audioSlide.get('position')));
+    await expect(staleControl.getByText('QA_AUDIO_ANSWER',{exact:true})).toBeVisible();
+    await expect(staleControl.getByRole('button',{name:'Play',exact:true})).toBeEnabled();
     await staleControl.getByRole('button',{name:'Play',exact:true}).click();await expect.poll(()=>staleControl.locator('audio').evaluateAll(items=>items.some(a=>!a.paused&&a.currentTime>1))).toBe(true);
     const staleRevision=(await person.db.doc('sessions/'+sessionId).get()).get('revision');
     await page.goto('/admin/events/'+a);if (!await page.locator('.event-actions summary').evaluate(summary => summary.parentElement.open)) await page.locator('.event-actions summary').click();await expect(page.locator('.event-quick-actions').getByRole('button',{name:'Smazat',exact:true})).toBeDisabled();await page.locator('.event-actions').getByRole('button',{name:'Zrušit akci',exact:true}).click();await page.getByRole('dialog').getByRole('checkbox').check();await confirm('Ukončit běh a zrušit akci');
