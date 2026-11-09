@@ -11,13 +11,14 @@ import { mapLiveControlSlide } from '../apps/web/src/features/live/liveMappers';
 import { quizMediaBlobCache } from '../apps/web/src/features/media/mediaBlobCache';
 import { SlideRenderer } from '../apps/web/src/features/presentation/SlideRenderer';
 import { SnapshotMediaContext } from '../apps/web/src/features/media/SnapshotMediaContext';
+import { OfflineMediaContext } from '../apps/web/src/features/media/OfflineMediaContext';
 vi.mock('../apps/web/src/features/media/mediaApi', () => ({readQuizMediaBlob:vi.fn()}));
 const source='quiz-asset:quiz-1/'+'a'.repeat(64), nextSource='quiz-asset:quiz-1/'+'b'.repeat(64);
 let root:Root,host:HTMLDivElement;
 const playMock=vi.fn<()=>Promise<void>>(), revokeMock=vi.fn();
 const playback=vi.fn(),finished=vi.fn(),failed=vi.fn();
 const render=(command:'idle'|'play'|'replay'|'stop',generation=1,reference=source)=>act(async()=>root.render(<MediaPlayer source={reference} command={command} generation={generation} startSeconds={1} endSeconds={3} onPlaybackState={playback} onFinished={finished} onError={failed}/>));
-const event=async(player:HTMLAudioElement,name:string)=>act(async()=>{player.dispatchEvent(new Event(name));});
+const event=async(player:HTMLMediaElement,name:string)=>act(async()=>{player.dispatchEvent(new Event(name));});
 beforeEach(()=>{
   Object.assign(globalThis,{IS_REACT_ACT_ENVIRONMENT:true});window.__FILMOVY_KVIZ_MEDIA_DEBUG__=undefined;
   host=document.createElement('div');document.body.append(host);root=createRoot(host);
@@ -44,6 +45,53 @@ test('manual start, END and replay share a single player; late callbacks cannot 
   expect(readQuizMediaBlob).toHaveBeenCalledOnce();
   expect(window.__FILMOVY_KVIZ_MEDIA_DEBUG__?.createdPlayers).toBe(1);
 });
+
+test('a new offline generation never commands or reads the reset same-source player', async () => {
+  vi.spyOn(HTMLMediaElement.prototype, 'duration', 'get').mockImplementation(function (this: HTMLMediaElement) {
+    return this.hasAttribute('src') ? 5 : Number.NaN;
+  });
+  let resolveReplacement!: (value: Blob) => void;
+  const replacement = new Promise<Blob>(resolve => { resolveReplacement = resolve; });
+  const blob = new Blob(['synthetic'], { type: 'video/mp4' });
+  const resolve = vi.fn<(_: string, signal: AbortSignal) => Promise<Blob>>()
+    .mockResolvedValueOnce(blob).mockReturnValueOnce(replacement);
+  const currentTime = vi.fn();
+  const renderEpoch = (command: 'idle' | 'play', generation: number, timeRequest?: number) => act(async () => {
+    root.render(<OfflineMediaContext.Provider value={{ epoch: 'synthetic-session:' + generation, resolve }}>
+      <MediaPlayer source={source} command={command} generation={generation} startSeconds={1} endSeconds={3}
+        currentTimeRequest={timeRequest} onCurrentTime={currentTime} onError={failed} onPlaybackState={playback} />
+    </OfflineMediaContext.Provider>);
+  });
+
+  await renderEpoch('idle', 1);
+  const first = host.querySelector('video')!;
+  await event(first, 'loadedmetadata');
+  expect(first.currentTime).toBe(1);
+  expect(playMock).not.toHaveBeenCalled();
+
+  // Hold the new load while cleanup has already reset the old element.
+  await renderEpoch('play', 2, 1);
+  expect(first.isConnected).toBe(false);
+  expect(first.duration).toBeNaN();
+  expect(resolve).toHaveBeenCalledTimes(2);
+  expect(resolve.mock.calls[0]![1].aborted).toBe(true);
+  expect(host.querySelector('video')).toBeNull();
+  expect(failed).not.toHaveBeenCalled();
+  expect(currentTime).not.toHaveBeenCalled();
+  expect(playMock).not.toHaveBeenCalled();
+
+  await act(async () => { resolveReplacement(blob); });
+  const current = host.querySelector('video')!;
+  expect(current).not.toBe(first);
+  await event(current, 'loadedmetadata');
+  await event(current, 'playing');
+  expect(playMock).toHaveBeenCalledOnce();
+  expect(playMock.mock.contexts[0]).toBe(current);
+  expect(playback).toHaveBeenLastCalledWith(2, 'playing');
+  expect(failed).not.toHaveBeenCalled();
+  expect(current.currentTime).toBe(1);
+});
+
 test('error during playback stays terminal after queued native pause/metadata/playing',async()=>{
   await render('play');const player=host.querySelector('audio')!;await event(player,'loadedmetadata');await event(player,'playing');
   playback.mockClear();await event(player,'error');await event(player,'pause');await event(player,'playing');await event(player,'loadedmetadata');

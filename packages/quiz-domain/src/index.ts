@@ -13,3 +13,5 @@ export { brand } from './brand.js';
 export { brandArtwork } from './brand-artwork.js';
 export * from './access.js';
 export * from './event-management.js';
+export * from './local-image-backup.js';
+export * from './offline-event.js';

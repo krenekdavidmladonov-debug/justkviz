@@ -1,6 +1,9 @@
 /* global window, getComputedStyle */
 import { test, expect } from '@playwright/test';
 import { mediaFixture, syntheticImage, syntheticAudio } from '../e2e/media-fixture.mjs';
+import { createMediaUploadFixtures, mediaUploadSha256 } from '../e2e/media-upload-fixtures.mjs';
+import { verifyOfflineNativeMedia } from './offline-media-fixture.mjs';
+import { requireFullEmulatorEnvironment, localEmulatorEndpoint } from '../../tools/local-emulator-environment.mjs';
 async function openRounds(page) { await expect(page.locator('.outline-round').first()).toBeVisible(); while (await page.locator('.outline-collapse[aria-expanded="false"]').count()) await page.locator('.outline-collapse[aria-expanded="false"]').first().click(); }
 
 async function observeClipEnd(page, endSeconds) {
@@ -139,4 +142,123 @@ test('synthetic owned image/audio upload, editor preview, immutable projector im
     await sameProfileProjector.close();
 
   } catch(error) { console.error('Media browser failed during '+phase);  throw error; } finally {unsubscribe?.();await projectorContext?.close();await context.close();await f.dispose();}
+});
+
+test('editor uploads owned H264/AAC MP4 and MP3, pins the exact assets, and rejects audio-only MP4 readiness', async ({ page, context }) => {
+  requireFullEmulatorEnvironment(process.env, 'Owned media editor upload');
+  const storagePort = localEmulatorEndpoint(process.env.FIREBASE_STORAGE_EMULATOR_HOST, 'Owned media editor upload').port;
+  const f = await mediaFixture();
+  try {
+    const { video, mp3, audioOnlyMp4 } = await createMediaUploadFixtures();
+    await context.route('**/*', route => ['127.0.0.1', 'localhost'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
+    let storageWrites = 0;
+    context.on('response', response => {
+      const url = new URL(response.url());
+      if (Number(url.port) === storagePort && ['POST', 'PUT'].includes(response.request().method()) && response.ok()) storageWrites++;
+    });
+    await page.goto('/admin/login');
+    await page.getByLabel('E-mail').fill(f.loginEmail);
+    await page.getByLabel('Heslo').fill(f.loginPassword);
+    await page.getByRole('button', { name: 'Přihlásit se', exact: true }).click();
+    await expect(page).toHaveURL(/\/admin$/u);
+    await page.goto('/admin/quizzes/' + f.quizId + '/edit');
+    await openRounds(page);
+    const picker = page.getByRole('region', { name: 'Zdroj ukázky', exact: true });
+    const callResponse = name => page.waitForResponse(response => response.request().method() === 'POST' && new URL(response.url()).pathname.endsWith('/' + name));
+    async function uploadFromEditor(asset) {
+      const writesBefore = storageWrites;
+      const beginResponse = callResponse('beginQuizMediaUpload'), finalizeResponse = callResponse('finalizeQuizMediaUpload');
+      const [chooser] = await Promise.all([page.waitForEvent('filechooser'), picker.getByRole('button', { name: 'Nahrát z počítače', exact: true }).click()]);
+      await chooser.setFiles(asset.filename);
+      const begin = await beginResponse;
+      expect(begin.ok()).toBe(true);
+      expect(await begin.headerValue('cache-control')).toBe('no-store');
+      const { result: grant } = await begin.json();
+      expect(Object.keys(grant).sort()).toEqual(['assetId', 'path', 'reference']);
+      const canonicalPath = `quiz-assets/${f.quizId}/${grant.assetId}/source`;
+      expect(grant.path).toBe(asset.kind === 'video' ? `quiz-assets/${f.quizId}/${grant.assetId}/upload` : canonicalPath);
+      expect(grant.reference).toBe(`quiz-asset:${f.quizId}/${grant.assetId}`);
+      const finalize = await finalizeResponse;
+      expect(finalize.ok()).toBe(true);
+      expect(await finalize.headerValue('cache-control')).toBe('no-store');
+      expect((await finalize.json()).result).toEqual({ reference: grant.reference });
+      expect(storageWrites).toBeGreaterThan(writesBefore);
+      await expect(picker.getByText('Ověřené médium tohoto kvízu', { exact: false })).toBeVisible();
+      await expect(picker.getByRole('alert')).toHaveCount(0);
+      const assetRow = (await f.quizRef.collection('mediaAssets').doc(grant.assetId).get()).data();
+      const [metadata] = await f.bucket.file(canonicalPath).getMetadata();
+      expect(assetRow).toMatchObject({ status: 'ready', generation: metadata.generation, kind: asset.kind, contentType: asset.contentType, size: asset.bytes.length });
+      expect(metadata.generation).toMatch(/^[1-9]\d*$/u);
+      if (asset.kind === 'video') {
+        expect((await f.bucket.file(grant.path).exists())[0]).toBe(false);
+        expect(Boolean(metadata.metadata?.firebaseStorageDownloadTokens)).toBe(false);
+        expect(metadata.cacheControl).toBe('private, no-store');
+      }
+      const read = await f.read(grant.reference);
+      expect(read.status).toBe(200);
+      expect(read.headers.get('content-type')).toBe(asset.contentType);
+      expect(read.headers.get('location')).toBeNull();
+      expect(read.headers.get('cache-control')).toBe('no-store');
+      expect(read.headers.get('x-content-type-options')).toBe('nosniff');
+      const bytes = Buffer.from(await read.arrayBuffer());
+      expect(bytes.length).toBe(asset.bytes.length);
+      expect(mediaUploadSha256(bytes)).toBe(asset.sha256);
+      return { reference: grant.reference, generation: assetRow.generation, bytes };
+    }
+    async function saveEditor() {
+      await page.getByRole('button', { name: 'Uložit vše', exact: true }).click();
+      await expect(page.locator('.save-state')).toHaveText('Uloženo');
+    }
+    async function setClipTiming() {
+      for (const [field, value] of [['clipStartSeconds', '0:01'], ['clipEndSeconds', '0:03']]) {
+        const input = page.locator(`[data-preflight-field="${field}"] input`);
+        await input.fill(value);
+        await input.press('Tab');
+      }
+    }
+
+    const videoPrompt = 'QA vlastní MP4 otázka';
+    await page.locator('.outline-round').first().getByRole('button', { name: /Další typy otázek pro kolo/u }).click();
+    await page.getByRole('dialog', { name: /Typ otázky/u }).getByRole('button', { name: 'Otázka s videem', exact: true }).click();
+    await page.locator('[data-preflight-field="prompt"] textarea').fill(videoPrompt);
+    await page.locator('[data-preflight-field="correctAnswer"] textarea').fill('Syntetická soukromá odpověď QA');
+    await expect(picker.getByLabel('Zdroj ukázky — soubor', { exact: true })).toHaveAttribute('accept', /video\/mp4/u);
+    const uploadedVideo = await uploadFromEditor(video);
+    await setClipTiming();
+    await saveEditor();
+    const videoSlide = (await f.quizRef.collection('slides').get()).docs.find(row => row.data().text === videoPrompt);
+    expect(videoSlide?.data()).toMatchObject({ mediaSource: uploadedVideo.reference, clipStartSeconds: 1, clipEndSeconds: 3 });
+    await page.getByRole('button', { name: 'Přehrát ukázku', exact: true }).click();
+    const player = page.locator('.editor-test-player video');
+    await expect.poll(() => player.evaluate(element => !element.paused && element.currentTime > 1 && element.videoWidth === 384 && element.videoHeight === 216)).toBe(true);
+    await expect(page.getByText('Ukázka dohrála.', { exact: true })).toBeVisible();
+    expect(await player.evaluate(element => element.paused && element.currentTime >= 3 && element.currentTime < element.duration)).toBe(true);
+
+    await page.locator('.outline-question').filter({ hasText: 'Syntetické audio' }).click();
+    const uploadedMp3 = await uploadFromEditor(mp3);
+    await setClipTiming();
+    await saveEditor();
+    expect((await f.quizRef.collection('slides').doc(f.ids.audio).get()).data()).toMatchObject({ mediaSource: uploadedMp3.reference, clipStartSeconds: 1, clipEndSeconds: 3 });
+    const snapshotId = await f.lock();
+    expect((await f.db.doc(`quizSnapshots/${snapshotId}/slides/${videoSlide.id}`).get()).data()).toMatchObject({ mediaSource: uploadedVideo.reference, clipStartSeconds: 1, clipEndSeconds: 3 });
+    expect((await f.db.doc(`quizSnapshots/${snapshotId}/slides/${f.ids.audio}`).get()).data().mediaSource).toBe(uploadedMp3.reference);
+
+    // Audio decodes in Chromium. The actual offline verifier must reject it as video.
+    const decodedAudio = await verifyOfflineNativeMedia(page, { ...audioOnlyMp4, kind: 'audio' });
+    expect(decodedAudio.decoded && decodedAudio.playing && decodedAudio.duration >= 4.9).toBe(true);
+    const readiness = async (asset, reference, generation) => page.evaluate(async ({ descriptor, bytes }) => {
+      const { verifyOfflineMedia } = await import('/src/features/offline/offlineFile.ts');
+      try {
+        await verifyOfflineMedia(new Blob([new Uint8Array(bytes)], { type: descriptor.contentType }), descriptor, [{ position: 1, start: 1, end: 3 }]);
+        return { ready: true };
+      } catch (error) { return { ready: false, message: error.message }; }
+    }, { descriptor: { reference, generation, kind: asset.kind, contentType: asset.contentType, size: asset.bytes.length,
+      sha256: asset.sha256, etag: 'synthetic-readiness-probe' }, bytes: [...asset.bytes] });
+    expect(await readiness({ ...video, bytes: uploadedVideo.bytes }, uploadedVideo.reference, uploadedVideo.generation)).toEqual({ ready: true });
+    expect(await readiness(audioOnlyMp4, uploadedVideo.reference, uploadedVideo.generation)).toEqual({ ready: false,
+      message: 'Soubor MP4 neobsahuje obraz, který lze v tomto prohlížeči přehrát.' });
+    console.log('OWNED_MEDIA_EDITOR_PROOF ' + JSON.stringify({ video: { codec: 'H264/AAC', bytes: video.bytes.length, sha256: video.sha256 },
+      mp3: { bytes: mp3.bytes.length, sha256: mp3.sha256 }, actualStorageWrites: storageWrites, attachedAndLocked: true,
+      audioOnlyMp4DecodedAsAudioAndRejectedAsVideo: true }));
+  } finally { await context.close(); await f.dispose(); }
 });

@@ -313,7 +313,7 @@ describe('moderator chrome', () => {
     });
     expect(view.host.querySelector('.live-preview-stage img')).not.toBeNull();
     expect(readQuizMediaBlob).toHaveBeenCalledOnce();
-    expect(vi.mocked(readQuizMediaBlob).mock.calls[0]).toEqual([currentImage, expect.any(AbortSignal), 'synthetic-session', 'synthetic-snapshot']);
+    expect(vi.mocked(readQuizMediaBlob).mock.calls[0]).toEqual([currentImage, expect.any(AbortSignal), 'synthetic-session', 'synthetic-snapshot', undefined]);
     await act(async () => { await vi.advanceTimersByTimeAsync(900); });
     expect(readQuizMediaBlob).toHaveBeenCalledTimes(2);
     expect(vi.mocked(readQuizMediaBlob).mock.calls[1]).toEqual([nextImage, expect.any(AbortSignal), undefined, 'synthetic-snapshot']);

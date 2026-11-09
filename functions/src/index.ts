@@ -80,6 +80,9 @@ export { previewEventTeamMessage, createEventTeamMessage, listEventTeamMessages,
 
 export { beginQuizMediaUpload, finalizeQuizMediaUpload } from './media/callables.js';
 export { readQuizMedia } from './media/endpoint.js';
+export { readLocalEventMediaManifest } from './media/local-event-manifest.js';
+export { readLocalEventMediaAuthorization, readLocalProjectorMediaAuthority } from './media/local-projector-media.js';
+export { readLocalImageManifest, authorizeLocalImageBackup, readLocalImageAuthority } from './media/local-image-backup.js';
 
 export { createQuizRound } from './editor/callables.js';
 export { getMyAccess, listAccessUsers, createAccessInvitation, changeAccessInvitation, acceptAccessInvitation, updateAccessMembership, listAccessAudit, revokeMySessions } from './access/callables.js';
@@ -91,3 +94,5 @@ export { trashQuiz, restoreQuiz } from './quizzes/management.js';
 export { readDriveConnection, beginDriveConnection, completeDriveConnection, getDriveFolderPicker, selectDriveFolder, createDriveMediaFolder, disconnectDriveConnection } from './drive/callables.js';
 export { requestDriveMediaImport, readDriveMediaImport, processDriveMediaImport } from './drive/import-callables.js';
 export { configureDriveMediaCompanion, driveMediaCompanion } from './drive/local-companion.js';
+export { prepareOfflineEvent, readOfflineTrust, authorizeOfflineEvent } from './offline/prepare.js';
+export { previewOfflineSync, commitOfflineSync } from './offline/sync.js';

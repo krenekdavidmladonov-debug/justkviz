@@ -17,6 +17,8 @@ import { EventForm } from '../../features/events/EventForm';
 import { defaultEventPricing, eventPriceLabel } from '../../features/events/eventPricing';
 import { ManualTeamDialog } from '../../features/events/ManualTeamDialog';
 import { EventPublicationButton } from '../../features/events/EventPublicationButton';
+import { LocalEventMediaPanel } from '../../features/events/LocalEventMediaPanel';
+import { localEventMediaAvailable } from '../../features/events/localEventMediaApi';
 import { eventCapacity, eventDateLabel, registrationPresentation } from '../../features/events/eventPresentation';
 import { RegistrationSharePanel } from '../../features/events/RegistrationSharePanel';
 import { getEvent } from '../../features/events/eventRepository';
@@ -58,7 +60,7 @@ export function AdminEventDetailPage() {
   const navigate = useNavigate();
   const { hash } = useLocation();
   const { eventId } = useParams<{ eventId: string }>();
-  const { can, currentUser } = useAuth();
+  const { can, currentUser, membership } = useAuth();
   const canChooseQuiz = can('event.manage') && can('quiz.read') && can('quiz.export') && can('quiz.answers.read') && can('quiz.notes.read');
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [now, setNow] = useState(Date.now);
@@ -242,6 +244,16 @@ export function AdminEventDetailPage() {
         <div className="event-section-heading"><div><p className="eyebrow">Dokumenty na večer</p><h2 id="event-materials-title">Tisk a materiály</h2></div>{locked && <span>Kvíz připraven</span>}</div>
         <p className="event-muted">Odpovědní archy pro týmy, bodovací tabulka a klíč správných odpovědí pro oprávněnou obsluhu.</p>
         <Link className="secondary-link" to={`/admin/events/${event.id}/print`}>Otevřít tisk a materiály</Link>
+      </section>}
+
+      {locked && currentUser && can('event.read') && can('event.export') && eventOperational(event) && localEventMediaAvailable() &&
+        <LocalEventMediaPanel key={`${event.id}:${locked.snapshotId}:${event.startsAt.getTime()}:${currentUser.uid}:${membership?.version}`}
+          eventId={event.id} snapshotId={locked.snapshotId} quizRevision={locked.quizRevision} actorId={currentUser.uid} />}
+
+      {locked && can('event.export') && eventOperational(event) && localEventMediaAvailable() && <section className="event-section">
+        <h2>Kvíz bez připojení</h2>
+        <p>Zašifrovaná kopie celého večera včetně médií, bodování a pozdější synchronizace.</p>
+        <a className="secondary-link" href={`/offline.html#/prepare?eventId=${encodeURIComponent(event.id)}`}>Připravit offline kvíz</a>
       </section>}
 
       {!hidden && can('event.read') && event.lifecycleStatus === 'completed' && <section className="event-section">

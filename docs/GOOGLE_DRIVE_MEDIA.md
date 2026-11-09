@@ -90,6 +90,12 @@ prove a YouTube request will succeed from Google Cloud's network.
 `tools/media-worker/package-runtime.mjs` stages pinned, checksum-verified Linux
 yt-dlp and FFmpeg binaries, worker code, licenses and a version manifest. It does
 not deploy; production performs no runtime binary download. The reviewed local
+test used a real existing quiz's 10–23 second source, verified 13-second H.264/AAC
+output, MP3 and a real photo, then uploaded and downloaded all three through the
+application's own `drive.file` grant with exact byte-digest equality. Original
+quiz documents were not changed for that transport test. Evidence stays in the
+ignored `.local-data/drive-media-test/` directory. Linux execution and actual
+deployed worker/editor-to-Drive completion require the separately approved release.
 
 Official references: [Drive file scope](https://developers.google.com/workspace/drive/api/guides/api-specific-auth),
 [YouTube developer policies](https://developers.google.com/youtube/terms/developer-policies),

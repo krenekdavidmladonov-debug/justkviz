@@ -208,12 +208,11 @@ jobs:
       - name: Install Playwright Chromium for browser E2E
         run: pnpm exec playwright install chromium
 
+      - name: Install FFmpeg for synthetic owned audio and video fixtures
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Owned media Storage contracts and browser E2E (local emulators only)
-        run: >-
-          pnpm exec firebase emulators:exec
-          --only auth,firestore,functions,storage
-          --project demo-filmovy-kviz-v2
-          "pnpm test:e2e:media && pnpm test:e2e:media-browser"
+        run: pnpm test:e2e:media:acceptance
 
       - name: Complete editor UI acceptance and private draft contracts (fresh local emulators)
         run: >-

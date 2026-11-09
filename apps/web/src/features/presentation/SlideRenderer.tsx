@@ -1,12 +1,14 @@
 import { Brand } from '../../ui/Brand';
 import { parseQuizAsset } from '@filmovy-kviz/quiz-domain';
 import { AssetImage } from '../media/AssetImage';
-import { useMemo, useState } from 'react';
+import type { ImageTiming, LocalMediaTiming } from './mediaTiming';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { productConfig } from '../../config/product';
 import { buildSlideRenderModel, defaultRules, isSafeHttpUrl, projectorMediaPlan, recapAnswer } from './model';
 import type { MediaPlaybackCommand, MediaPlaybackState, SlideRenderInput, SlideRenderMode } from './types';
 import { MediaPlayer } from './MediaPlayer';
+import type { MediaDiagnosticReason, MediaDiagnosticSignal, MediaDiagnosticTarget } from './mediaDiagnostics';
 import { slideDesignStyle } from './design';
 import './presentation.css';
 
@@ -38,10 +40,38 @@ function AgendaItems({ items }: { readonly items: readonly string[] }) {
   );
 }
 
-function QuestionImage({ source, overlay, sessionId }: { readonly source: string; readonly overlay: number; readonly sessionId?: string | undefined }) {
+function ScheduleItems({ items }: { readonly items: readonly string[] }) {
+  return (
+    <ol className={`agenda-items schedule-items${items.length > 6 ? ' schedule-compact' : ''}`}>
+      {items.map((item, index) => {
+        const round = /^\s*(\d+\.\s*KOLO)(?:\s*[-–—:]\s*|\s+|$)(.*)$/i.exec(item);
+        const isBreak = /^\s*(přestávka|pauza)\b/i.test(item);
+        return (
+          <li key={`${index}-${item}`} className={round ? 'schedule-round' : isBreak ? 'schedule-interlude schedule-break' : 'schedule-interlude'}>
+            <span className="schedule-marker" aria-hidden="true">{round ? <span /> : isBreak ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M5 9h12v5a5 5 0 0 1-5 5h-2a5 5 0 0 1-5-5V9Z" /><path d="M17 10h1a3 3 0 1 1 0 6h-1M4 22h15M9 2v3M14 2v3" strokeLinecap="round" /></svg> : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="m12 4 8 8-8 8-8-8 8-8Z" /></svg>}</span>
+            <div className="schedule-copy">
+              {round && <span className="schedule-round-label">{round[1]}</span>}
+              {(!round || round[2]) && <strong>{round ? round[2] : item}</strong>}
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+function QuestionImage({ source, overlay, sessionId, ...diagnostic }: {
+  readonly source: string;
+  readonly overlay: number;
+  readonly sessionId?: string | undefined;
+  readonly onDiagnostic?: ((reason: MediaDiagnosticReason) => void) | undefined;
+  readonly onDiagnosticResolved?: (() => void) | undefined;
+  readonly onTiming?: ((stage: ImageTiming) => void) | undefined;
+  readonly diagnosticGeneration?: number;
+}) {
   return (
     <div className="question-image-frame">
-      <AssetImage source={source} alt="Obrázek k otázce" sessionId={sessionId} />
+      <AssetImage source={source} alt="Obrázek k otázce" sessionId={sessionId} mediaRole="question-image" {...diagnostic} />
       <span className="question-image-overlay" style={{ opacity: overlay / 100 }} aria-hidden="true" />
     </div>
   );
@@ -70,6 +100,8 @@ export function SlideRenderer({
   playPrivateAudio = false,
   onMediaFinished,
   onMediaPlaybackState,
+  onMediaDiagnostic,
+  onMediaTiming,
 }: {
   readonly slide: SlideRenderInput;
   readonly mediaSessionId?: string;
@@ -83,6 +115,8 @@ export function SlideRenderer({
   readonly mediaEnabled?: boolean;
   readonly playPrivateAudio?: boolean;
   readonly onMediaFinished?: (generation: number) => void;
+  readonly onMediaDiagnostic?: ((target: MediaDiagnosticTarget, reason: MediaDiagnosticSignal) => void) | undefined;
+  readonly onMediaTiming?: ((target: MediaDiagnosticTarget, stage: LocalMediaTiming) => void) | undefined;
   readonly onMediaPlaybackState?: (
     generation: number,
     state: Extract<MediaPlaybackState, 'ready' | 'playing' | 'error'>,
@@ -90,12 +124,33 @@ export function SlideRenderer({
   ) => void;
 }) {
   const model = useMemo(() => buildSlideRenderModel(slide, mode), [mode, slide]);
+  const questionImage = model.questionImage && (isSafeHttpUrl(model.questionImage) || parseQuizAsset(model.questionImage))
+    ? model.questionImage : undefined;
+  const diagnosticRef = useRef(onMediaDiagnostic);
+  const timingRef = useRef(onMediaTiming);
+  useEffect(() => { diagnosticRef.current = onMediaDiagnostic; }, [onMediaDiagnostic]);
+  useEffect(() => { timingRef.current = onMediaTiming; }, [onMediaTiming]);
+  useEffect(() => {
+    if (model.contentKind === 'image' && !questionImage) {
+      diagnosticRef.current?.('question-image', 'source-unavailable');
+      timingRef.current?.('question-image', 'image-error');
+    }
+  }, [mediaGeneration, model.contentKind, questionImage]);
+  const imageDiagnostic = (target: MediaDiagnosticTarget) => onMediaDiagnostic
+    ? {
+      diagnosticGeneration: mediaGeneration,
+      onDiagnostic: (reason: MediaDiagnosticReason) => onMediaDiagnostic(target, reason),
+      onDiagnosticResolved: () => onMediaDiagnostic(target, 'recovered'),
+      onTiming: onMediaTiming && ((stage: ImageTiming) => onMediaTiming(target, stage)),
+    }
+    : {};
   const [locallyFinishedGeneration, setLocallyFinishedGeneration] = useState<number>();
   const [locallyFailed, setLocallyFailed] = useState<{ readonly generation: number; readonly source?: string }>();
   const mediaFinished = mediaCommand === 'finished' || locallyFinishedGeneration === mediaGeneration;
   const mediaFailed = mediaCommand === 'error'
     || (locallyFailed?.generation === mediaGeneration && locallyFailed.source === model.mediaSource);
   const mediaPlan = projectorMediaPlan(model, mediaCommand, mediaPlaybackState, mediaFinished, mediaFailed);
+  const mediaTarget = model.contentKind === 'audio' ? 'audio' : 'video';
   const showMediaError = !mediaFinished && (mediaCommand === 'play' || mediaCommand === 'replay' || mediaCommand === 'error')
     && (mediaFailed || mediaPlaybackState === 'error');
   const showAnswer = model.renderMode === 'recap' && model.revealedAnswer !== undefined;
@@ -114,10 +169,13 @@ export function SlideRenderer({
   const fail = (generation: number, message: string) => {
     if (generation !== mediaGeneration) return;
     setLocallyFailed({ generation, ...(model.mediaSource === undefined ? {} : { source: model.mediaSource }) });
+    onMediaTiming?.(mediaTarget, 'player-error');
     onMediaPlaybackState?.(generation, 'error', message);
   };
   const playback = (generation: number, state: Extract<MediaPlaybackState, 'ready' | 'playing'>) => {
     if (generation !== mediaGeneration) return;
+    if (state === 'playing') onMediaDiagnostic?.(mediaTarget, 'recovered');
+    onMediaTiming?.(mediaTarget, state === 'playing' ? 'player-playing' : 'player-ready');
     onMediaPlaybackState?.(generation, state);
   };
   const answerContent = displayedAnswer && (
@@ -128,7 +186,7 @@ export function SlideRenderer({
         <strong>{displayedAnswer.text}</strong>
       </div>
       {slide.answerExplanation && <p>{slide.answerExplanation}</p>}
-      {model.answerImage && <AssetImage source={model.answerImage} alt="Obrázek odpovědi" sessionId={mediaSessionId} />}
+      {model.answerImage && <AssetImage source={model.answerImage} alt="Obrázek odpovědi" sessionId={mediaSessionId} mediaRole="answer-image" {...imageDiagnostic('answer-image')} />}
     </section>
   );
   const vinyl = <div className={`vinyl-visual ${mediaPlan.vinylPlaying ? 'is-playing' : ''}`} aria-label={mediaPlan.vinylPlaying ? 'Audio se přehrává' : 'Audio je připravené'}>
@@ -162,6 +220,12 @@ export function SlideRenderer({
             onFinished={finish}
             onError={fail}
             onPlaybackState={playback}
+            onResourceTiming={onMediaTiming && ((generation, stage) => {
+              if (generation === mediaGeneration) onMediaTiming(mediaTarget, stage);
+            })}
+            onDiagnostic={onMediaDiagnostic && ((generation, reason) => {
+              if (generation === mediaGeneration) onMediaDiagnostic(mediaTarget, reason);
+            })}
           />}
         </div>
         {recap ? answerContent : model.contentKind === 'audio' ? vinyl : null}
@@ -172,14 +236,14 @@ export function SlideRenderer({
       <div className={`slide-layout recap-layout recap-${model.contentKind}`}>
         {questionHeader}
         <QuestionCopy title={model.title} text={model.text} />
-        {model.contentKind === 'image' && model.questionImage && (isSafeHttpUrl(model.questionImage) || Boolean(parseQuizAsset(model.questionImage))) && (
-          <QuestionImage sessionId={mediaSessionId} source={model.questionImage} overlay={0} />
+        {model.contentKind === 'image' && questionImage && (
+          <QuestionImage sessionId={mediaSessionId} source={questionImage} overlay={0} {...imageDiagnostic('question-image')} />
         )}
         {answerContent}
       </div>
     );
   } else if (model.contentKind === 'agenda') {
-    content = <div className="slide-centered slide-list"><p className="slide-kicker">PROGRAM VEČERA</p><h1>{model.title || 'Dnešní kola'}</h1>{model.text && <p>{model.text}</p>}<AgendaItems items={model.options} /></div>;
+    content = <div className="slide-centered slide-list slide-schedule"><p className="slide-kicker">PROGRAM VEČERA</p><h1>{model.title || 'Dnešní kola'}</h1>{model.text && <p>{model.text}</p>}<ScheduleItems items={model.options} /></div>;
   } else if (model.contentKind === 'rules') {
     content = <div className="slide-centered slide-list"><p className="slide-kicker">PRAVIDLA</p><h1>{model.title || 'Hrajeme fér'}</h1>{model.text && <p>{model.text}</p>}<AgendaItems items={model.options.length > 0 ? model.options : defaultRules} /></div>;
   } else if (model.contentKind === 'intro' || model.contentKind === 'roundIntro') {
@@ -200,8 +264,8 @@ export function SlideRenderer({
         {model.isQuestionLike && questionHeader}
         {!model.isQuestionLike && <p className="slide-kicker">{model.contentKind === 'info' ? 'DNEŠNÍ VEČER' : 'JUSTKVÍZ'}</p>}
         <QuestionCopy title={model.title || (model.contentKind === 'legacy' ? 'Legacy slide' : '')} text={model.text} />
-        {model.contentKind === 'image' && model.questionImage && (isSafeHttpUrl(model.questionImage) || Boolean(parseQuizAsset(model.questionImage))) && (
-          <QuestionImage sessionId={mediaSessionId} source={model.questionImage} overlay={0} />
+        {model.contentKind === 'image' && questionImage && (
+          <QuestionImage sessionId={mediaSessionId} source={questionImage} overlay={0} {...imageDiagnostic('question-image')} />
         )}
         <Options options={model.contentKind === 'free' ? [] : model.options} />
       </div>
@@ -210,10 +274,10 @@ export function SlideRenderer({
 
   return (
     <article data-media-playback-mode={model.mediaPlaybackMode} style={slideDesignStyle(model.design)} className={`slide-renderer mode-${visibleMode} kind-${model.contentKind} layout-${layout} align-${model.design.textAlign ?? 'left'} density-${density}${model.design.backgroundColor ? ' has-custom-background' : ''} image-layout-${slide.imageLayout ?? 'split'}${compact ? ' is-compact' : ''}`}>
-      <div className="slide-background" aria-hidden="true">{model.backgroundImage && <AssetImage source={model.backgroundImage} alt="" sessionId={mediaSessionId} />}</div>
+      <div className="slide-background" aria-hidden="true">{model.backgroundImage && <AssetImage source={model.backgroundImage} alt="" sessionId={mediaSessionId} mediaRole="background-image" {...imageDiagnostic('background-image')} />}</div>
       <div className="slide-background-overlay" style={{ opacity: model.backgroundOverlay / 100 }} aria-hidden="true" />
       <div className="slide-safe-area">
-        <header className="slide-brand"><span>{quizTitle}</span>{model.design.showLogo !== false && (model.design.logoImage ? <span className="slide-custom-logo"><AssetImage source={model.design.logoImage} alt="Logo pořadatele" sessionId={mediaSessionId} /></span> : <Brand />)}</header>
+        <header className="slide-brand"><span>{quizTitle}</span>{model.design.showLogo !== false && (model.design.logoImage ? <span className="slide-custom-logo"><AssetImage source={model.design.logoImage} alt="Logo pořadatele" sessionId={mediaSessionId} mediaRole="logo-image" {...imageDiagnostic('logo-image')} /></span> : <Brand />)}</header>
         {content}
         {model.design.showRoundTitle !== false && model.roundTitle && model.isQuestionLike && <footer className="slide-round-title">{model.roundTitle}</footer>}
         {showMediaError && <p className="projector-media-error" role="status">Médium se nepodařilo přehrát. Moderátor může použít Pustit znovu nebo pokračovat otázkou.</p>}

@@ -6,6 +6,8 @@ import { SlideRenderer } from '../presentation/SlideRenderer';
 import { ShowModeRenderer } from '../show-mode/ShowModeRenderer';
 import '../events/event-navigation.css';
 import { MediaPlayer } from '../presentation/MediaPlayer';
+import type { PlayerResourceTiming } from '../presentation/mediaTiming';
+import type { MediaDiagnosticReason, MediaDiagnosticSignal, MediaDiagnosticTarget } from '../presentation/mediaDiagnostics';
 import { HumanError, type HumanErrorValue } from '../../ui/HumanError';
 import { TechnicalDetails } from '../../ui/TechnicalDetails';
 import {
@@ -38,6 +40,8 @@ interface LiveModeratorViewProps {
   readonly projectorOpened: boolean;
   readonly audioSuppressed?: boolean;
   readonly eventControls?: ReactNode;
+  readonly diagnostics?: ReactNode;
+  readonly mediaAlerts?: ReactNode;
   readonly onOpenProjector: () => void;
   readonly onPrevious: () => void;
   readonly onNext: () => void;
@@ -54,6 +58,9 @@ interface LiveModeratorViewProps {
   readonly onMediaFinished: (generation: number) => void;
   readonly onMediaError: (generation: number, message: string) => void;
   readonly onMediaPlayback: (generation: number, state: 'ready' | 'playing') => void;
+  readonly onAudioDiagnostic?: (generation: number, reason: MediaDiagnosticReason) => void;
+  readonly onAudioResourceTiming?: ((generation: number, stage: PlayerResourceTiming) => void) | undefined;
+  readonly onPreviewDiagnostic?: (generation: number, target: MediaDiagnosticTarget, reason: MediaDiagnosticSignal) => void;
 }
 
 function pendingLabel(action: LivePendingAction | null, key: LivePendingAction, idle: string): string {
@@ -78,6 +85,8 @@ export function LiveModeratorView({
   projectorOpened,
   audioSuppressed = false,
   eventControls,
+  diagnostics,
+  mediaAlerts,
   onOpenProjector,
   onPrevious,
   onNext,
@@ -94,6 +103,9 @@ export function LiveModeratorView({
   onMediaFinished,
   onMediaError,
   onMediaPlayback,
+  onAudioDiagnostic,
+  onAudioResourceTiming,
+  onPreviewDiagnostic,
 }: LiveModeratorViewProps) {
   const pending = pendingAction !== null || session.interimResults !== undefined || (session.finalReveal?.visible === true && !eventControls);
   const finalActive = session.finalReveal?.visible === true;
@@ -159,6 +171,7 @@ export function LiveModeratorView({
       </header>
 
       {error && <HumanError error={error} />}
+      {mediaAlerts}
 
       <section className="live-workspace">
         <section className="moderator-info-panel" aria-labelledby="moderator-info-title">
@@ -249,6 +262,8 @@ export function LiveModeratorView({
                   onFinished={onMediaFinished}
                   onError={onMediaError}
                   onPlaybackState={onMediaPlayback}
+                  onDiagnostic={onAudioDiagnostic}
+                  onResourceTiming={onAudioResourceTiming}
                 />
               )}
             </section>
@@ -258,6 +273,7 @@ export function LiveModeratorView({
           )}
 
           {eventControls}
+          {diagnostics}
 
           <details className="live-danger-area">
             <summary>Další možnosti</summary>
@@ -291,6 +307,10 @@ export function LiveModeratorView({
                 quizTitle={publicState.quizTitle}
                 mode={publicState.renderMode}
                 mediaCommand="idle"
+                mediaGeneration={publicState.mediaGeneration}
+                onMediaDiagnostic={onPreviewDiagnostic && ((target, reason) => {
+                  if (target !== 'audio' && target !== 'video') onPreviewDiagnostic(publicState.mediaGeneration, target, reason);
+                })}
                 slide={{
                   ...publicState,
                   kind: publicState.slideKind ?? 'info',

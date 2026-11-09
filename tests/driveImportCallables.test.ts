@@ -253,9 +253,11 @@ test('worker trigger stays private with bounded retry and dispatch limits; calla
   expect(readDriveMediaImport.__endpoint.secretEnvironmentVariables ?? []).toEqual([]);
 });
 
-test('direct browser Storage upload still rejects video even though ready Drive video is supported by the shared model', async () => {
-  const upload = { auth: state.auth, data: { quizId: 'quiz', requestId: 'browser-video', kind: 'video', contentType: 'video/mp4', size: 1024 } };
-  await expect(beginQuizMediaUpload.run(upload as Parameters<typeof beginQuizMediaUpload.run>[0])).rejects.toMatchObject({ code: 'invalid-argument' });
+test('rejects unsupported browser video before creating an upload grant', async () => {
+  const setHeader = vi.fn();
+  const upload = { auth: state.auth, rawRequest: { res: { setHeader } }, data: { quizId: 'quiz', requestId: 'browser-video', kind: 'video', contentType: 'video/webm', size: 1024 } };
+  await expect(beginQuizMediaUpload.run(upload as unknown as Parameters<typeof beginQuizMediaUpload.run>[0])).rejects.toMatchObject({ code: 'invalid-argument' });
+  expect(setHeader).toHaveBeenCalledWith('Cache-Control', 'no-store');
   expect(state.writes).toEqual([]); expect(state.uploads).toHaveLength(0);
 });
 

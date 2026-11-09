@@ -44,6 +44,29 @@ YouTube behavior is **BEST EFFORT**, not a spoiler-free guarantee. The implement
 
 Owned audio/video uses the native adapter. See [MEDIA_PLAYBACK_REVALIDATION.md](MEDIA_PLAYBACK_REVALIDATION.md) for resource retention, conditional byte reuse and its authorization checks.
 
+## Live diagnostics
+
+Active media problems appear directly in moderation with the media role, the
+observing window, and the strongest cause the client can establish. A new
+generation or successful retry clears the active warning. An external image
+failure without a readable response stays undetermined. A managed gateway
+failure and a downloaded file the browser cannot decode have separate messages.
+
+The optional **Technická diagnostika** panel shows the browser's connection
+signal and the latest server confirmation of the projected state. On request it
+checks a small same-origin Hosting response, with a five-second deadline. The
+measurement covers that request from the moderator device. A reachable Hosting
+site alone says nothing about media download speeds, the hotspot uplink or
+another device's connection.
+
+The panel retains up to six recent image, audio and video observations in memory.
+It distinguishes prolonged loading or buffering from known player and gateway
+failures and gives a generic explanation when the browser supplies no cause.
+Reports from the projector arrive only within the same browser partition and are
+accepted for the active media generation. This separate diagnostic message
+carries only the session and generation, media role and reason code. It does
+not trigger a playback command or include media URLs or quiz content.
+
 ## Owned image/audio
 
 See [MEDIA_STORAGE.md](MEDIA_STORAGE.md). The owned adapter shares commands, generations, callbacks, reducer and player budget. It uses immutable quiz assets through the authorized gateway; legacy YouTube/HTTP sources continue to use their existing paths. Uploaded answer/background/video media and physical cleanup are outside this foundation.

@@ -33,6 +33,26 @@
 .agenda-items li > strong { font-weight: 650; overflow-wrap: anywhere; }
 .slide-renderer.kind-rules .agenda-items { grid-template-columns: 1fr; }
 .slide-renderer.kind-rules .agenda-items li { padding: .65cqi 0; }
+.slide-renderer.kind-agenda .slide-schedule { gap: 1.25cqi; }
+.slide-renderer.kind-agenda .schedule-items { gap: .9cqi 1.3cqi; margin-top: .65cqi; text-align: left; }
+.slide-renderer.kind-agenda .schedule-items li { align-items: center; gap: 1.1cqi; min-height: 6.7cqi; padding: 1.1cqi 1.4cqi; border: 1px solid color-mix(in srgb, var(--slide-ink) 14%, transparent); border-left: .22cqi solid var(--slide-gold); border-radius: .7cqi; background: linear-gradient(115deg, color-mix(in srgb, var(--slide-gold) 9%, transparent), color-mix(in srgb, var(--slide-ink) 3%, transparent)); }
+.slide-renderer.kind-agenda .schedule-marker { flex: 0 0 2.1cqi; display: grid; place-items: center; width: 2.1cqi; height: 2.1cqi; margin: 0; color: var(--slide-gold); }
+.slide-renderer.kind-agenda .schedule-marker > span { width: .65cqi; height: .65cqi; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 .4cqi color-mix(in srgb, var(--slide-gold) 12%, transparent), 0 0 0 .47cqi color-mix(in srgb, var(--slide-gold) 27%, transparent); }
+.slide-renderer.kind-agenda .schedule-marker svg { display: block; width: 1.9cqi; height: 1.9cqi; }
+.schedule-copy { display: grid; min-width: 0; gap: .35cqi; }
+.slide-renderer.kind-agenda .schedule-round-label { color: var(--slide-gold); font-size: calc(.95cqi * var(--slide-scale)); font-weight: 750; line-height: 1.2; letter-spacing: .13em; text-transform: uppercase; }
+.slide-renderer.kind-agenda .schedule-copy > strong { font-size: calc(1.95cqi * var(--slide-scale)); font-weight: 700; line-height: 1.22; overflow-wrap: anywhere; }
+.slide-renderer.kind-agenda .schedule-interlude { border-left-color: color-mix(in srgb, var(--slide-ink) 32%, transparent); background: color-mix(in srgb, var(--slide-ink) 3%, transparent); }
+.slide-renderer.kind-agenda .schedule-interlude .schedule-marker { color: var(--slide-muted); }
+.slide-renderer.kind-agenda .schedule-interlude .schedule-copy > strong { font-size: calc(1.65cqi * var(--slide-scale)); font-weight: 550; }
+.slide-renderer.kind-agenda .schedule-compact { gap: .7cqi 1.3cqi; }
+.slide-renderer.kind-agenda .schedule-compact li { min-height: 5.8cqi; padding-block: .8cqi; }
+.slide-renderer.kind-agenda .schedule-compact .schedule-copy > strong { font-size: calc(1.65cqi * var(--slide-scale)); }
+.slide-renderer.kind-agenda .schedule-items li.schedule-break { grid-column: 1 / -1; justify-content: center; gap: .7cqi; min-height: 0; padding: .55cqi 1.4cqi; border: 0; border-block: 1px solid color-mix(in srgb, var(--slide-ink) 14%, transparent); border-radius: 0; background: none; color: var(--slide-muted); }
+.slide-renderer.kind-agenda .schedule-break .schedule-marker { flex-basis: 1.6cqi; width: 1.6cqi; height: 1.6cqi; }
+.slide-renderer.kind-agenda .schedule-break .schedule-marker svg { width: 1.45cqi; height: 1.45cqi; }
+.slide-renderer.kind-agenda .schedule-break .schedule-copy { text-align: center; }
+.slide-renderer.kind-agenda .schedule-break .schedule-copy > strong { font-size: calc(1.35cqi * var(--slide-scale)); font-weight: 550; line-height: 1.3; }
 .slide-renderer .question-image-frame { border: 1px solid color-mix(in srgb, var(--slide-ink) 18%, transparent); border-radius: .7cqi; box-shadow: none; }
 .slide-renderer .question-image-frame img, .slide-renderer .slide-answer img { object-fit: var(--slide-media-fit); }
 .slide-renderer .audio-layout, .slide-renderer.kind-image .question-layout { grid-template-columns: minmax(0, var(--slide-text-ratio)) minmax(0, var(--slide-media-ratio)); grid-template-rows: auto 1fr auto; gap: 1.7cqi 3cqi; }

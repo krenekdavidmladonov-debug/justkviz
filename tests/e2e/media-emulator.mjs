@@ -1,7 +1,10 @@
 import { strict as assert } from 'node:assert';
+import { randomUUID } from 'node:crypto';
 import { ref, uploadBytes, getBytes, listAll, deleteObject, updateMetadata } from 'firebase/storage';
 import { mediaFixture, syntheticAudio, syntheticImage, mediaSlide } from './media-fixture.mjs';
+import { createMediaUploadFixtures, mediaUploadSha256 } from './media-upload-fixtures.mjs';
 import { storageReadBudgetContract } from './storage-read-budget.mjs';
+import { localEmulatorEndpoint } from '../../tools/local-emulator-environment.mjs';
 let f,phase='fixture';
 const denied=(promise,code)=>assert.rejects(promise,error=>error.code===code);
 try {
@@ -61,6 +64,115 @@ try {
   await denied(f.update('image',{questionImage:sound.reference}),'functions/failed-precondition');
   const q=(await f.quizRef.get()).data();await denied(f.admin.call('updateQuizSlide',{quizId:f.quizId,slideId:f.ids.image,expectedRevision:q.revision,slide:mediaSlide('image',{questionImage:pending.reference.replace(f.quizId,'other-quiz')})}),'functions/invalid-argument');
   console.log('PASS: actual content signature, oversized declaration, audio upload, cross-quiz/type/conflicting slot denial');
+
+  phase = 'owned MP4 upload and privacy boundary';
+  const { video } = await createMediaUploadFixtures(['video']);
+  const videoType = { contentType: 'video/mp4' };
+  const videoUpload = (who, target, bytes = video.bytes, metadata = videoType) => uploadBytes(ref(who.storage, target.path), bytes, metadata);
+  for (const [who, code] of [[f.anonymous, 'functions/unauthenticated'], [moderator, 'functions/permission-denied'], [outsider, 'functions/permission-denied']]) {
+    await denied(f.begin('video', video.bytes, 'video/mp4', who), code);
+  }
+  await denied(f.begin('video', video.bytes, 'video/webm'), 'functions/invalid-argument');
+  await denied(f.begin('audio', video.bytes, 'video/mp4'), 'functions/invalid-argument');
+  await denied(f.admin.call('beginQuizMediaUpload', { quizId: f.quizId, requestId: randomUUID(), kind: 'video',
+    contentType: 'video/mp4', size: 25 * 1024 * 1024 + 1 }), 'functions/invalid-argument');
+  const staleVideoCreate = await f.begin('video', video.bytes, 'video/mp4');
+  const staleVideoFinalize = await f.begin('video', video.bytes, 'video/mp4');
+  await videoUpload(f.admin, staleVideoFinalize);
+  assert.equal((await f.quizRef.collection('mediaAssets').doc(staleVideoFinalize.assetId).get()).get('status'), 'uploading');
+  // Keep the overwrite probe separate so an unexpected overwrite cannot rotate
+  // the other upload's bearer and mask its post-finalize exposure.
+  const overwriteResult = await videoUpload(f.admin, staleVideoFinalize).then(() => 'accepted', error => String(error?.code ?? 'unexpected-error'));
+  await setScope('all'); // Membership version changes even though this actor still owns access to the quiz.
+  await denied(videoUpload(f.admin, staleVideoCreate), 'storage/unauthorized');
+  await denied(f.admin.call('finalizeQuizMediaUpload', { quizId: f.quizId, assetId: staleVideoFinalize.assetId }), 'functions/permission-denied');
+  const videoGrant = await f.begin('video', video.bytes, 'video/mp4');
+  const canonicalVideoPath = `quiz-assets/${f.quizId}/${videoGrant.assetId}/source`;
+  assert.deepEqual(Object.keys(videoGrant).sort(), ['assetId', 'path', 'reference']);
+  assert.equal(videoGrant.path, `quiz-assets/${f.quizId}/${videoGrant.assetId}/upload`);
+  for (const who of [f.anonymous, moderator, outsider]) await denied(videoUpload(who, videoGrant), 'storage/unauthorized');
+  await denied(videoUpload(f.admin, { path: `quiz-assets/${f.quizId}/ungranted-video/source` }), 'storage/unauthorized');
+  await denied(videoUpload(f.admin, { path: videoGrant.path.replace(f.quizId, 'foreign-quiz') }), 'storage/unauthorized');
+  await denied(videoUpload(f.admin, { path: canonicalVideoPath }), 'storage/unauthorized');
+  await denied(videoUpload(f.admin, videoGrant, video.bytes, { contentType: 'video/webm' }), 'storage/unauthorized');
+  await denied(videoUpload(f.admin, videoGrant, video.bytes.subarray(0, -1)), 'storage/unauthorized');
+  await videoUpload(f.admin, videoGrant);
+  const videoRef = ref(f.admin.storage, videoGrant.path), videoDoc = f.quizRef.collection('mediaAssets').doc(videoGrant.assetId);
+  assert.equal((await videoDoc.get()).get('status'), 'uploading');
+  await denied(updateMetadata(videoRef, { contentType: 'video/webm' }), 'storage/unauthorized');
+  await denied(getBytes(videoRef), 'storage/unauthorized');
+  const [uploadMetadata] = await f.bucket.file(videoGrant.path).getMetadata();
+  const originalBearer = uploadMetadata.metadata?.firebaseStorageDownloadTokens?.split(',')[0];
+  assert(Boolean(originalBearer), 'Expected a real synthetic upload-issued bearer for the bypass probe.');
+  const endpoint = localEmulatorEndpoint(process.env.FIREBASE_STORAGE_EMULATOR_HOST, 'MP4 bearer probe');
+  async function anonymousBearerRead(objectPath) {
+    const url = new URL(`http://${endpoint.host}:${endpoint.port}/v0/b/${f.bucket.name}/o/${encodeURIComponent(objectPath)}`);
+    url.searchParams.set('alt', 'media'); url.searchParams.set('token', originalBearer);
+    const response = await fetch(url, { redirect: 'error' });
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return { status: response.status, returnedUploadedBytes: mediaUploadSha256(bytes) === video.sha256 };
+  }
+  const bearerBefore = { upload: await anonymousBearerRead(videoGrant.path), canonical: await anonymousBearerRead(canonicalVideoPath) };
+  assert.deepEqual(bearerBefore.upload, { status: 200, returnedUploadedBytes: true }, 'The real original bearer must exercise the anonymous bypass before finalization.');
+  assert([401, 403, 404].includes(bearerBefore.canonical.status) && !bearerBefore.canonical.returnedUploadedBytes);
+  const canonicalVideo = f.bucket.file(canonicalVideoPath);
+  async function finalizeAndReadReadyPin() {
+    const result = await f.admin.call('finalizeQuizMediaUpload', { quizId: f.quizId, assetId: videoGrant.assetId });
+    assert.deepEqual(result, { reference: videoGrant.reference });
+    const record = (await videoDoc.get()).data(), [metadata] = await canonicalVideo.getMetadata();
+    assert.equal(record.status, 'ready'); assert.equal(record.generation, metadata.generation);
+    assert.equal((await f.bucket.file(videoGrant.path).exists())[0], false);
+    assert.equal(Boolean(metadata.metadata?.firebaseStorageDownloadTokens), false);
+    assert.equal(metadata.cacheControl, 'private, no-store');
+    const pinned = f.bucket.file(canonicalVideoPath, { generation: metadata.generation });
+    const [bytes] = await pinned.download();
+    const sha256 = mediaUploadSha256(bytes);
+    assert.equal(bytes.length, video.bytes.length); assert.equal(sha256, video.sha256);
+    return { generation: metadata.generation, metageneration: metadata.metageneration, sha256 };
+  }
+  const concurrent = await Promise.allSettled([finalizeAndReadReadyPin(), finalizeAndReadReadyPin()]);
+  const completed = concurrent.filter(outcome => outcome.status === 'fulfilled');
+  assert(completed.length >= 1, 'Concurrent finalization must produce a ready canonical object.');
+  for (const outcome of concurrent) if (outcome.status === 'rejected') assert.equal(outcome.reason.code, 'functions/aborted');
+  const readyPin = completed[0].value;
+  for (const outcome of completed) assert.deepEqual(outcome.value, readyPin);
+  const replayed = await Promise.all([finalizeAndReadReadyPin(), finalizeAndReadReadyPin()]);
+  for (const pin of replayed) assert.deepEqual(pin, readyPin, 'A repeated READY finalize must preserve the canonical generation and bytes.');
+  console.log('MP4_CONCURRENT_FINALIZE ' + JSON.stringify({ requests: concurrent.length, confirmed: completed.length,
+    aborted: concurrent.length - completed.length, idempotentReplays: replayed.length, stableReadyGeneration: true,
+    stagingAbsent: true, canonicalSha256: readyPin.sha256 }));
+  const bearerAfter = { upload: await anonymousBearerRead(videoGrant.path), canonical: await anonymousBearerRead(canonicalVideoPath) };
+  console.log('MP4_BEARER_PROBE ' + JSON.stringify({ before: bearerBefore, after: bearerAfter, overwriteWhileUploading: overwriteResult, sameObjectPath: videoGrant.path === canonicalVideoPath }));
+  const bearerDenied = Object.values(bearerAfter).every(observation => [401, 403, 404].includes(observation.status) && !observation.returnedUploadedBytes);
+  assert.deepEqual({ overwriteResult, bearerDenied }, { overwriteResult: 'storage/unauthorized', bearerDenied: true },
+    'Pending MP4 bytes must resist a second upload, and the original bearer must not expose READY MP4 bytes.');
+  for (const who of [f.admin, f.anonymous, moderator, outsider]) {
+    await denied(getBytes(ref(who.storage, videoGrant.path)), 'storage/unauthorized');
+    await denied(getBytes(ref(who.storage, canonicalVideoPath)), 'storage/unauthorized');
+    await denied(listAll(ref(who.storage, `quiz-assets/${f.quizId}`)), 'storage/unauthorized');
+  }
+  await denied(videoUpload(f.admin, videoGrant), 'storage/unauthorized');
+  const videoRecord = (await videoDoc.get()).data();
+  const [videoMetadata] = await f.bucket.file(canonicalVideoPath).getMetadata();
+  assert.equal(videoRecord.status, 'ready'); assert.equal(videoRecord.generation, videoMetadata.generation);
+  assert.equal(videoRecord.size, video.bytes.length); assert.equal(videoMetadata.contentType, 'video/mp4');
+  assert.equal((await f.read(videoGrant.reference, { who: f.anonymous })).status, 403);
+  const videoRead = await f.read(videoGrant.reference);
+  assert.equal(videoRead.status, 200); assert.equal(videoRead.headers.get('content-type'), 'video/mp4');
+  assert.equal(videoRead.headers.get('location'), null); assert.equal(videoRead.headers.get('cache-control'), 'no-store');
+  assert.equal(videoRead.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(mediaUploadSha256(Buffer.from(await videoRead.arrayBuffer())), video.sha256);
+  const malformedMp4 = Buffer.from(video.bytes.subarray(0, 24));
+  malformedMp4.writeUInt32BE(128, 0); // Real MP4 prefix, but its declared ftyp box is truncated.
+  const malformedGrant = await f.begin('video', malformedMp4, 'video/mp4');
+  await videoUpload(f.admin, malformedGrant, malformedMp4);
+  await denied(f.admin.call('finalizeQuizMediaUpload', { quizId: f.quizId, assetId: malformedGrant.assetId }), 'functions/failed-precondition');
+  assert.equal((await f.quizRef.collection('mediaAssets').doc(malformedGrant.assetId).get()).get('status'), 'uploading');
+  const encodedGrant = await f.begin('video', video.bytes, 'video/mp4');
+  await videoUpload(f.admin, encodedGrant, video.bytes, { ...videoType, contentEncoding: 'gzip' });
+  await denied(f.admin.call('finalizeQuizMediaUpload', { quizId: f.quizId, assetId: encodedGrant.assetId }), 'functions/failed-precondition');
+  console.log('PASS: real owned H264/AAC MP4, stale grants, MIME/size/signature/encoding checks, protected Storage reads and overwrite, gateway bytes and generation');
+
   phase='snapshot and reveal';const answer=await f.upload('image',image,'image/png'),background=await f.upload('image',image,'image/png'); await f.update('image',{questionImage:pending.reference,answerImage:answer.reference,backgroundImage:background.reference}); const snapshotId=await f.lock();const replacement=await f.upload('image',image,'image/png');await f.update('image',{questionImage:replacement.reference});
   assert.equal((await f.db.doc('quizSnapshots/'+snapshotId+'/slides/'+f.ids.image).get()).data().questionImage,pending.reference);
   const sessionId=await f.live();assert.equal((await f.read(pending.reference,{sessionId})).status,404);

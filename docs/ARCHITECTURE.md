@@ -1,6 +1,5 @@
 # Architecture
 
-
 Images use their verified original web sources in editor and frozen event views;
 Drive remains the video/audio backend. See [ORIGINAL_IMAGE_SOURCES.md](ORIGINAL_IMAGE_SOURCES.md).
 
@@ -72,6 +71,10 @@ Sensitive state transitions—quiz editing, team registration, quiz publication,
 
 ## Frontend modules
 
+An explicitly entered offline event runtime is separate from the online Firebase-authoritative routes. It uses one scoped, time-bounded signed snapshot export, encrypted local persistence and an independently saved file. A pinned local projector receives only the current public allowlist. Reconnection uses a fresh authorized, baseline-checked atomic journal import rather than Firestore persistence. The candidate protocol and acceptance status are in [OFFLINE_MODE.md](OFFLINE_MODE.md).
+
+The demo-only local image backup adds an alternate byte source for bounded owned PNG/JPEG/WebP assets in one locked snapshot. Firebase still authorizes every displayed slide and the projector obtains its own exact media authority. A pinned popup relay transfers one selected image at a time, with fresh operator authorization and short renewable leases. Answer exports require the existing additional answer permissions and public delivery requires an actual revealed answer. See [LOCAL_IMAGE_BACKUP.md](LOCAL_IMAGE_BACKUP.md).
+
 - `app`: router and top-level application composition.
 - `routes`: route-group screens and future nested routing.
 - `services/firebase`: SDK initialization and emulator wiring.
@@ -102,7 +105,9 @@ The simplified editor checks the complete working copy after a short typing paus
 
 The guided repair layer lives at `/admin/quizzes/:quizId/readiness/repair`. It consumes the same bounded quiz load and `PreflightResult`, orders current blockers by their semantic references, and supports only two intentionally narrow repairs: an explicit Choice option index and explicit Video START/END seconds. Moderators can inspect the queue but cannot save. Admin saves call `repairQuizPreflightIssue`, which reloads the authoritative slide in a revision-checked transaction, derives the selected answer from the current stored options, or validates the explicit timing pair, and returns only the normal sanitized mutation counters. After every save the browser reloads the whole authoritative quiz and reruns shared preflight before removing an item from the queue. Unsupported blockers retain their severity and deep-link to the full editor.
 
-Registration email delivery uses a trusted server-only outbox with bounded idempotent intents, encrypted provider material and explicit activation. Public registration capabilities never grant direct provider or private contact access. Disabled or unapproved transport must fail closed before provider calls. See the transactional-email and Gmail-delivery contracts.
+The first Events Foundation slice adds `/admin/events`, event create/detail/configuration, and immutable quiz preparation. Event mutations are admin-only callable Functions with expected revisions; moderators have operational read-only access. Locking imports the same quiz-domain mapper and computes an advisory preflight summary without rejecting editorial findings or requiring warning acknowledgement, then atomically copies the exact private slide stream and round metadata into a new `quizSnapshots` document tree and attaches it to the event. Relock creates another snapshot and is allowed only while server-owned scoring state has not started. `publicEvents` is a whole-document allowlist projection with safe aggregate capacities and registration window but no quiz references, team identities, answers, or contacts.
+
+Public registrations use trusted create/get/edit/cancel operations. Capacity and unique names are transactional; records retain only the management-token verifier. Private email intents, encrypted capability envelopes, replay receipts and a safe organizer delivery summary are documented in [TRANSACTIONAL_EMAIL.md](TRANSACTIONAL_EMAIL.md). Gmail delivery uses a private Cloud Tasks worker. Default-off discovery binds no secrets. The separately approved 972ed71 V2 staging activation enabled only new public online registrations from 2026-10-15T15:26:19.550Z; the queue is RUNNING and the owner confirmed all three create/update/cancel messages. The earlier selected-recipient activation in [EMAIL_ACTIVATION_EXECUTION.md](EMAIL_ACTIVATION_EXECUTION.md) is historical evidence. This source revision adds Czech templates, an encrypted management link for new update intents and conservative handling of uncertain provider outcomes; its deployment requires a separate exact release approval. Local verification uses a fake Gmail transport. Internal round scoring uses the scoped saveEventScore callable; see EVENT_SCORING.md.
 
 Event team tools add two admin-only manual-team callables over that same registration ledger (not a parallel team store), plus shared manual-team and public-link/QR UI. See `EVENT_TEAM_TOOLS.md` for idempotency and delivery scope.
 
@@ -182,6 +187,10 @@ backlog and pre-cutoff registrations before queueing/lease/provider access. Publ
 create/update/cancel receipts and management capabilities retain their existing
 contract. No email is added for no-op/replay/manual staff operations.
 
+The approved 972ed71 activation and a fresh read on 2026-10-15 confirm this policy
+with a RUNNING queue and the cutoff above. Organizational campaigns and automatic
+organizer notifications remain outside the activated dispatch policy. No historical
+outbox replay, public worker access or production activation is implied.
 
 Admin-only preview/confirmation creates an immutable emailCampaigns record and recipient snapshots in the existing emailIntents outbox. The shared task worker delivers plain-text organizational messages without management capabilities or changes to registration confirmation status. All client campaign/intent access remains denied; safe history and status are exposed only through fresh-admin callables. Atomic recipient limits, snapshot/idempotence contracts and offline tests: [EVENT_TEAM_EMAIL.md](EVENT_TEAM_EMAIL.md).
 
@@ -197,7 +206,7 @@ not change media playback by itself. The separately gated media extension adds
 private Drive-backed assets and import jobs; see [GOOGLE_DRIVE_MEDIA.md](GOOGLE_DRIVE_MEDIA.md).
 Connection lifecycle remains in [GOOGLE_DRIVE_CONNECTION.md](GOOGLE_DRIVE_CONNECTION.md).
 
-Quiz-scoped image/audio uploads use private asset metadata, create-only Storage grants and a current-role/current-publication HTTP read gateway. Immutable event snapshots keep stable asset references and generations; no cleanup runs. The existing MediaPlayer lifecycle selects YouTube or native audio while retaining the one-player budget. See [MEDIA_STORAGE.md](MEDIA_STORAGE.md) for boundaries and future deployment checks.
+Quiz-scoped image, audio and MP4 uploads use private asset metadata, create-only Storage grants and a current-role/current-publication HTTP read gateway. Immutable event snapshots keep stable asset references and generations; no cleanup runs. The existing MediaPlayer lifecycle selects YouTube or native audio/video while retaining the one-player budget. See [MEDIA_STORAGE.md](MEDIA_STORAGE.md) for boundaries and future deployment checks.
 
 Media authoring extends the shared picker/gateway/renderer to question, private answer and background roles. Explicit empty fields detach without deleting legacy data or snapshot assets. See MEDIA_AUTHORING_RELEASE.md for the complete contract and deployment scope.
 

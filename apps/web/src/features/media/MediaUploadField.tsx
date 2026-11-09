@@ -7,10 +7,12 @@ export const MediaAuthoringContext = createContext<{ quizId: string; onPending: 
 
 /** One picker for prompt, answer and background. Only ready references enter the draft. */
 export function MediaUploadField({ kind, label, value, disabled: disabledProp, onReady }: {
-  kind: OwnedMediaKind | 'video'; label: string; value: string; disabled: boolean; onReady: (reference: string) => void;
+  kind: OwnedMediaKind; label: string; value: string; disabled: boolean; onReady: (reference: string) => void;
 }) {
   const context = useContext(MediaAuthoringContext);
   const disabled = disabledProp || context?.canAttach === false;
+  const acceptedFileTypes = kind === 'image' ? 'image/png,image/jpeg,image/webp'
+    : kind === 'audio' ? 'audio/mpeg,audio/wav,audio/x-wav,.wav' : 'video/mp4,.mp4';
   const [mode, setMode] = useState<'closed' | 'url' | 'library' | 'file'>('closed');
   const [url, setUrl] = useState('');
   const [pending, setPending] = useState(false);
@@ -26,7 +28,7 @@ export function MediaUploadField({ kind, label, value, disabled: disabledProp, o
   const cancel = () => { epoch.current++; controller.current?.abort(); controller.current = null; setPending(false); pendingCallback.current?.(false); setError('Nahrávání bylo zrušeno. Rozepsaný obsah zůstal zachovaný.'); };
   const assign = (reference: string) => { epoch.current++; controller.current?.abort(); setError(''); setMode('closed'); callback.current(reference); };
   const upload = async (file: File) => {
-    if (!context || kind === 'video' || context.canUpload === false || disabled) return;
+    if (!context || context.canUpload === false || disabled) return;
     controller.current?.abort(); const abort = new AbortController(); controller.current = abort;
     const run = ++epoch.current; lastFile.current = file; setPending(true); setProgress(0); setError(''); pendingCallback.current?.(true);
     try {
@@ -40,7 +42,7 @@ export function MediaUploadField({ kind, label, value, disabled: disabledProp, o
     }
   };
   const library = async () => {
-    if (!context || kind === 'video') return;
+    if (!context) return;
     const run = ++epoch.current; setMode('library'); setListing(true); setError('');
     try { const items = await listQuizMedia(context.quizId, kind); if (run === epoch.current) setAssets(items); }
     catch { if (run === epoch.current) setError('Média kvízu se nepodařilo načíst. Zkuste výběr znovu.'); }
@@ -58,16 +60,16 @@ export function MediaUploadField({ kind, label, value, disabled: disabledProp, o
     {value && <p className="field-help">{parseQuizAsset(value) ? 'Ověřené médium tohoto kvízu' : 'Odkaz na médium'} · přiřazení potvrďte tlačítkem Uložit.</p>}
     <div className="media-picker-actions">
       {value && <><button type="button" className="secondary-button" disabled={disabled || pending} onClick={() => { setUrl(parseQuizAsset(value) ? '' : value); setMode('url'); }}>Změnit</button><button type="button" className="secondary-button" disabled={disabled || pending} onClick={() => assign('')}>Odebrat</button></>}
-      {kind !== 'video' && <button type="button" className="secondary-button" disabled={disabled || pending || !context || context.canUpload === false} onClick={() => { setMode('file'); fileInput.current?.click(); }}>Nahrát z počítače</button>}
+      <button type="button" className="secondary-button" disabled={disabled || pending || !context || context.canUpload === false} onClick={() => { setMode('file'); fileInput.current?.click(); }}>Nahrát z počítače</button>
       <button type="button" className="secondary-button" disabled={disabled || pending} onClick={() => { setUrl(parseQuizAsset(value) ? '' : value); setMode('url'); setError(''); }}>Vložit odkaz</button>
-      {kind !== 'video' && <button type="button" className="secondary-button" disabled={disabled || pending || !context} onClick={() => void library()}>Vybrat z médií tohoto kvízu</button>}
+      <button type="button" className="secondary-button" disabled={disabled || pending || !context} onClick={() => void library()}>Vybrat z médií tohoto kvízu</button>
     </div>
-    {kind !== 'video' && <input ref={fileInput} type="file" hidden aria-label={label + ' — soubor'} accept={kind === 'image' ? 'image/png,image/jpeg,image/webp' : 'audio/mpeg,audio/wav,audio/x-wav,.wav'} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void upload(file); }} />}
+    <input ref={fileInput} type="file" hidden aria-label={label + ' — soubor'} accept={acceptedFileTypes} onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; if (file) void upload(file); }} />
     {mode === 'url' && <div className="media-url-entry"><label>Odkaz na médium<input aria-label={label + ' — odkaz'} value={url} onChange={event => setUrl(event.target.value)} disabled={disabled || pending} placeholder="https://…" /></label><button type="button" className="secondary-button" disabled={disabled || pending} onClick={applyUrl}>Použít odkaz</button></div>}
     {mode === 'library' && <div className="media-library">{listing ? <p role="status">Načítám média…</p> : assets.length === 0 ? <p>Zatím zde nejsou ověřená média tohoto typu.</p> : assets.map((asset, index) => <button type="button" className="secondary-button" key={asset.reference} disabled={disabled || pending} onClick={() => assign(asset.reference)}>{kind === 'image' && <AssetImage source={asset.reference} alt={'Médium ' + (index + 1)} />}Vybrat médium {index + 1} · {Math.ceil(asset.size / 1024)} KiB</button>)}</div>}
     {pending && <div role="status"><progress max="100" value={progress} aria-label="Průběh nahrávání" /><p>{progress < 100 ? `Nahrávám ${progress} %` : 'Přenos dokončen. Ověřuji soubor…'}</p><button type="button" className="secondary-button" onClick={cancel}>Zrušit nahrávání</button></div>}
     {error && <p role="alert">{error}</p>}
     {!pending && error && lastFile.current && <button type="button" className="secondary-button" disabled={disabled} onClick={() => { if (lastFile.current) void upload(lastFile.current); }}>Zkusit nahrát znovu</button>}
-    <small>{kind === 'image' ? 'PNG, JPEG, WebP do 10 MiB.' : kind === 'audio' ? 'MP3/WAV do 25 MiB nebo přímý audio/YouTube odkaz.' : 'YouTube nebo přímý MP4/WebM odkaz. Upload videosouborů není podporován.'}</small>
+    <small>{kind === 'image' ? 'PNG, JPEG, WebP do 10 MiB.' : kind === 'audio' ? 'MP3/WAV do 25 MiB nebo přímý audio/YouTube odkaz.' : 'Vlastní MP4 do 25 MiB. Pro přehrávání online lze vložit i odkaz.'}</small>
   </section>;
 }

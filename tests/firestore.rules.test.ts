@@ -28,6 +28,29 @@ const publicEventPath = 'publicEvents/security-test-event';
 
 let testEnvironment: RulesTestEnvironment;
 
+for (const access of ['anonymous', 'role-label-only', 'current-owner'] as const) {
+  test('offline export receipts and signing material stay server-only: ' + access, async () => {
+    const uid = 'offline-rules-owner';
+    await testEnvironment.withSecurityRulesDisabled(async context => {
+      const db = context.firestore();
+      if (access === 'current-owner') await setDoc(doc(db, 'memberships/' + uid), { uid, role: 'owner', status: 'active', version: 1, sessionValidAfter: 0,
+        permissions, quizzes: { mode: 'all', ids: [] }, events: { mode: 'all', ids: [] } });
+      await setDoc(doc(db, 'offlineSigningKeys/demo-v1'), { privatePem: 'synthetic-placeholder', trust: { keyId: 'synthetic' } });
+      await setDoc(doc(db, privateEventPath + '/offlineExports/synthetic'), { status: 'prepared', actorId: uid });
+    });
+    const db = access === 'anonymous' ? testEnvironment.unauthenticatedContext().firestore()
+      : testEnvironment.authenticatedContext(uid, { role: 'owner', email_verified: true, auth_time: 2000000000 }).firestore();
+    if (access === 'current-owner') await assertSucceeds(getDoc(doc(db, privateEventPath)));
+    for (const path of ['offlineSigningKeys/demo-v1', privateEventPath + '/offlineExports/synthetic']) {
+      await assertFails(getDoc(doc(db, path)));
+      await assertFails(getDocs(collection(db, path.split('/').slice(0, -1).join('/'))));
+      await assertFails(setDoc(doc(db, path), { forged: true }));
+      await assertFails(updateDoc(doc(db, path), { forged: true }));
+      await assertFails(deleteDoc(doc(db, path)));
+    }
+  });
+}
+
 test('even a fully authorized owner cannot read or reset server registration limits', async () => {
   const uid = 'limit-owner', path = privateEventPath + '/registrationAbuse/synthetic-hash';
   await testEnvironment.withSecurityRulesDisabled(async context => {

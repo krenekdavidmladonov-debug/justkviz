@@ -8,8 +8,10 @@ import { applyKnownSlideUpdate } from '../functions/src/editor/model';
 import { validateSlideInput } from '../functions/src/editor/validation';
 import { MediaPlayer } from '../apps/web/src/features/presentation/MediaPlayer';
 import { SlideRenderer } from '../apps/web/src/features/presentation/SlideRenderer';
-import { readQuizMediaBlob, uploadQuizMedia } from '../apps/web/src/features/media/mediaApi';
+import { AssetImage } from '../apps/web/src/features/media/AssetImage';
+import { quizMediaReadFailure, readQuizMediaBlob, uploadQuizMedia } from '../apps/web/src/features/media/mediaApi';
 import { MediaBlobCache, quizMediaBlobCache } from '../apps/web/src/features/media/mediaBlobCache';
+import { getFirebaseServices } from '../apps/web/src/services/firebase/client';
 
 vi.mock('../apps/web/src/services/firebase/app', () => ({ getFirebaseAppContext: () => ({ config: { useEmulators: true, options: { projectId: 'demo-media-video' } } }) }));
 vi.mock('../apps/web/src/services/firebase/auth', () => ({ getFirebaseAuth: () => ({ currentUser: { getIdToken: () => Promise.resolve('synthetic-firebase-token') } }) }));
@@ -153,9 +155,95 @@ it('enforces the byte limit on chunked data without trusting Content-Length', as
   expect(cancel).toHaveBeenCalledOnce(); expect(count).toBeLessThanOrEqual(27);
 });
 
-it('does not issue direct Storage uploads for video', async () => {
-  await expect(uploadQuizMedia('quiz-1', 'video', new File(['mp4'], 'video.mp4', { type: 'video/mp4' }),
-    { signal: new AbortController().signal, onProgress: vi.fn() })).rejects.toThrow(/Přímé nahrávání videa/);
+it.each([
+  [401, 'access-denied'], [403, 'access-denied'], [404, 'not-found'],
+  [429, 'gateway-throttled'], [500, 'gateway-error'], [501, 'gateway-error'],
+  [502, 'gateway-unavailable'], [503, 'gateway-unavailable'], [504, 'gateway-unavailable'],
+])('classifies the managed media response HTTP %d without reading its error body', async (status, expected) => {
+  const response = new Response('synthetic server details', { status });
+  http.mockResolvedValueOnce(response);
+  await expect(readQuizMediaBlob(source, new AbortController().signal, 'session-1').catch(quizMediaReadFailure)).resolves.toBe(expected);
+  expect(response.bodyUsed).toBe(false);
+  expect(http).toHaveBeenCalledOnce();
+});
+
+it('distinguishes failed managed media transfer from a browser-reported offline state', async () => {
+  const online = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+  const read = () => readQuizMediaBlob(source, new AbortController().signal, 'session-1').catch(quizMediaReadFailure);
+  http.mockRejectedValueOnce(new TypeError('synthetic fetch rejection'));
+  await expect(read()).resolves.toBe('network-error');
+
+  const interrupted = new ReadableStream({ start(controller) { controller.error(new TypeError('synthetic interrupted stream')); } });
+  http.mockResolvedValueOnce(new Response(interrupted, { headers: { 'Content-Type': 'image/png' } }));
+  await expect(read()).resolves.toBe('network-error');
+
+  online.mockReturnValue(false);
+  http.mockRejectedValueOnce(new TypeError('synthetic fetch rejection while offline'));
+  await expect(read()).resolves.toBe('offline');
+  expect(http).toHaveBeenCalledTimes(3);
+});
+
+it('keeps the headers mark when a managed image body stalls and then fails', async () => {
+  let breakTransfer = () => {};
+  const body = new ReadableStream<Uint8Array>({ start(controller) {
+    breakTransfer = () => controller.error(new TypeError('synthetic interrupted stream'));
+  } });
+  http.mockResolvedValueOnce(new Response(body, { headers: { 'Content-Type': 'image/png' } }));
+  const observe = vi.fn();
+  const result = readQuizMediaBlob(source, new AbortController().signal, 'session-1', undefined, observe).catch(quizMediaReadFailure);
+  await vi.waitFor(() => expect(observe.mock.calls).toEqual([['asset-request'], ['asset-headers']]));
+  breakTransfer();
+  await expect(result).resolves.toBe('network-error');
+  expect(observe.mock.calls).toEqual([['asset-request'], ['asset-headers']]);
+});
+
+it.each([[true, 'load-failed'], [false, 'offline']])('reports a failed external image when online is %s without probing its URL', async (online, reason) => {
+  vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(online);
+  const observation = vi.fn(), resolved = vi.fn();
+  await act(async () => {
+    root.render(<AssetImage source="https://example.test/prompt.png" alt="Syntetický obrázek"
+      onDiagnostic={observation} onDiagnosticResolved={resolved} />);
+  });
+  await act(async () => { host.querySelector('img')!.dispatchEvent(new Event('error')); });
+  expect(observation).toHaveBeenCalledExactlyOnceWith(reason);
+  expect(host.textContent).toContain('Obrázek není dostupný.');
+  expect(host.textContent).not.toContain(reason);
+  expect(resolved).not.toHaveBeenCalled();
+  await act(async () => { host.querySelector('button')!.click(); });
+  expect(resolved).toHaveBeenCalledOnce();
+  await act(async () => { host.querySelector('img')!.dispatchEvent(new Event('load')); });
+  expect(resolved).toHaveBeenCalledTimes(2);
+  expect(http).not.toHaveBeenCalled();
+});
+
+it('reports a still-failed owned image on the next display generation without fetching it again', async () => {
+  const diagnostics = vi.fn();
+  const show = (generation: number) => act(async () => {
+    root.render(<AssetImage source={source} sessionId="session-1" alt="Syntetické pozadí" diagnosticGeneration={generation}
+      onDiagnostic={reason => { diagnostics(generation, reason); }} />);
+  });
+
+  http.mockResolvedValueOnce(new Response(null, { status: 503 }));
+  await show(1);
+  await show(2);
+  await show(2);
+  expect(diagnostics.mock.calls).toEqual([[1, 'gateway-unavailable'], [2, 'gateway-unavailable']]);
+  expect(http).toHaveBeenCalledOnce();
+
+  http.mockResolvedValueOnce(new Response('fresh-image', { headers: { 'Content-Type': 'image/png' } }));
+  await act(async () => { host.querySelector('button')!.click(); });
+  await act(async () => { host.querySelector('img')!.dispatchEvent(new Event('load')); });
+  await show(3);
+  expect(diagnostics).toHaveBeenCalledTimes(2);
+  expect(http).toHaveBeenCalledTimes(2);
+});
+
+it('rejects an unsupported WebM upload before opening Firebase services', async () => {
+  const progress = vi.fn();
+  await expect(uploadQuizMedia('quiz-1', 'video', new File(['synthetic'], 'video.webm', { type: 'video/webm' }),
+    { signal: new AbortController().signal, onProgress: progress })).rejects.toThrow(/MP4 do 25 MiB/u);
+  expect(getFirebaseServices).not.toHaveBeenCalled();
+  expect(progress).not.toHaveBeenCalled();
   expect(http).not.toHaveBeenCalled();
 });
 

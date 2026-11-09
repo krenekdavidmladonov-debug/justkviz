@@ -22,7 +22,7 @@ test('recovery gate has an actual demo-only recovery job and current browser cam
 });
 
 test('zero-cost workflows use standard public runners without artifact uploads or package caches',()=>{
-  for(const name of ['ci.yml','owner-takeover.yml']){
+  for(const name of ['ci.yml','owner-takeover.yml','offline-acceptance.yml']){
     const yaml=readFileSync(new URL('../.github/workflows/'+name,import.meta.url),'utf8').replaceAll('\r\n','\n');
     assert(!/uses: (?:actions\/(?:upload-artifact|cache)|.*cache-save)@/u.test(yaml));
     assert(!/^\s+cache: /mu.test(yaml));

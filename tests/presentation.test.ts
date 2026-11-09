@@ -183,6 +183,21 @@ describe('same-device public channel security', () => {
     })).toBeUndefined();
   });
 
+  test('accepts only allowlisted diagnostic observations without source details', () => {
+    const observation = {
+      type: 'media-diagnostic', sessionId: 'safe-session', mediaGeneration: 3,
+      target: 'question-image', reason: 'slow-load',
+    };
+    expect(parseProjectorChannelMessage(observation)).toEqual(observation);
+    expect(parseProjectorChannelMessage({ ...observation, reason: 'recovered' })).toEqual({ ...observation, reason: 'recovered' });
+    for (const patch of [
+      { target: 'unknown-image' }, { reason: 'https://example.test/private?token=secret' },
+      { source: 'https://example.test/private' }, { mediaGeneration: -1 }, { mediaGeneration: 0.5 },
+      { mediaGeneration: Number.MAX_SAFE_INTEGER + 1 }, { sessionId: '' },
+      { playbackState: 'error' },
+    ]) expect(parseProjectorChannelMessage({ ...observation, ...patch })).toBeUndefined();
+  });
+
   test('fast path rejects stale, future, equal, and wrong-session revisions', () => {
     expect(shouldAcceptProjectorFastPath('safe-session', 4, 4, publicState({ revision: 5 }))).toBe(true);
     expect(shouldAcceptProjectorFastPath('safe-session', 4, 4, publicState({ revision: 3 }))).toBe(false);

@@ -3,11 +3,22 @@ import type { PublicLiveState, PublicMedia } from './types';
 import { youtubeVideoId, normalizeSlideDesign, parseInterimBackdrop, parseShowCue, type SlideDesign } from '@filmovy-kviz/quiz-domain';
 import { parseResultPage } from '../leaderboard/types';
 import { parseFinalPage } from '../final-reveal/types';
+import {
+  mediaDiagnosticReasons, mediaDiagnosticTargets,
+  type MediaDiagnosticSignal, type MediaDiagnosticTarget,
+} from '../presentation/mediaDiagnostics';
 
 type ReportablePlaybackState = Extract<MediaPlaybackState, 'ready' | 'playing' | 'error' | 'finished'>;
 
 export type ProjectorChannelMessage =
   | { readonly type: 'public-state'; readonly state: PublicLiveState }
+  | {
+    readonly type: 'media-diagnostic';
+    readonly sessionId: string;
+    readonly mediaGeneration: number;
+    readonly target: MediaDiagnosticTarget;
+    readonly reason: MediaDiagnosticSignal;
+  }
   | {
     readonly type: 'playback-state';
     readonly sessionId: string;
@@ -279,9 +290,30 @@ export function broadcastPlaybackState(
   channel?.postMessage({ type: 'playback-state', sessionId, mediaGeneration, playbackState } satisfies ProjectorChannelMessage);
 }
 
+export function broadcastMediaDiagnostic(
+  channel: ProjectorChannel | undefined,
+  sessionId: string,
+  mediaGeneration: number,
+  target: MediaDiagnosticTarget,
+  reason: MediaDiagnosticSignal,
+): void {
+  channel?.postMessage({ type: 'media-diagnostic', sessionId, mediaGeneration, target, reason } satisfies ProjectorChannelMessage);
+}
+
+const mediaDiagnosticKeys = new Set(['type', 'sessionId', 'mediaGeneration', 'target', 'reason']);
+
 export function parseProjectorChannelMessage(value: unknown): ProjectorChannelMessage | undefined {
   const message = object(value);
   if (message === undefined) return undefined;
+  if (message.type === 'media-diagnostic') {
+    if (!hasOnlyKeys(message, mediaDiagnosticKeys)
+      || typeof message.sessionId !== 'string' || message.sessionId.length === 0 || message.sessionId.length > 1_500
+      || !nonNegativeInteger(message.mediaGeneration) || !Number.isSafeInteger(message.mediaGeneration)) return undefined;
+    const target = mediaDiagnosticTargets.find(value => value === message.target);
+    const reason = message.reason === 'recovered' ? 'recovered' : mediaDiagnosticReasons.find(value => value === message.reason);
+    if (!target || !reason) return undefined;
+    return { type: 'media-diagnostic', sessionId: message.sessionId, mediaGeneration: message.mediaGeneration, target, reason };
+  }
   if (message.type === 'playback-state') {
     if (!hasOnlyKeys(message, new Set(['type', 'sessionId', 'mediaGeneration', 'playbackState']))
       || typeof message.sessionId !== 'string' || message.sessionId.length === 0 || message.sessionId.length > 1_500

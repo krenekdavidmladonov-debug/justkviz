@@ -6,6 +6,10 @@ export const projectorFullscreenFailureMessage = 'Celá obrazovka se nepodařila
 let projectorWindow: Window | null = null;
 let projectorUrl: string | null = null;
 
+export function managedProjectorWindow(): Window | null {
+  return projectorWindow && !projectorWindow.closed ? projectorWindow : null;
+}
+
 export function openOrFocusProjector(url: string): Window | null {
   if (projectorWindow && !projectorWindow.closed) {
     if (projectorUrl !== url) projectorWindow.location.href = url;

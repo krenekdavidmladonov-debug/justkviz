@@ -1,5 +1,6 @@
 import { useEffect, useId, useReducer, useRef, useState } from 'react';
 
+import { mediaDiagnosticDelayMs, type MediaDiagnosticReason } from './mediaDiagnostics';
 import { initialMediaMachineState, reduceMediaMachine } from './mediaStateMachine';
 import { youtubeVideoId } from './model';
 import { recordPlayerLifecycle } from './performance';
@@ -28,7 +29,7 @@ interface YouTubeNamespace {
       events: {
         onReady: () => void;
         onStateChange: (event: { data: number }) => void;
-        onError: () => void;
+        onError: (event?: { data: number }) => void;
         onAutoplayBlocked?: () => void;
       };
     },
@@ -51,6 +52,18 @@ declare global {
 
 let apiPromise: Promise<YouTubeNamespace> | undefined;
 let listenerSequence = 0;
+const youtubeBuffering = 3;
+
+function youtubeDiagnostic(code: number | undefined): MediaDiagnosticReason {
+  switch (code) {
+    case 2:
+    case 153: return 'youtube-configuration';
+    case 100: return 'not-found';
+    case 101:
+    case 150: return 'youtube-embedding-disabled';
+    default: return 'load-failed';
+  }
+}
 type PlaybackEvent = 'onStateChange' | 'onError' | 'onAutoplayBlocked';
 type PlaybackListener = (event?: { data: number }) => void;
 interface YouTubeResource {
@@ -135,7 +148,9 @@ export function YouTubePlayer({
   className,
   onFinished,
   onError,
+  onDiagnostic,
   onPlaybackState,
+  onResourceTiming,
   currentTimeRequest,
   onCurrentTime,
   onPlayRequest,
@@ -150,7 +165,9 @@ export function YouTubePlayer({
   readonly className?: string;
   readonly onFinished?: (generation: number) => void;
   readonly onError?: (generation: number, message: string) => void;
+  readonly onDiagnostic?: ((generation: number, reason: MediaDiagnosticReason) => void) | undefined;
   readonly onPlaybackState?: (generation: number, state: Extract<MediaPlaybackState, 'ready' | 'playing'>) => void;
+  readonly onResourceTiming?: ((generation: number, stage: import('./mediaTiming').PlayerResourceTiming) => void) | undefined;
   readonly currentTimeRequest?: number;
   readonly onCurrentTime?: (seconds: number) => void;
   /** Editor-only: turn an iframe play gesture into a fresh bounded playback command. */
@@ -166,7 +183,9 @@ export function YouTubePlayer({
   const activeEpochRef = useRef<number | undefined>(undefined);
   const onFinishedRef = useRef(onFinished);
   const onErrorRef = useRef(onError);
+  const onDiagnosticRef = useRef(onDiagnostic);
   const onPlaybackStateRef = useRef(onPlaybackState);
+  const onResourceTimingRef = useRef(onResourceTiming);
   const onCurrentTimeRef = useRef(onCurrentTime);
   const onPlayRequestRef = useRef(onPlayRequest);
   const [machine, dispatch] = useReducer(reduceMediaMachine, initialMediaMachineState);
@@ -180,7 +199,9 @@ export function YouTubePlayer({
 
   useEffect(() => { onFinishedRef.current = onFinished; }, [onFinished]);
   useEffect(() => { onErrorRef.current = onError; }, [onError]);
+  useEffect(() => { onDiagnosticRef.current = onDiagnostic; }, [onDiagnostic]);
   useEffect(() => { onPlaybackStateRef.current = onPlaybackState; }, [onPlaybackState]);
+  useEffect(() => { onResourceTimingRef.current = onResourceTiming; }, [onResourceTiming]);
   useEffect(() => { onCurrentTimeRef.current = onCurrentTime; }, [onCurrentTime]);
   useEffect(() => { onPlayRequestRef.current = onPlayRequest; }, [onPlayRequest]);
   useEffect(() => { generationRef.current = generation; }, [generation]);
@@ -217,12 +238,13 @@ export function YouTubePlayer({
             if (mounted) { mounted.ready = true; mounted.activate?.(); }
           },
           onStateChange: event => { if (!cancelled) mounted?.listeners.onStateChange?.(event); },
-          onError: () => { if (!cancelled) mounted?.listeners.onError?.(); },
+          onError: event => { if (!cancelled) mounted?.listeners.onError?.(event); },
           onAutoplayBlocked: () => { if (!cancelled) mounted?.listeners.onAutoplayBlocked?.(); },
         },
       });
       mounted = { player, namespace, videoId, ready, configured: false, endSeconds: undefined, listeners: {} };
       playerRef.current = player;
+      onResourceTimingRef.current?.(generationRef.current, 'player-mounted');
       mediaDebug(1);
       setResource(mounted);
     }).catch(() => {
@@ -230,7 +252,9 @@ export function YouTubePlayer({
       failedSetup.current = true;
       const message = 'YouTube přehrávač se nepodařilo načíst.';
       dispatch({ type: 'error', generation: generationRef.current, message });
-      setVisibleError(message); onErrorRef.current?.(generationRef.current, message);
+      setVisibleError(message);
+      onDiagnosticRef.current?.(generationRef.current, 'youtube-unavailable');
+      onErrorRef.current?.(generationRef.current, message);
     });
     return () => {
       cancelled = true;
@@ -247,18 +271,27 @@ export function YouTubePlayer({
     const epoch = ++epochSequenceRef.current;
     activeEpochRef.current = epoch;
     let cancelled = false, terminal = false, started = false, applied = false;
+    let bufferTimer: number | undefined;
     const active = () => !cancelled && activeEpochRef.current === epoch;
     const requestedPlay = command === 'play' || command === 'replay';
     setVisibleError(undefined); setBlockedEpoch(undefined);
     if (videoId === undefined || command === 'error') {
       const message = videoId === undefined ? 'Zdroj není podporovaný YouTube odkaz ani video ID.' : 'Médium je ve stavu chyby. Použijte REPLAY pro nový pokus.';
       dispatch({ type: 'error', generation, message }); setVisibleError(message);
-      if (videoId === undefined) onErrorRef.current?.(generation, message);
+      if (videoId === undefined) {
+        onDiagnosticRef.current?.(generation, 'source-unavailable');
+        onErrorRef.current?.(generation, message);
+      }
       if (resource?.ready && resource.videoId === videoId) resource.player.pauseVideo();
       return () => { cancelled = true; };
     }
     dispatch({ type: requestedPlay ? 'play' : command === 'stop' ? 'stop' : command === 'finished' ? 'finished' : 'reset', generation });
-    if (!resource || resource.videoId !== videoId) return () => { cancelled = true; };
+    const startupTimer = requestedPlay && onDiagnosticRef.current ? window.setTimeout(() => {
+      if (active() && !terminal && !failedSetup.current) onDiagnosticRef.current?.(generation, 'slow-load');
+    }, mediaDiagnosticDelayMs) : undefined;
+    const stopBufferTimer = () => { window.clearTimeout(bufferTimer); bufferTimer = undefined; };
+    const stopDiagnosticTimers = () => { window.clearTimeout(startupTimer); stopBufferTimer(); };
+    if (!resource || resource.videoId !== videoId) return () => { cancelled = true; stopDiagnosticTimers(); };
     const { player, namespace } = resource;
     const fadeDuration = fadeInSeconds !== undefined && Number.isFinite(fadeInSeconds) && fadeInSeconds > 0 ? fadeInSeconds * 1000 : 0;
     let fadeTimer: ReturnType<typeof setInterval> | undefined, fadeStartedAt: number | undefined, fadeElapsed = 0;
@@ -267,8 +300,10 @@ export function YouTubePlayer({
       fadeStartedAt = undefined;
       clearInterval(fadeTimer); fadeTimer = undefined;
     };
-    const fail = (message: string) => {
+    const fail = (message: string, reason: MediaDiagnosticReason = 'load-failed') => {
       if (!active() || terminal) return;
+      stopDiagnosticTimers();
+      if (command !== 'stop' && command !== 'finished') onDiagnosticRef.current?.(generation, reason);
       stopFade();
       terminal = true; setBlockedEpoch(undefined); if (resource.ready) player.pauseVideo();
       dispatch({ type: 'error', generation, message }); setVisibleError(message); onErrorRef.current?.(generation, message);
@@ -294,22 +329,33 @@ export function YouTubePlayer({
         return;
       }
       if (terminal) return;
+      if (event?.data === youtubeBuffering) {
+        if (requestedPlay && started && bufferTimer === undefined && onDiagnosticRef.current) {
+          bufferTimer = window.setTimeout(() => {
+            if (active() && !terminal) onDiagnosticRef.current?.(generation, 'buffering');
+          }, mediaDiagnosticDelayMs);
+        }
+      } else stopBufferTimer();
       if (event?.data === namespace.PlayerState.PLAYING) {
+        window.clearTimeout(startupTimer);
         started = true; setVisibleError(undefined); setBlockedEpoch(undefined);
         startFade();
         if (terminal) return;
         dispatch({ type: 'playing', generation }); onPlaybackStateRef.current?.(generation, 'playing');
       } else stopFade(true);
       if (event?.data === namespace.PlayerState.ENDED && requestedPlay && started) {
+        stopDiagnosticTimers();
         terminal = true; dispatch({ type: 'finished', generation }); onFinishedRef.current?.(generation);
       }
     });
-    const removeError = listen(resource, 'onError', () => fail('YouTube médium se nepodařilo přehrát.'));
+    const removeError = listen(resource, 'onError', event => fail('YouTube médium se nepodařilo přehrát.', youtubeDiagnostic(event?.data)));
     const removeBlocked = listen(resource, 'onAutoplayBlocked', () => {
       if (!active() || terminal || !requestedPlay) return;
       stopFade(true);
       const message = 'Prohlížeč zablokoval automatické přehrání. Spusťte video ručně na tomto zařízení.';
-      if (!allowManualAutoplay) { fail(message); return; }
+      if (!allowManualAutoplay) { fail(message, 'autoplay-blocked'); return; }
+      stopDiagnosticTimers();
+      onDiagnosticRef.current?.(generation, 'autoplay-blocked');
       dispatch({ type: 'ready', generation }); onPlaybackStateRef.current?.(generation, 'ready');
       setBlockedEpoch(epoch); setVisibleError(message);
     });
@@ -331,6 +377,7 @@ export function YouTubePlayer({
         if (resource.configured && resource.endSeconds === undefined && endSeconds === undefined) { player.pauseVideo(); player.seekTo(startSeconds, true); }
         else player.cueVideoById(options);
         dispatch({ type: 'ready', generation });
+        onResourceTimingRef.current?.(generation, 'player-cued');
       }
       resource.configured = true; resource.endSeconds = endSeconds;
     };
@@ -339,6 +386,7 @@ export function YouTubePlayer({
     const deactivate = () => {
       if (cancelled) return;
       stopFade();
+      stopDiagnosticTimers();
       cancelled = true; removeState(); removeError(); removeBlocked();
       if (resource.activate === prepare) resource.activate = undefined;
       if (activeEpochRef.current === epoch) activeEpochRef.current = undefined;

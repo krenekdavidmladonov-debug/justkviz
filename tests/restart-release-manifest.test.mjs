@@ -22,7 +22,14 @@ const emailExports = [
 ];
 // Later releases are accounted for separately; none expands the frozen restart
 // entrypoint or changes its email/infrastructure exclusions.
+const localDemoExports = [
+  'authorizeLocalImageBackup', 'readLocalImageAuthority', 'readLocalImageManifest',
+  'readLocalEventMediaAuthorization', 'readLocalEventMediaManifest', 'readLocalProjectorMediaAuthority',
+  'authorizeOfflineEvent', 'commitOfflineSync', 'prepareOfflineEvent', 'previewOfflineSync', 'readOfflineTrust',
+];
+assert(localDemoExports.every(name => access.unchangedExcluded[name]?.includes('Demo emulators only. Excluded from cloud releases.')));
 const laterFeatureExports = [
+  ...localDemoExports,
   ...show.newFunctions, ...drive.functions, ...driveMedia.newFunctions, ...driveLocal.newFunctions,
   'restoreQuiz', 'trashQuiz', 'completeEvent',
 ];
@@ -81,7 +88,7 @@ test('frozen restart inventory and separate later features account for current e
   assertInventory(manifest);
   assert.equal(manifest.counts.releaseFunctions, 70);
   assert.equal(manifest.counts.sourceExports, 77);
-  assert.equal(sourceExports().length, 94);
+  assert.equal(sourceExports().length, 105);
   assert.deepEqual(manifest.sourceManifests, [
     'tools/staging/editor-release-manifest.mjs',
     'tools/access/deployment-manifest.json',
