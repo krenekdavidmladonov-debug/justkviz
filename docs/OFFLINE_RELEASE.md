@@ -10,7 +10,7 @@ Projekt `filmovy-kviz-v2-staging`, region Functions `europe-west1`, Hosting site
 | --- | --- |
 | Nové callables | `readOfflineTrust`, `prepareOfflineEvent`, `authorizeOfflineEvent`, `previewOfflineSync`, `commitOfflineSync` |
 | Existující gateway | `readQuizMedia` ověřuje stav exportu, členství, uzamčený snapshot a přesnou generaci vlastního Storage objektu před čtením a před odesláním. Běžné čtení online médií používá dosavadní cestu. |
-| Mazání | Aktualizujte `deleteEvent` před prvním vydáním offline exportu. Stávající registr nezná `offlineExports` a s již vytvořenými exporty by mazání akce odmítl. Kompatibilní registr ponechte i při návratu. |
+| Mazání | Aktualizujte `deleteEvent` před prvním vydáním offline exportu. Stávající registr nezná `offlineExports` a s již vytvořenými exporty by mazání akce odmítl. Kompatibilní registr ponechte i při návratu. Kandidát už vyžaduje výslovné oprávnění event.delete i u starších vlastníků. Před vydáním potvrďte dopad této existující bezpečnostní politiky bez automatických změn členství. |
 | Média | Změna nových MP4 uploadů zůstává samostatným rozsahem. Živé `beginQuizMediaUpload`, `finalizeQuizMediaUpload` a Storage Rules se při tomto vydání nemění. Příprava ověřuje jen už uložené podporované vlastní soubory a jejich generaci. |
 | Firestore | Stávající pravidla zakazují přímé čtení a zápis offline exportů. Změna Rules, indexů ani migrace se pro tento rozsah neplánuje. |
 | Hosting | Z nynějšího živého zdroje přidejte jediný vstup v detailu akce. Oddělený offline build používá `/offline-assets/`, `offline.html`, `offline.webmanifest` a `offline-sw.js`. Manifest a Service Worker mají rozsah `/offline.html`. Přednačtení ověřuje SHA-256 a zakazuje přesměrování. |

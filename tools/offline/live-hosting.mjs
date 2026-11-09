@@ -105,7 +105,9 @@ export function buildLiveHosting({ root, baseline, metadata, config, out, scratc
       'export default async env => ({...await base(env), resolve: {alias: {"@filmovy-kviz/quiz-domain": ' + JSON.stringify(domain) + '}}});',
     ].join('\n'));
     const unchanged = path.join(scratch, 'online-reproduced');
-    runBuild(path.join(copied, appPath), wrapper, unchanged, { ...env, VITE_JUSTKVIZ_OFFLINE: 'false' }, onlineVite);
+    const onlineEnv = { ...env };
+    delete onlineEnv.VITE_JUSTKVIZ_OFFLINE;
+    runBuild(path.join(copied, appPath), wrapper, unchanged, onlineEnv, onlineVite);
     assert.deepEqual(inventory(unchanged), frozenBuild.files, 'The exact deployed online build must be reproducible before adding a link.');
     const files = ['offlineAvailability.ts', 'OfflinePreparationLink.tsx'];
     mkdirSync(path.join(copied, offlinePath));
