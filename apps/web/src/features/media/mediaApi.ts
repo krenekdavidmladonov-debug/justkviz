@@ -3,7 +3,7 @@ import { httpsCallable } from 'firebase/functions';
 import { ref, uploadBytesResumable } from 'firebase/storage';
 import { parseQuizAsset, validOwnedMedia, ownedMediaLimits, type OwnedMediaKind } from '@filmovy-kviz/quiz-domain';
 import { getFirebaseServices } from '../../services/firebase/client';
-import { getFirebaseAppContext } from '../../services/firebase/app';
+import { quizMediaEndpoint } from '../../services/firebase/mediaEndpoint';
 import { getFirebaseAuth } from '../../services/firebase/auth';
 import { quizMediaBlobCache } from './mediaBlobCache';
 export async function listQuizMedia(quizId: string, kind: OwnedMediaKind): Promise<{ reference: string; size: number }[]> {
@@ -71,9 +71,7 @@ export async function readQuizMediaBlob(
   onTiming?: (stage: import('../presentation/mediaTiming').AssetTransferTiming) => void,
 ): Promise<Blob> {
   if (!parseQuizAsset(reference)) throw new Error('Invalid asset reference');
-  const { config } = getFirebaseAppContext(), projectId = config.options.projectId;
-  const endpoint = config.useEmulators ? 'http://127.0.0.1:5001/' + projectId + '/europe-west1/readQuizMedia' : 'https://europe-west1-' + projectId + '.cloudfunctions.net/readQuizMedia';
-  const url = new URL(endpoint); url.searchParams.set('reference', reference);
+  const url = quizMediaEndpoint(); url.searchParams.set('reference', reference);
   const headers: Record<string, string> = {};
   let accessScope = 'public:' + (sessionId ?? '');
   if (sessionId) url.searchParams.set('sessionId', sessionId);

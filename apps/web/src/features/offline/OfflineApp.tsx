@@ -13,6 +13,11 @@ import { exportOfflineRecovery, exportStoredOfflineEvent, importOfflineEvent, in
 import { openOfflineRuntime, type OfflineRuntime } from './offlineRuntime';
 import { checkOfflineShell, installOfflineShell, proveOfflineShellBoot, testOfflineShellBoot } from './offlineShell';
 import { listOfflineSessions, verifyStoredOfflineStorage, type StoredOfflineSession } from './offlineStore';
+import { currentOfflineMode } from './offlineAvailability';
+
+interface ChromeInstallPrompt extends Event {
+  prompt(): Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
 
 function errorText(error: unknown): string {
   if (error instanceof DOMException) {
@@ -102,11 +107,22 @@ function OfflineHome({ hash }: { readonly hash: string }) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [installed, setInstalled] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<ChromeInstallPrompt | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
   const mounted = useRef(false);
   const activeRuntime = useRef<OfflineRuntime | null>(null);
   const unlocking = useRef<AbortController | null>(null);
   const refresh = useCallback(async () => setSessions(await listOfflineSessions()), []);
+  useEffect(() => {
+    const offerInstallation = (event: Event) => { event.preventDefault(); setInstallPrompt(event as ChromeInstallPrompt); };
+    const installedApp = () => setInstallPrompt(null);
+    window.addEventListener('beforeinstallprompt', offerInstallation);
+    window.addEventListener('appinstalled', installedApp);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', offerInstallation);
+      window.removeEventListener('appinstalled', installedApp);
+    };
+  }, []);
   useEffect(() => {
     mounted.current = true;
     const connectivity = () => setOnline(navigator.onLine);
@@ -159,8 +175,8 @@ function OfflineHome({ hash }: { readonly hash: string }) {
       if (unlocking.current === controller) unlocking.current = null;
     }
   };
-  const preparation = hash.startsWith('#/prepare');
-  const eventId = new URLSearchParams(hash.split('?')[1] ?? '').get('eventId') ?? '';
+  const preparation = hash.startsWith('#/prepare') && currentOfflineMode() !== 'recovery';
+  const eventId = preparation ? new URLSearchParams(hash.split('?')[1] ?? '').get('eventId') ?? '' : '';
   return <div className="offline-app">
     <header><a href="/offline.html">JustKvíz · Offline</a><span data-offline-connectivity>{online ? 'Síť je dostupná' : 'Bez připojení'}</span><a href="/admin">Online administrace</a></header>
     <main>
@@ -181,7 +197,12 @@ function OfflineHome({ hash }: { readonly hash: string }) {
               setMessage('Tento notebook má připravenou aplikaci, trvalé úložiště a ověřený klíč akce. Načtěte hotový přenosný soubor; média se při této přípravě nestahovala.');
             })}>Připravit notebook pro přenesený kvíz</button>
           </>}
-          <p>V Chrome lze aplikaci také nainstalovat z nabídky prohlížeče. Před odjezdem proveďte zkoušku s vypnutou sítí a znovu otevřeným prohlížečem.</p>
+          {installPrompt && <button disabled={busy} onClick={() => void task(async () => {
+            setInstallPrompt(null);
+            const { outcome } = await installPrompt.prompt();
+            if (outcome === 'accepted') setMessage('Otevřete JustKvíz Offline z nové ikony a ověřte přípravu tohoto notebooku.');
+          })}>Nainstalovat aplikaci v Chrome</button>}
+          <p>Pokud tlačítko instalace nevidíte, otevřete nabídku Chrome a zvolte instalaci aplikace. Potom otevřete JustKvíz Offline z jeho ikony a proveďte zkoušku s vypnutou sítí.</p>
         </section>
         <section>
           <h2>Odemčení soukromých dat</h2>
@@ -281,7 +302,7 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
     ? current.mediaSource || current.media.find(media => media.kind === 'audio' && media.role === 'prompt')?.source : undefined;
   return <>
     <h1>{manifest.event.title}</h1>
-    <p data-offline-runtime-state>{runtime.syncedReceipt ? 'Výsledky bezpečně synchronizovány' : state.status === 'ended' ? 'Výsledky čekají na synchronizaci' : playBlock ? 'Uložený průběh je otevřený pro obnovu' : state.status === 'active' ? 'Offline režim aktivní' : 'Připraveno pro hraní bez internetu'} · {state.sequence} potvrzených kroků</p>
+    <p data-offline-runtime-state>{runtime.syncedReceipt ? 'Výsledky bezpečně synchronizovány' : state.status === 'ended' ? 'Výsledky čekají na synchronizaci' : playBlock ? 'Uložený průběh je otevřený pro obnovu' : state.status === 'active' ? 'Offline režim aktivní' : 'Offline kvíz připraven'} · {state.sequence} potvrzených kroků</p>
     <p>Platnost hraní do {new Date(manifest.expiresAtMs).toLocaleString('cs-CZ')}.</p>
     {playBlock && <p role="alert" data-offline-readiness-error>{playBlock} Potvrzený průběh zůstává uložený pro obnovu nebo synchronizaci.</p>}
     <div className="offline-actions"><button disabled={busy || Boolean(playBlock)} onClick={() => void task(() => { popup.current?.close(); popup.current = openOfflineProjector(runtime, () => latest.current); return Promise.resolve(); })}>Otevřít offline projektor</button><button disabled={busy} onClick={lock}>Zamknout soukromá data</button></div>
@@ -336,7 +357,7 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
       <button disabled={busy || recoveryPassword.length < 10} onClick={() => void task(async () => { await exportOfflineRecovery(runtime, recoveryPassword, progress, true); setRecoveryPassword(''); progress('Nouzový soubor byl předán ke stažení v prohlížeči. Ověřte dokončení stahování.'); })}>Stáhnout nouzovou obnovu</button>
       <button disabled={disabled || state.status !== 'active'} onClick={() => command({ type: 'end', payload: {} })}>Ukončit offline kvíz</button>
     </section>
-    <section aria-label="Synchronizace offline výsledků"><h2>Synchronizace výsledků</h2>
+    <section aria-label="Synchronizace offline výsledků"><h2>Synchronizovat výsledky</h2>
       <p>Synchronizace vyžaduje připojení a aktuální online přihlášení. Online změny nikdy nepřepíše automaticky.</p>
       {state.status === 'active' && allScoresComplete && !runtime.syncedReceipt && <label><input type="checkbox" checked={completeRecovery} disabled={busy} onChange={event => { setCompleteRecovery(event.target.checked); setPreview(null); }} />Dokončit uložený průběh při synchronizaci</label>}
       <button disabled={busy || (state.status !== 'ended' && !(state.status === 'active' && allScoresComplete && completeRecovery)) || Boolean(runtime.syncedReceipt)} onClick={() => void task(async () => {

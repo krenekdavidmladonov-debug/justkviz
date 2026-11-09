@@ -1,4 +1,5 @@
 import type { OfflineTrust } from '@filmovy-kviz/quiz-domain';
+import { currentOfflineEnvironment } from './offlineAvailability';
 import type { EncryptedOfflineValue } from './offlineCrypto';
 import type { OfflineArchiveHeader } from './offlineFile';
 export interface StoredOfflineSession {
@@ -136,12 +137,14 @@ export async function pinOfflineTrust(trust: OfflineTrust): Promise<void> {
     }
 }
 export async function readOfflineTrusts(): Promise<OfflineTrust[]> {
+    const environment = currentOfflineEnvironment();
+    if (!environment) return [];
     const db = await database();
     try {
         const tx = db.transaction('settings'), keys = await request(tx.objectStore('settings').getAllKeys());
         const values: OfflineTrust[] = [];
         for (const key of keys) {
-            if (typeof key === 'string' && key.startsWith('trust:')) {
+            if (typeof key === 'string' && key.startsWith(`trust:${environment}:`)) {
                 values.push(await request(db.transaction('settings').objectStore('settings').get(key) as IDBRequest<OfflineTrust>));
             }
         }

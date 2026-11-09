@@ -104,11 +104,11 @@
     "readLocalImageManifest": "Locked snapshot image backup. Demo emulators only. Excluded from cloud releases.",
     "authorizeLocalImageBackup": "Locked snapshot image backup authorization. Demo emulators only. Excluded from cloud releases.",
     "readLocalImageAuthority": "Exact revealed image authority. Demo emulators only. Excluded from cloud releases.",
-    "prepareOfflineEvent": "Offline event preparation. Demo emulators only. Excluded from cloud releases.",
-    "readOfflineTrust": "Offline installer public-key pin. Demo emulators only. Excluded from cloud releases.",
-    "authorizeOfflineEvent": "Offline preparation final reauthorization. Demo emulators only. Excluded from cloud releases.",
-    "previewOfflineSync": "Offline journal conflict preview. Demo emulators only. Excluded from cloud releases.",
-    "commitOfflineSync": "Atomic offline score/history synchronization. Demo emulators only. Excluded from cloud releases."
+    "prepareOfflineEvent": "Offline event preparation. Separate default-disabled release in tools/offline/deployment-manifest.json.",
+    "readOfflineTrust": "Offline installer public-key pin. Separate default-disabled offline release.",
+    "authorizeOfflineEvent": "Offline preparation final reauthorization. Separate default-disabled offline release.",
+    "previewOfflineSync": "Offline journal conflict preview. Separate default-disabled offline release.",
+    "commitOfflineSync": "Atomic offline score/history synchronization. Separate default-disabled offline release."
   },
   "firestoreRules": "firestore.rules",
   "storageRules": "storage.rules",

@@ -186,10 +186,20 @@ async function preparePhase() {
     const assets = await createOfflineMedia(browser.page, path.join(directory, 'generated-media'));
     const native = [];
     for (const asset of assets) native.push({ contentType: asset.contentType, ...await verifyOfflineNativeMedia(browser.page, asset) });
-    fixture = await offlineEventFixture({ assets });
+    fixture = await offlineEventFixture({ assets, lockInBrowser: true });
     let page = browser.page;
     await signInOnline(page, fixture.identity);
-    await page.goto(`/offline.html#/prepare?eventId=${fixture.eventId}`);
+    await page.goto(`/admin/events/${fixture.eventId}`);
+    const assignment = page.getByTestId('event-quiz-assignment');
+    const prepareLink = page.getByRole('link', { name: 'Připravit offline kvíz', exact: true });
+    await expect(assignment.getByRole('heading', { name: 'Vybrat kvíz', exact: true })).toBeVisible();
+    await expect(prepareLink).toHaveCount(0);
+    await assignment.getByRole('combobox', { name: 'Kvíz', exact: true }).selectOption(fixture.quizId);
+    await assignment.getByRole('button', { name: 'Připravit ke hraní', exact: true }).click();
+    await expect(assignment.getByRole('heading', { name: 'Kvíz připraven', exact: true })).toBeVisible();
+    await fixture.confirmBrowserLock();
+    await prepareLink.click();
+    await expect(page).toHaveURL(`/offline.html#/prepare?eventId=${fixture.eventId}`);
     await button(page, 'Uložit aplikaci pro offline spuštění').click();
     await expect(page.locator('[data-offline-shell-status]')).toContainText('Aplikace je uložená');
     page = (await installNativeOfflineApp({ context: browser.context, page, profile: producerProfile,
@@ -205,6 +215,9 @@ async function preparePhase() {
     const inspected = await inspectOfflineArchive(bundlePath, password);
     const trust = await fixture.call('readOfflineTrust', { eventId: fixture.eventId });
     verifyServerOfflineGrant({ ok: true, ...inspected.metadata }, trust);
+    expect(inspected.metadata.manifest.event.id).toBe(fixture.eventId);
+    expect(inspected.metadata.manifest.snapshot).toMatchObject({ id: fixture.snapshotId, quizId: fixture.quizId });
+    expect(inspected.metadata.manifest.sessionId).toBe(sessionId);
     expect(inspected.assets).toHaveLength(6); expect(inspected.metadata.operations).toEqual([]);
     expect(new Set(inspected.assets.map(asset => asset.contentType)).size).toBe(6);
     const producerHead = await storedHead(page, sessionId), producerObservations = browser.observations;
@@ -217,7 +230,8 @@ async function preparePhase() {
     browser = await launch(false, targetProfile);
     let target = browser.page;
     await signInOnline(target, fixture.identity);
-    await target.goto(`/offline.html#/prepare?eventId=${fixture.eventId}`);
+    await target.goto(`/admin/events/${fixture.eventId}`);
+    await target.getByRole('link', { name: 'Připravit offline kvíz', exact: true }).click();
     await button(target, 'Uložit aplikaci pro offline spuštění').click();
     await expect(target.locator('[data-offline-shell-status]')).toContainText('Aplikace je uložená');
     target = (await installNativeOfflineApp({ context: browser.context, page: target, profile: targetProfile,
@@ -262,6 +276,7 @@ async function preparePhase() {
       packageSha256: inspected.fileSha256, recordCount: inspected.recordCount, producerHead, distinctFreshNotebookProfile: true,
       notebookInstallerRequests: installerRequests, notebookInstallerObserver: 'CDP Network on native launched target',
       notebookPinnedTrustMatchesServer: true, notebookHasNoPrivateSessionBeforeTransfer: true,
+      eventLockedInAdminAndOfflinePreparationOpenedFromEventDetail: true,
       nativeConsentMethod: 'Real PWA.install + PWA.launch + native storage.persist; no permission overrides or preference edits', producerColdStorage,
       producerObservations, notebookObservations: browser.observations };
     await writeFile(path.join(directory, 'prepare-proof.json'), JSON.stringify(proof, null, 2), { flag: 'wx' });
@@ -371,8 +386,13 @@ async function offlinePhase() {
     await expect(projector.getByText(recapSlide.correctAnswer, { exact: true })).toBeVisible();
     expect(await storedHead(page, credentials.sessionId)).toEqual(recapHead);
     await page.getByRole('combobox', { name: 'Kolo', exact: true }).selectOption(manifest.rounds[0].id);
-    for (let team = 1; team <= 10; team++) await page.getByLabel(`Body — QA${String(team).padStart(2, '0')}`, { exact: true }).fill(String(team));
+    for (let team = 1; team <= 10; team++) await page.getByLabel(`Body — QA${String(team).padStart(2, '0')}`, { exact: true }).fill(team === 1 ? '0,5' : String(team));
     await confirmed(page, credentials.sessionId, () => button(page, 'Uložit body kola').click());
+    await page.getByLabel('Body — QA01', { exact: true }).fill('1');
+    await page.getByLabel('Důvod opravy nebo vymazání', { exact: true }).fill('Oprava zkušebního půlbodu');
+    await confirmed(page, credentials.sessionId, () => button(page, 'Uložit body kola').click());
+    await page.locator('[data-offline-score-history] summary').click();
+    await expect(page.locator('[data-offline-score-history]')).toContainText('QA01 — 1 b. · revize 2 · Oprava zkušebního půlbodu');
     for (const [number, count] of [[1, 6], [2, 4]]) {
       await confirmed(page, credentials.sessionId, () => button(page, `Průběžné výsledky · strana ${number}`).click());
       await expect(projector.locator('.sm-row')).toHaveCount(count);
@@ -498,7 +518,8 @@ async function syncPhase() {
     await button(browser.page, 'Porovnat s online stavem').click();
     await expect(browser.page.locator('[data-offline-sync-preview]')).toBeVisible();
     await expect(browser.page.locator('[data-offline-sync-preview] [role="alert"]')).toHaveCount(0);
-    const record = db.doc(`events/${credentials.eventId}/offlineExports/${(await inspectOfflineArchive(bundlePath, password)).metadata.manifest.exportId}`);
+    const { metadata: { manifest } } = await inspectOfflineArchive(bundlePath, password);
+    const record = db.doc(`events/${credentials.eventId}/offlineExports/${manifest.exportId}`);
     expect((await record.get()).get('status')).toBe('prepared');
     let blockedBeforeDelivery = 0;
     const stopBeforeDelivery = async route => {
@@ -532,17 +553,36 @@ async function syncPhase() {
     await button(browser.page, 'Potvrdit synchronizaci výsledků').click();
     await expect(browser.page.locator('[data-offline-sync-receipt]')).toBeVisible();
     const scores = await db.collection(`events/${credentials.eventId}/scores`).get(); expect(scores.size).toBe(20);
-    let history = 0; for (const score of scores.docs) history += (await score.ref.collection('history').get()).size;
-    expect(history).toBe(20);
+    let history = 0, corrected = false;
+    for (const score of scores.docs) {
+      const entries = await score.ref.collection('history').get();
+      history += entries.size;
+      if (score.get('revision') === 2) {
+        expect(score.get('teamId')).toBe(manifest.teams.find(team => team.name === 'QA01').id);
+        expect(score.get('roundId')).toBe(manifest.rounds[0].id);
+        expect(score.get('halfPoints')).toBe(2);
+        expect(entries.size).toBe(2);
+        expect(entries.docs.find(row => row.id === '2').get('reason')).toBe('Oprava zkušebního půlbodu');
+        corrected = true;
+      }
+    }
+    expect(corrected).toBe(true);
+    expect(history).toBe(21);
     const session = (await db.doc('sessions/' + credentials.sessionId).get()).data(); expect(session.status).toBe('ended'); expect(session.finalReveal.visible).toBe(false);
     const versions = await db.collection(`sessions/${credentials.sessionId}/finalVersions`).get(); expect(versions.size).toBe(1);
     expect(versions.docs[0].get('rows').every(row => row.rank === 1 && row.halfPoints === 22)).toBe(true);
     expect((await db.doc('events/' + credentials.eventId).get()).get('lifecycleStatus')).toBe('completed');
+    await browser.page.goto(`/admin/events/${credentials.eventId}`);
+    await browser.page.getByRole('link', { name: 'Otevřít konečné výsledky', exact: true }).click();
+    const onlineRows = browser.page.getByRole('region', { name: 'Historické konečné pořadí' }).locator('tbody tr');
+    await expect(onlineRows).toHaveCount(10);
+    const resultRows = await onlineRows.evaluateAll(rows => rows.map(row => Array.from(row.cells, cell => cell.textContent)));
+    expect(resultRows.sort((a, b) => a[1].localeCompare(b[1]))).toEqual(Array.from({ length: 10 }, (_, index) => ['1.', `QA${String(index + 1).padStart(2, '0')}`, '11']));
     await writeFile(path.join(directory, 'sync-proof.json'), JSON.stringify({ status: 'PASS', phase: 'sync', actualImportedEmulatorData: true,
       freshOnlineModeratorLogin: true,
       interruptedBeforeDelivery: { requests: blockedBeforeDelivery, sameLocalHead: true, serverExportStillPrepared: true, newScores: 0, newHistory: 0, newFinalVersions: 0 },
       lostAcknowledgementAfterActualServerCommit: true, actualUiRetry: true, scoreCells: scores.size, historyMutations: history,
-      finalVersions: versions.size, rows: 10, points: 11, halfPoints: 22, sharedRank: 1 }, null, 2), { flag: 'wx' });
+      finalVersions: versions.size, rows: 10, points: 11, halfPoints: 22, sharedRank: 1, actualOnlineHistoryTable: true }, null, 2), { flag: 'wx' });
   } finally { await browser.context.close(); await sdk.deleteApp(server); }
 }
 

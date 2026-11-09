@@ -11,7 +11,7 @@ export function offlineBuild(): Plugin {
     writeBundle(output) {
       if (!output.dir) throw new Error('Offline shell requires a directory build output.');
       const directory = resolve(output.dir);
-      // This installable app belongs to the demo build, not Vite's shared public files.
+      // Emit installable assets only for an explicitly selected offline build.
       writeFileSync(join(directory, 'offline.webmanifest'), JSON.stringify({
         name: 'JustKvíz Offline', short_name: 'JustKvíz', id: '/offline.html', start_url: '/offline.html',
         scope: '/offline.html', display: 'standalone', background_color: '#10131a', theme_color: '#10131a',
@@ -36,27 +36,29 @@ export function offlineBuild(): Plugin {
       relativeFiles.sort();
       if (!relativeFiles.includes('offline.html')) throw new Error('Offline HTML is missing from the final artifact.');
 
-      const digest = createHash('sha256');
+      const digest = createHash('sha256').update('offline-shell-v2\0');
+      const integrity: Record<string, string> = {};
+      const publicPath = (relative: string) => '/' + relative.split('/').map(encodeURIComponent).join('/');
       for (const relative of relativeFiles) {
         const filename = join(directory, relative);
         if (!lstatSync(filename).isFile()) throw new Error('Offline shell inventory contains a missing file.');
         const bytes = readFileSync(filename);
         digest.update(relative).update('\0').update(String(bytes.length)).update('\0').update(bytes);
+        integrity[publicPath(relative)] = 'sha256-' + createHash('sha256').update(bytes).digest('base64');
       }
       const version = 'justkviz-offline-' + digest.digest('hex').slice(0, 20);
-      const files = relativeFiles.map(relative => '/' + relative.split('/').map(encodeURIComponent).join('/'));
+      const files = relativeFiles.map(publicPath);
       const source = `const VERSION=${JSON.stringify(version)};const FILES=${JSON.stringify(files)};
+const INTEGRITY=${JSON.stringify(integrity)};
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(VERSION).then(cache => cache.addAll(FILES)));
+  event.waitUntil(caches.open(VERSION).then(cache => cache.addAll(FILES.map(path => new Request(path, {
+    integrity: INTEGRITY[path], credentials: 'same-origin', cache: 'reload', redirect: 'error'
+  })))));
 });
 self.addEventListener('activate', event => {
   event.waitUntil(self.clients.claim());
 });
 self.addEventListener('message', event => {
-  if (event.data?.type === 'ACTIVATE_OFFLINE_SHELL') {
-    self.skipWaiting();
-    return;
-  }
   if (event.data?.type === 'VERIFY_OFFLINE_SHELL' && event.ports[0]) {
     event.waitUntil((async () => {
       const cache = await caches.open(VERSION);

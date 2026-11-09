@@ -10,8 +10,13 @@ export default defineConfig(({ mode }) => {
   else if (env.VITE_FIREBASE_PROJECT_ID && !env.VITE_FIREBASE_PROJECT_ID.startsWith('demo-')) {
     throw new Error('Cloud builds require explicit staging mode; production is not supported.');
   }
-  const offlineEnabled = mode !== 'staging' && env.VITE_FIREBASE_USE_EMULATORS === 'true'
-    && env.VITE_FIREBASE_PROJECT_ID === 'demo-filmovy-kviz-v2';
+  const offlineRelease = env.VITE_JUSTKVIZ_OFFLINE;
+  if (offlineRelease && offlineRelease !== 'false'
+    && (mode !== 'staging' || !['true', 'recovery'].includes(offlineRelease))) {
+    throw new Error('Offline release requires the exact staging configuration and an explicit supported mode.');
+  }
+  const offlineEnabled = mode === 'staging' ? offlineRelease === 'true' || offlineRelease === 'recovery'
+    : env.VITE_FIREBASE_USE_EMULATORS === 'true' && env.VITE_FIREBASE_PROJECT_ID === 'demo-filmovy-kviz-v2';
   return {
     plugins: [react(), ...(offlineEnabled ? [offlineBuild()] : [])],
     build: { rollupOptions: { input: {

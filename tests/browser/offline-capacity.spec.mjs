@@ -197,7 +197,7 @@ async function prepare() {
       observer = null;
       return;
     }
-    await assertPlayable(browser.page, 'Připraveno pro hraní bez internetu');
+    await assertPlayable(browser.page, 'Offline kvíz připraven');
     const preparationDurationMs = performance.now() - preparationStarted;
     const encrypted = await browser.page.evaluate(start => window.__capacityEncryptions.slice(start), cryptoStart);
     expect(encrypted.length).toBeGreaterThan(0); expect(encrypted.every(record => record.success)).toBe(true);
@@ -336,7 +336,7 @@ async function offline() {
     observer = await observeCapacityMemory(browser.context.browser());
     snapshots.push(await capacitySnapshot(browser.context, browser.page, 'cold-before-import'));
     observer.phase('offline-disk-import-decrypt-hash-all-native-decode');
-    const coldImport = await importFile(browser, bundlePath, 't', 'Připraveno pro hraní bez internetu');
+    const coldImport = await importFile(browser, bundlePath, 't', 'Offline kvíz připraven');
     expect((await head(browser.page, credentials.sessionId)).sequence).toBe(0);
     snapshots.push(await capacitySnapshot(browser.context, browser.page, 'after-offline-import'));
     const [projector] = await Promise.all([browser.page.waitForEvent('popup'), button(browser.page, 'Otevřít offline projektor').click()]);

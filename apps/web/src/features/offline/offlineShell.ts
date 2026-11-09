@@ -33,28 +33,27 @@ export async function installOfflineShell(): Promise<ShellProof> {
     }
     try {
         const registration = await navigator.serviceWorker.register('/offline-sw.js', { scope: '/offline.html', updateViaCache: 'none' });
-        await registration.update();
-        if (registration.waiting) {
-            registration.waiting.postMessage({ type: 'ACTIVATE_OFFLINE_SHELL' });
-        }
-        if (!registration.active || registration.installing) {
+        // Keep the active shell in control of its open clients. A new worker
+        // becomes active only after Chrome releases the previous version.
+        if (registration.active) {
+            await registration.update();
+        } else {
             const worker = registration.installing ?? registration.waiting;
             if (worker) {
                 await new Promise<void>((resolve, reject) => {
-                    const timer = window.setTimeout(() => reject(new Error('Instalace offline aplikace nebyla dokončena.')), 30000);
-                    worker.addEventListener('statechange', () => {
-                        if (worker.state === 'installed') {
-                            worker.postMessage({ type: 'ACTIVATE_OFFLINE_SHELL' });
-                        }
-                        else if (worker.state === 'activated') {
-                            window.clearTimeout(timer);
-                            resolve();
-                        }
-                        else if (worker.state === 'redundant') {
-                            window.clearTimeout(timer);
-                            reject(new Error('Instalace offline aplikace selhala.'));
-                        }
-                    });
+                    const finish = (error?: Error) => {
+                        window.clearTimeout(timer);
+                        worker.removeEventListener('statechange', changed);
+                        if (error) reject(error);
+                        else resolve();
+                    };
+                    const changed = () => {
+                        if (worker.state === 'activated') finish();
+                        else if (worker.state === 'redundant') finish(new Error('Instalace offline aplikace selhala.'));
+                    };
+                    const timer = window.setTimeout(() => finish(new Error('Instalace offline aplikace nebyla dokončena.')), 30000);
+                    worker.addEventListener('statechange', changed);
+                    changed();
                 });
             }
         }

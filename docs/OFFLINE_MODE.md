@@ -1,6 +1,6 @@
 # Offline kvízový večer
 
-Stav: **lokální implementace COMPLETE, lokální akceptace PASS**. Fyzický projektor, zvukový výstup a restart Windows: **NOT TESTED**. Cloud: **neschváleno, nenasazeno**.
+Příprava ve V2 je dostupná po samostatně schválené aktivaci pro danou akci. Fyzický projektor, zvukový výstup a restart Windows vyžadují generálku podle postupu níže. Správce vydání najde nastavení a rollback v [plánu vydání](OFFLINE_RELEASE.md).
 
 Přenosný večer používá příponu `.justkvizoffline`; dřívější obrázková `.justkvizbackup` má jiný účel a není souborem celého offline večera.
 
@@ -8,15 +8,15 @@ Online JustKvíz nadále používá Firebase. Offline večer se otevírá samost
 
 ## Příprava před odjezdem
 
-1. Na notebooku otevřete místní demo administraci a přihlaste se. Akce musí mít uzamčený kvíz, přijaté týmy a ukončenou případnou online projekci.
-2. Na detailu akce vyberte **Připravit offline kvíz**. Aplikace musí být na tomto notebooku načtená a připravená ještě s dostupným připojením. Pokud Chrome nepovolí trvalé uložení, nainstalujte offline aplikaci z nabídky prohlížeče, otevřete ji z její ikony a znovu spusťte přípravu u své akce.
+1. Na notebooku otevřete administraci JustKvízu V2 a přihlaste se. Akce musí mít uzamčený kvíz, přijaté týmy a ukončenou případnou online projekci.
+2. Na detailu akce vyberte **Připravit offline kvíz**. Ještě s připojením zvolte **Uložit aplikaci pro offline spuštění**. Podle nabídky Chrome použijte **Nainstalovat aplikaci v Chrome** nebo instalační volbu v nabídce prohlížeče. Otevřete aplikaci z její ikony a dokončete přípravu. Stav **Offline kvíz připraven** se objeví až po ověření spuštění, souborů a trvalého úložiště.
 3. Zvolte samostatné heslo přenosného souboru. Uchovejte ho mimo hráče; bez něj soubor nelze obnovit. Nepoužívejte přihlašovací heslo k administraci.
 4. Prohlížeč musí povolit trvalé místní úložiště a mít dostatek místa. Aplikace zkontroluje podklady i skutečné dekódování všech podporovaných médií. Chyby uvádějí konkrétní snímek a potřebnou opravu. Cizí zdroje ani chybějící soubory nesmějí být vydávané za připravený večer.
 5. Uložte jeden `.justkvizoffline` také jako nezávislý soubor na disk. Interní databáze prohlížeče není samostatnou zálohou souboru. Počkejte na dokončení stahování a na Windows uložte soubor do krátké místní cesty. Přenosný soubor ověřte načtením v samostatně připraveném cílovém profilu. Na stejném profilu použijte k pokračování uložený večer; opakovaný import jej nepřepisuje.
 6. Při přenosu z domácího počítače otevřete na notebooku stejnou akci online a vyberte **Připravit notebook pro přenesený kvíz**. Tato volba nainstaluje aplikaci a ověří podpisový klíč; kvíz ani média znovu nestahuje. Potom načtěte přenesený soubor.
 7. Před odjezdem proveďte offline zkoušku: zavřete Chrome, odpojte síť, spusťte uloženou offline aplikaci, načtěte soubor a otevřete projektor. Zkontrolujte obrázek, video a zvuk. V demo prostředí samotné vypnutí Wi-Fi neodpojí localhost; test vyžaduje vypnout také místní emulátory nebo blokovat všechny jejich požadavky.
 
-Příprava vyžaduje současně aktuální scoped oprávnění `event.read`, `event.export`, `event.answers.read`, `event.answers.export`, `event.notes.read`, `event.live`, `event.score` a `event.manage`. Role sama nestačí. Podpisový klíč se na notebook připíná důvěryhodnou online přípravou; soubor si vlastní důvěryhodný klíč instalovat nesmí.
+Příprava vyžaduje platné členství a oprávnění `event.read`, `event.export`, `event.answers.read`, `event.answers.export`, `event.notes.read`, `event.live`, `event.score` a `event.manage` pro konkrétní akci. Moderátor potřebuje výslovně přidělená oprávnění. Notebook při online přípravě ověří veřejný klíč serveru. Přenesený soubor tento klíč nemění.
 
 ## Hraní a ochrana průběhu
 
@@ -34,7 +34,7 @@ Oprávnění běhu je omezené nejvýše na 72 hodin a konec povoleného období
 
 ## Návrat online
 
-Po obnovení připojení se znovu přihlaste do online administrace. V offline moderování porovnejte místní a serverový stav. Náhled nic nezapisuje. Samotné offline oprávnění nikdy není přihlašovací údaj pro Firebase.
+Po obnovení připojení se znovu přihlaste do online administrace. V offline moderování otevřete **Synchronizovat výsledky** a porovnejte místní a serverový stav. Náhled nic nezapisuje. Samotné offline oprávnění nikdy není přihlašovací údaj pro Firebase.
 
 Potvrzení synchronizace znovu ověří aktuální členství, oprávnění, akci, snapshot, seznam týmů, revize a hodnoty všech bodovacích buněk i vazby výsledků a relací. Celý záznam operací se zkontroluje a zápisy bodů, historie, výsledkové verze, ukončené relace a potvrzení importu proběhnou v jediné transakci.
 
@@ -69,9 +69,9 @@ Použijte syntetickou akci. Po přípravě ověřte, že máte přenositelný so
 
 ## Lokální ověření vývoje
 
-Povinná místní brána `pnpm check:offline` běží na Windows. Použijte Node 22, nastavte Javu 21 přes `JAVA_HOME` a podle potřeby zadejte absolutní místní cesty `PLAYWRIGHT_EXECUTABLE_PATH` a `OFFLINE_QA_FFMPEG_PATH`. Binární soubory demo emulátorů musí být v jejich běžné místní mezipaměti. Použijte demo hodnoty z `apps/web/.env.example`. Brána zahrnuje sestavení, jednotkové testy, pravidla Firestore a Storage, skutečné nahrání vlastních médií, celý večer s vypnutými službami a testy odolnosti, kapacity a překročení limitu o bajt. Připravená úloha pro vzdálené CI používá `pnpm check:offline:core` bez měření paměti ve Windows. Příprava vzdáleného CI není schválením jeho spuštění. Běžný cloudový build nezahrnuje offline HTML, manifest ani jeho Service Worker; vybrané offline funkce zůstávají mimo nasazovací inventář.
+Povinná místní brána `pnpm check:offline` běží na Windows. Použijte Node 22, nastavte Javu 21 přes `JAVA_HOME` a podle potřeby zadejte absolutní místní cesty `PLAYWRIGHT_EXECUTABLE_PATH` a `OFFLINE_QA_FFMPEG_PATH`. Binární soubory demo emulátorů musí být v jejich běžné místní mezipaměti. Použijte demo hodnoty z `apps/web/.env.example`. Brána zahrnuje sestavení, jednotkové testy, pravidla Firestore a Storage, skutečné nahrání vlastních médií, celý večer s vypnutými službami, odolnost, kapacitu a místní zkoušku tří variant Hostingu. Připravená úloha pro vzdálené CI používá `pnpm check:offline:core` bez měření paměti ve Windows. Běžný cloudový build offline soubory přidává až po výslovném nastavení popsaném v plánu vydání.
 
-## Ověření v místním demo prostředí
+## Výsledky předchozí místní akceptace
 
 Ve Windows a Chromium 151.0.7922.34 prošel jeden celý prohlížečový večer s přenosným souborem o 286 780 bajtech. Na druhém profilu se online ověřil jen podpisový klíč. Auth, Firestore, Functions, Storage i Hosting byly během večera skutečně vypnuté. Deset týmů odehrálo dvě kola; každý tým skončil s 11 body na děleném prvním místě. Zobrazily se průběžné i konečné výsledky na stranách po 6 a 4 řádcích. Po úplném zavření Chrome a opětovném otevření se potvrdila stejná otázka, stejné body a historie. Skutečné nativní přehrávání prošlo pro PNG, JPEG, WebP, MP3, WAV a MP4.
 

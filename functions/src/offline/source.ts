@@ -7,7 +7,8 @@ import { authorize, type AuthIdentity } from '../access/authorization.js';
 import { slideView } from '../access/slide-view.js';
 import { assertEventOperational } from '../events/guards.js';
 import { publicResultTemplate } from '../live/publication.js';
-import { offlineAudience, offlineDigest, offlineEnvironment } from './signing.js';
+import { offlineDigest } from './signing.js';
+import type { OfflineScope } from './activation.js';
 
 export const offlinePermissions: readonly Permission[] = ['event.read', 'event.export', 'event.answers.read', 'event.answers.export',
   'event.notes.read', 'event.live', 'event.score', 'event.manage'];
@@ -24,6 +25,20 @@ export function offlineInput(value: unknown, fields: readonly string[]): Record<
     throw new HttpsError('invalid-argument', 'Neplatný požadavek offline kvízu.');
   return value as Record<string, unknown>;
 }
+
+/** A stored export is server-owned and stays bound to its original event and environment, including during recovery. */
+export function assertOfflineExportContext(record: Record<string, unknown>, scope: OfflineScope, eventId: string): void {
+  const seed = offlineRecord(record.manifestSeed), grant = offlineRecord(record.grant), payload = offlineRecord(grant.payload);
+  if (record.schemaVersion !== 1 || seed.environment !== scope.environment || seed.audience !== scope.audience
+    || offlineRecord(seed.event).id !== eventId || payload.schemaVersion !== 1
+    || payload.environment !== scope.environment || payload.audience !== scope.audience || payload.eventId !== eventId
+    || payload.exportId !== record.exportId || payload.sessionId !== record.sessionId || payload.snapshotId !== record.snapshotId
+    || payload.manifestDigest !== record.manifestDigest || payload.issuedAtMs !== record.issuedAtMs || payload.expiresAtMs !== record.expiresAtMs
+    || typeof grant.keyId !== 'string' || !/^[a-f0-9]{64}$/u.test(grant.keyId)
+    || typeof grant.signature !== 'string' || !/^[A-Za-z0-9_-]{86}$/u.test(grant.signature)
+    || grant.digest !== offlineDigest(canonicalOfflineJson(payload))) throw offlineUnavailable();
+}
+
 function stableStored(value: unknown): unknown {
   if (value instanceof Timestamp) return { seconds: value.seconds, nanoseconds: value.nanoseconds };
   if (value === undefined) return null;
@@ -116,8 +131,8 @@ export async function readOfflineSource(tx: Transaction, eventId: string, auth: 
 }
 export type OfflineSource = Awaited<ReturnType<typeof readOfflineSource>>;
 
-export function manifestFromSource(source: OfflineSource, header: { exportId: string; sessionId: string; issuedAtMs: number; expiresAtMs: number }, assets: readonly OfflineMediaAsset[]): OfflineEventManifest {
-  return { schemaVersion: 1, ...header, environment: offlineEnvironment, audience: offlineAudience,
+export function manifestFromSource(source: OfflineSource, header: { exportId: string; sessionId: string; issuedAtMs: number; expiresAtMs: number }, assets: readonly OfflineMediaAsset[], scope: OfflineScope): OfflineEventManifest {
+  return { schemaVersion: 1, ...header, ...scope,
     actorId: source.member.uid, membershipVersion: source.member.version,
     event: { id: source.eventRef.id, title: String(source.event.title), startsAtMs: (source.event.startsAt as Timestamp).toMillis(), revision: source.event.revision as number },
     snapshot: { id: source.snapshotId, quizId: source.quizId, quizRevision: source.quizRevision },

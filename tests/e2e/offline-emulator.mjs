@@ -245,6 +245,31 @@ try {
   const mediaExportRef = mediaFixture.identity.db.doc(`events/${mediaFixture.eventId}/offlineExports/${mediaPrepared.manifest.exportId}`);
   const pngRef = mediaFixture.identity.db.doc(`quizzes/${mediaFixture.quizId}/mediaAssets/${png.assetId}`);
   const originalPng = (await pngRef.get()).data();
+  const gateway = new URL(`http://${mediaFixture.environment.functionsEndpoint.host}:${mediaFixture.environment.functionsEndpoint.port}/${mediaFixture.environment.projectId}/europe-west1/readQuizMedia`);
+  gateway.searchParams.set('eventId', mediaFixture.eventId);
+  gateway.searchParams.set('offlineExportId', mediaPrepared.manifest.exportId);
+  gateway.searchParams.set('reference', png.reference);
+  const token = await mediaFixture.user.getIdToken();
+  const mediaHeaders = { Authorization: 'Bearer ' + token, 'If-Match': descriptor.etag };
+  const pinnedRead = await fetch(gateway, { headers: mediaHeaders });
+  assert.equal(pinnedRead.status, 200);
+  assert.equal(pinnedRead.headers.get('cache-control'), 'no-store');
+  assert.equal(pinnedRead.headers.get('etag'), descriptor.etag);
+  assert.deepEqual(Buffer.from(await pinnedRead.arrayBuffer()), pngBytes);
+  const differentExport = new URL(gateway);
+  differentExport.searchParams.set('offlineExportId', '0'.repeat(64));
+  assert.equal((await fetch(differentExport, { headers: mediaHeaders })).status, 404);
+  assert.equal((await fetch(gateway, { headers: { ...mediaHeaders, 'If-Match': `"${'0'.repeat(64)}"` } })).status, 404);
+  assert.equal((await fetch(gateway, { headers: { 'If-Match': descriptor.etag } })).status, 403);
+  assert.equal((await fetch(gateway, { headers: { ...mediaHeaders, Range: 'bytes=0-1' } })).status, 400);
+  try {
+    await pngRef.update({ storageBackend: 'drive', generation: 'drive:synthetic-replacement' });
+    const deniedDrive = await fetch(gateway, { headers: mediaHeaders });
+    assert.equal(deniedDrive.status, 404);
+    assert.equal((await deniedDrive.arrayBuffer()).byteLength, 0);
+    assert.equal(deniedDrive.headers.get('etag'), null);
+  } finally { await pngRef.set(originalPng); }
+  scenarios.push('OFF-MEDIA-real-gateway-accepts-exact-export-pin-and-denies-anonymous-unpinned-range-drive');
   const expectedPin = { reference: png.reference, pin: { quizId: originalPng.quizId, assetId: originalPng.assetId,
     kind: originalPng.kind, contentType: originalPng.contentType, size: originalPng.size, generation: originalPng.generation,
     status: originalPng.status, storageBackend: originalPng.storageBackend ?? 'storage', drive: originalPng.drive ?? null } };
@@ -267,6 +292,7 @@ try {
     // Change only the own synthetic asset document; neither score baseline nor
     // snapshot is modified. The pin check must independently notice generation.
     await pngRef.update({ generation: String(BigInt(png.generation) + 1n) });
+    assert.equal((await fetch(gateway, { headers: mediaHeaders })).status, 404);
     await denied(mediaFixture.call('authorizeOfflineEvent', { eventId: mediaFixture.eventId, exportId: mediaPrepared.manifest.exportId,
       manifestDigest: mediaPrepared.grant.payload.manifestDigest }), 'failed-precondition');
     const deniedMediaPreview = await mediaFixture.call('previewOfflineSync', mediaSync);

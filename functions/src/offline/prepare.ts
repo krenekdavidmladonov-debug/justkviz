@@ -4,22 +4,26 @@ import { canonicalOfflineJson, offlineEventLimits as limits, parseOfflineManifes
   type OfflineMediaAsset, type OfflineIssue, type PrepareOfflineEventResponse } from '@filmovy-kviz/quiz-domain';
 import { freshIdentity, authorize } from '../access/authorization.js';
 import { assertEventOperational } from '../events/guards.js';
-import { requireDemoEmulators } from '../media/local-event-manifest.js';
 import { assetPath, mediaSignature } from '../media/model.js';
 import { mediaBucket } from '../media/storage.js';
-import { offlineDigest, localOfflineTrust, signOfflineGrant, offlineAudience, offlineEnvironment } from './signing.js';
-import { offlineId, offlineInput, offlinePermissions, offlineRecord, offlineUnavailable, manifestFromSource, readOfflineSource, requiredOfflineMedia, storedDigest } from './source.js';
+import { offlineCors, requireOfflineRuntime } from './activation.js';
+import { cloudOfflineSigner, demoOfflineSigner, offlineDigest, offlineSigningSecrets, signOfflineGrant } from './signing.js';
+import { assertOfflineExportContext, offlineId, offlineInput, offlinePermissions, offlineRecord, offlineUnavailable, manifestFromSource,
+  readOfflineSource, requiredOfflineMedia, storedDigest } from './source.js';
 
-const options = { region: 'europe-west1', cors: true, maxInstances: 2, concurrency: 1, memory: '256MiB' as const, timeoutSeconds: 540 };
-export const readOfflineTrust = onCall(options, async request => {
-  requireDemoEmulators(); request.rawRequest.res?.setHeader('Cache-Control', 'no-store');
+const options = { region: 'europe-west1', cors: offlineCors, maxInstances: 2, concurrency: 1, memory: '256MiB' as const, timeoutSeconds: 540 };
+const issuanceOptions = { ...options, secrets: offlineSigningSecrets };
+export const readOfflineTrust = onCall(issuanceOptions, async request => {
+  request.rawRequest.res?.setHeader('Cache-Control', 'no-store');
   const eventId = offlineId(offlineInput(request.data, ['eventId']).eventId);
+  const scope = requireOfflineRuntime(eventId, request.rawRequest.get('origin'), 'issue');
+  const cloudSigner = cloudOfflineSigner(scope);
   await freshIdentity(request.auth);
   await getFirestore().runTransaction(async tx => {
     await authorize(request.auth, offlinePermissions, { kind: 'event', id: eventId }, tx);
     assertEventOperational((await tx.get(getFirestore().doc('events/' + eventId))).data());
   });
-  const trust = await localOfflineTrust();
+  const { trust } = cloudSigner ?? await demoOfflineSigner(scope);
   await freshIdentity(request.auth);
   await getFirestore().runTransaction(tx => authorize(request.auth, offlinePermissions, { kind: 'event', id: eventId }, tx));
   return trust;
@@ -55,15 +59,19 @@ async function readImageOrMedia(item: PreparedMediaRecord): Promise<OfflineMedia
     sha256: offlineDigest(bytes), etag: '"' + offlineDigest(JSON.stringify([reference, record.generation, contentType, size])) + '"', ...dimensions };
 }
 
-export const prepareOfflineEvent = onCall(options, async (request): Promise<PrepareOfflineEventResponse> => {
-  requireDemoEmulators(); request.rawRequest.res?.setHeader('Cache-Control', 'no-store');
+export const prepareOfflineEvent = onCall(issuanceOptions, async (request): Promise<PrepareOfflineEventResponse> => {
+  request.rawRequest.res?.setHeader('Cache-Control', 'no-store');
   const input = offlineInput(request.data, ['eventId', 'requestId']), eventId = offlineId(input.eventId), requestId = offlineId(input.requestId);
+  const scope = requireOfflineRuntime(eventId, request.rawRequest.get('origin'), 'issue');
+  const cloudSigner = cloudOfflineSigner(scope);
   await freshIdentity(request.auth);
   const db = getFirestore(), exportId = offlineDigest(JSON.stringify([request.auth!.uid, eventId, requestId, 'offline-v1']));
   const exportRef = db.doc('events/' + eventId + '/offlineExports/' + exportId);
   const initial = await db.runTransaction(async tx => {
     const source = await readOfflineSource(tx, eventId, request.auth);
-    const previous = (await tx.get(exportRef)).data(), inventory = requiredOfflineMedia(source);
+    const previous = (await tx.get(exportRef)).data();
+    if (previous) assertOfflineExportContext(previous, scope, eventId);
+    const inventory = requiredOfflineMedia(source);
     if (source.activeOnline) inventory.issues.push({ slidePosition: 0, field: 'session', message: 'Nejprve ukončete online projekci. Potom připravte samostatný offline večer.' });
     const media: PreparedMediaRecord[] = [];
     for (const [reference, use] of inventory.required) {
@@ -88,10 +96,11 @@ export const prepareOfflineEvent = onCall(options, async (request): Promise<Prep
   if (issues.length) return { ok: false, issues };
   const header = { exportId, sessionId: 'offline-' + exportId.slice(0, 40), issuedAtMs, expiresAtMs };
   // Callable encoding converts own undefined values to null. Sign only the canonical wire value.
-  const manifest = parseOfflineManifest(JSON.parse(canonicalOfflineJson(manifestFromSource(initial.source, header, assets))) as unknown);
+  const manifest = parseOfflineManifest(JSON.parse(canonicalOfflineJson(manifestFromSource(initial.source, header, assets, scope))) as unknown);
   const manifestDigest = offlineDigest(canonicalOfflineJson(manifest));
-  const grant = await signOfflineGrant({ schemaVersion: 1, exportId, sessionId: header.sessionId, eventId, snapshotId: manifest.snapshot.id,
-    manifestDigest, issuedAtMs, expiresAtMs, environment: offlineEnvironment, audience: offlineAudience });
+  const signer = cloudSigner ?? await demoOfflineSigner(scope);
+  const grant = signOfflineGrant({ schemaVersion: 1, exportId, sessionId: header.sessionId, eventId, snapshotId: manifest.snapshot.id,
+    manifestDigest, issuedAtMs, expiresAtMs, ...scope }, signer);
   await freshIdentity(request.auth);
   await db.runTransaction(async tx => {
     const current = await readOfflineSource(tx, eventId, request.auth), previous = (await tx.get(exportRef)).data();
@@ -103,7 +112,9 @@ export const prepareOfflineEvent = onCall(options, async (request): Promise<Prep
       if (!now || storedDigest(pinnedMedia(item.record)) !== storedDigest(pinnedMedia(now))) throw new HttpsError('aborted', 'Médium se během přípravy změnilo.');
     }
     if (previous) {
-      if (previous.actorId !== request.auth!.uid || previous.manifestDigest !== manifestDigest || previous.baselineDigest !== current.baselineDigest) throw new HttpsError('already-exists', 'Původní příprava má jiný obsah. Zahajte novou přípravu.');
+      assertOfflineExportContext(previous, scope, eventId);
+      if (previous.actorId !== request.auth!.uid || previous.manifestDigest !== manifestDigest || previous.baselineDigest !== current.baselineDigest
+        || offlineRecord(previous.grant).keyId !== grant.keyId) throw new HttpsError('already-exists', 'Původní příprava má jiný obsah nebo podpisový klíč. Zahajte novou přípravu.');
       return;
     }
     // Store only bounded descriptors and authority. Full private slides remain in the immutable snapshot.
@@ -145,8 +156,9 @@ export function exportMediaPins(record: Record<string, unknown>): { reference: s
 }
 
 export const authorizeOfflineEvent = onCall(options, async request => {
-  requireDemoEmulators(); request.rawRequest.res?.setHeader('Cache-Control', 'no-store');
+  request.rawRequest.res?.setHeader('Cache-Control', 'no-store');
   const input = offlineInput(request.data, ['eventId', 'exportId', 'manifestDigest']), eventId = offlineId(input.eventId), exportId = offlineId(input.exportId);
+  const scope = requireOfflineRuntime(eventId, request.rawRequest.get('origin'), 'authorize');
   if (typeof input.manifestDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(input.manifestDigest)) throw offlineUnavailable();
   await freshIdentity(request.auth);
   const result = await getFirestore().runTransaction(async tx => {
@@ -155,6 +167,7 @@ export const authorizeOfflineEvent = onCall(options, async request => {
     if (!record || record.actorId !== source.member.uid || record.membershipVersion !== source.member.version
       || record.baselineDigest !== source.baselineDigest || record.manifestDigest !== input.manifestDigest
       || !Number.isSafeInteger(record.expiresAtMs) || Number(record.expiresAtMs) <= Date.now() || source.activeOnline) throw offlineUnavailable();
+    assertOfflineExportContext(record, scope, eventId);
     for (const { reference, pin } of exportMediaPins(record)) {
       const parsed = parseQuizAsset(reference)!;
       const current = (await tx.get(getFirestore().doc('quizzes/' + parsed.quizId + '/mediaAssets/' + parsed.assetId))).data();

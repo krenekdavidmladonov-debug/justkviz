@@ -5,15 +5,16 @@ import { applyOfflineOperation, canonicalOfflineJson, eventDisposition, initialO
   type OfflineEventManifest, type OfflineOperation, type OfflineScore, type OfflineState, type OfflineSyncConflict,
   type OfflineSyncPreview, type OfflineSyncReceipt, type OfflineSyncResolution } from '@filmovy-kviz/quiz-domain';
 import { authorize, freshIdentity, type AuthIdentity } from '../access/authorization.js';
-import { requireDemoEmulators } from '../media/local-event-manifest.js';
 import { calculateFinalResults } from '../leaderboard/model.js';
 import { buildPublicSessionState } from '../live/publication.js';
 import { initialFinal } from '../final-reveal/model.js';
 import { offlineDigest } from './signing.js';
 import { exportAssets, exportMediaPins, pinnedMedia } from './prepare.js';
-import { offlineId, offlineInput, offlinePermissions, offlineRecord, offlineSlides, offlineUnavailable, readOfflineSource, storedDigest } from './source.js';
+import { offlineCors, requireOfflineRuntime, type OfflineScope } from './activation.js';
+import { assertOfflineExportContext, offlineId, offlineInput, offlinePermissions, offlineRecord, offlineSlides,
+  offlineUnavailable, readOfflineSource, storedDigest } from './source.js';
 
-const options = { region: 'europe-west1', cors: true, maxInstances: 2, concurrency: 1, timeoutSeconds: 120 };
+const options = { region: 'europe-west1', cors: offlineCors, maxInstances: 2, concurrency: 1, timeoutSeconds: 120 };
 interface ScoreHistory {
   operationId: string; sequence: number; observedAtMs: number; teamId: string; roundId: string;
   revision: number; previousHalfPoints: number | null; halfPoints: number | null; reason: string;
@@ -63,12 +64,13 @@ async function storedManifest(tx: Transaction, record: Record<string, unknown>, 
   return manifest;
 }
 
-async function boundExport(tx: Transaction, auth: AuthIdentity, eventId: string, exportId: string) {
+async function boundExport(tx: Transaction, auth: AuthIdentity, eventId: string, exportId: string, scope: OfflineScope) {
   const member = await authorize(auth, offlinePermissions, { kind: 'event', id: eventId }, tx), db = getFirestore();
   const [eventDoc, exportDoc] = await tx.getAll(db.doc('events/' + eventId), db.doc('events/' + eventId + '/offlineExports/' + exportId));
   const event = eventDoc!.data(), record = exportDoc!.data();
   if (!event || ['trash', 'deleting', 'archived'].includes(eventDisposition(event)) || !record || record.exportId !== exportId
     || record.actorId !== member.uid || record.membershipVersion !== member.version) throw new HttpsError('permission-denied', 'Původní offline oprávnění již neodpovídá aktuálnímu přístupu k akci. Data zůstala místně uložená.');
+  assertOfflineExportContext(record, scope, eventId);
   return { member, event, record, exportRef: exportDoc!.ref };
 }
 function parseRequest(data: unknown, commit: boolean) {
@@ -95,8 +97,8 @@ function parseRequest(data: unknown, commit: boolean) {
   return { eventId, exportId, operations, resolutions, completeRecovery, journalDigest: offlineDigest(canonicalOfflineJson(operations)),
     decisionDigest: offlineDigest(canonicalOfflineJson({ operations, resolutions, completeRecovery })), previewDigest: input.previewDigest };
 }
-async function previewIn(tx: Transaction, auth: AuthIdentity, input: ReturnType<typeof parseRequest>) {
-  const bound = await boundExport(tx, auth, input.eventId, input.exportId), manifest = await storedManifest(tx, bound.record, input.eventId);
+async function previewIn(tx: Transaction, auth: AuthIdentity, input: ReturnType<typeof parseRequest>, scope: OfflineScope) {
+  const bound = await boundExport(tx, auth, input.eventId, input.exportId, scope), manifest = await storedManifest(tx, bound.record, input.eventId);
   const replayed = replay(manifest, input.operations), local = summary(manifest, replayed.state, replayed.history.length, input.operations.length);
   // A fresh, explicit online completion is a server action, never a forged backdated offline end.
   if (input.completeRecovery && replayed.state.status === 'active') local.complete = result(manifest, replayed.state.scores).complete;
@@ -171,17 +173,19 @@ async function previewIn(tx: Transaction, auth: AuthIdentity, input: ReturnType<
 }
 
 export const previewOfflineSync = onCall(options, async request => {
-  requireDemoEmulators(); request.rawRequest.res?.setHeader('Cache-Control', 'no-store');
+  request.rawRequest.res?.setHeader('Cache-Control', 'no-store');
+  const scope = requireOfflineRuntime(offlineId(offlineRecord(request.data).eventId), request.rawRequest.get('origin'), 'sync');
   const input = parseRequest(request.data, false); await freshIdentity(request.auth);
-  const value = await getFirestore().runTransaction(tx => previewIn(tx, request.auth, input));
+  const value = await getFirestore().runTransaction(tx => previewIn(tx, request.auth, input, scope));
   await freshIdentity(request.auth); return value.preview;
 });
 
 export const commitOfflineSync = onCall(options, async request => {
-  requireDemoEmulators(); request.rawRequest.res?.setHeader('Cache-Control', 'no-store');
+  request.rawRequest.res?.setHeader('Cache-Control', 'no-store');
+  const scope = requireOfflineRuntime(offlineId(offlineRecord(request.data).eventId), request.rawRequest.get('origin'), 'sync');
   const input = parseRequest(request.data, true); await freshIdentity(request.auth);
   const receipt = await getFirestore().runTransaction(async tx => {
-    const value = await previewIn(tx, request.auth, input);
+    const value = await previewIn(tx, request.auth, input, scope);
     if (value.receipt) return { ...value.receipt, replayed: true };
     if (value.preview.conflicts.length || value.preview.previewDigest !== input.previewDigest) throw new HttpsError('aborted', 'Online data nebo náhled se změnily. Nic nebylo přepsáno; načtěte a zkontrolujte nový souhrn.');
     if (!(value.preview.merged ?? value.preview.local).complete || (value.state.status !== 'ended' && !input.completeRecovery)) throw new HttpsError('failed-precondition', 'Nejprve doplňte body a ukončete offline kvíz nebo výslovně potvrďte dokončení uloženého průběhu na serveru.');

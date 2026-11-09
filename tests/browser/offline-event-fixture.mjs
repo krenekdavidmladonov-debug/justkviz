@@ -22,7 +22,7 @@ export async function detachOfflineFixture(fixture) {
 }
 
 /** Creates only random owned demo resources through the real administrative boundary. */
-export async function offlineEventFixture({ assets = [], imageOnly = false } = {}) {
+export async function offlineEventFixture({ assets = [], imageOnly = false, lockInBrowser = false } = {}) {
   if (imageOnly) assert(assets.length === 1 && assets[0].kind === 'image' && assets[0].contentType === 'image/png', 'Single-image regression requires exactly one owned PNG.');
   const environment = requireFullEmulatorEnvironment(process.env, 'Complete offline QA fixture');
   assert.equal(environment.projectId, 'demo-filmovy-kviz-v2');
@@ -104,9 +104,11 @@ export async function offlineEventFixture({ assets = [], imageOnly = false } = {
       venue: { name: 'Syntetický sál', publicLocation: 'Pouze lokální QA' }, teamCapacity: 30, peopleCapacity: 120, teamSizeMin: 2, teamSizeMax: 4,
     } }));
     const event = async () => (await identity.db.doc('events/' + eventId).get()).data();
-    await call('lockEventQuiz', { eventId, quizId, expectedRevision: (await event()).revision,
-      expectedQuizRevision: (await quiz()).revision, acknowledgeWarnings: true });
-    snapshotId = (await event()).quizAssignment.snapshotId;
+    if (!lockInBrowser) {
+      await call('lockEventQuiz', { eventId, quizId, expectedRevision: (await event()).revision,
+        expectedQuizRevision: (await quiz()).revision, acknowledgeWarnings: true });
+      snapshotId = (await event()).quizAssignment.snapshotId;
+    }
     for (let index = 1; index <= 10; index++) await call('adminAddEventTeam', { eventId,
       teamName: `QA${String(index).padStart(2, '0')}`, memberCount: 2, requestId: randomUUID() });
     const app = getApps().find(app => getAuth(app).currentUser?.email === identity.email);
@@ -118,7 +120,12 @@ export async function offlineEventFixture({ assets = [], imageOnly = false } = {
       return fetch(endpoint + name, { method: 'POST', headers: { 'Content-Type': 'application/json',
         ...(anonymous ? {} : { Authorization: 'Bearer ' + await user.getIdToken() }) }, body: JSON.stringify({ data }) });
     };
-    return { identity, adminApp, environment, quizId, eventId, snapshotId, event, memberRef, user, raw, call, add, slides, dispose, media,
+    return { identity, adminApp, environment, quizId, eventId, get snapshotId() { return snapshotId; }, event, memberRef, user, raw, call, add, slides, dispose, media,
+      confirmBrowserLock: async () => {
+        const assignment = (await event()).quizAssignment;
+        assert(assignment?.snapshotId && assignment.quizId === quizId);
+        snapshotId = assignment.snapshotId;
+      },
       prepare: (requestId = randomUUID()) => call('prepareOfflineEvent', { eventId, requestId }) };
   } catch (error) { await dispose(); throw error; }
 }

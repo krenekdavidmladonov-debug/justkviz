@@ -164,7 +164,7 @@ test('a simulated low storage estimate prevents real package import from claimin
     expect(observed[0].nativeQuota - observed[0].nativeUsage).toBeGreaterThan(16 * 1024 * 1024);
     expect(observed[0].reportedQuota).toBe(observed[0].nativeUsage);
     await browser.page.getByLabel('Načíst offline kvíz', { exact: true }).setInputFiles(input.bundlePath);
-    await expect(browser.page.locator('[data-offline-runtime-state]')).toContainText('Připraveno pro hraní bez internetu');
+    await expect(browser.page.locator('[data-offline-runtime-state]')).toContainText('Offline kvíz připraven');
     expect((await checkpoint(browser.page)).sequence).toBe(0);
     offlineProof(browser.observations);
     await saveProof('quota', { simulatedEstimateOnly: true, simulatedAvailableBytes: 0, observed,
@@ -179,7 +179,7 @@ test('a simulated low storage estimate prevents real package import from claimin
 async function assertRecoveryOnly(page, message) {
   await expect(page.locator('[data-offline-readiness-error]')).toContainText(message);
   await expect(page.locator('[data-offline-runtime-state]')).toContainText('Uložený průběh je otevřený pro obnovu');
-  await expect(page.getByText('Připraveno pro hraní bez internetu', { exact: false })).toHaveCount(0);
+  await expect(page.getByText('Offline kvíz připraven', { exact: false })).toHaveCount(0);
   await expect(button(page, 'Otevřít offline projektor')).toBeDisabled();
   await expect(button(page, 'Přehrát ukázku')).toBeDisabled();
   await expect(page.getByRole('combobox', { name: 'Snímek', exact: true })).toBeDisabled();
@@ -195,7 +195,7 @@ test('expired pending grant opens recovery only after cold restart and cannot st
     await clearPrivateData(browser.page);
     await browser.page.getByLabel('Heslo offline souboru', { exact: true }).fill(password);
     await browser.page.getByLabel('Načíst offline kvíz', { exact: true }).setInputFiles(input.bundlePath);
-    await expect(browser.page.locator('[data-offline-runtime-state]')).toContainText('Připraveno pro hraní bez internetu');
+    await expect(browser.page.locator('[data-offline-runtime-state]')).toContainText('Offline kvíz připraven');
     await expect(button(browser.page, 'Zahájit offline kvíz')).toBeEnabled();
     const before = await checkpoint(browser.page);
     expect(before.sequence).toBe(0);

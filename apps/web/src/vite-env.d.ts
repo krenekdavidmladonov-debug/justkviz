@@ -2,6 +2,7 @@
 
 interface ImportMetaEnv {
   readonly VITE_ENABLE_TEAM_EMAIL?: string;
+  readonly VITE_JUSTKVIZ_OFFLINE?: string;
   readonly VITE_APP_ENV?: string;
   readonly VITE_FIREBASE_API_KEY?: string;
   readonly VITE_FIREBASE_AUTH_DOMAIN?: string;
