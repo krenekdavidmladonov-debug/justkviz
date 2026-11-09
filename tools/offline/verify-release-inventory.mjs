@@ -51,7 +51,7 @@ if (process.argv[2] === '--inspect') {
   console.log(JSON.stringify(endpoints));
 } else {
   const proof = {};
-  for (const mode of ['disabled', 'enabled', 'recovery']) for (const drive of ['false', 'true']) {
+  for (const mode of ['disabled', 'enabled', 'recovery', 'enabled-all', 'recovery-all']) for (const drive of ['false', 'true']) {
     const env = sanitizedEnvironment(path.join(root, '.local-data'), STAGING_PROJECT, process.env);
     for (const name of Object.keys(env)) {
       if (name.endsWith('_EMULATOR_HOST') || name.startsWith('JUSTKVIZ_OFFLINE_')) delete env[name];
@@ -62,14 +62,15 @@ if (process.argv[2] === '--inspect') {
       FIREBASE_CONFIG: JSON.stringify({ projectId: STAGING_PROJECT, storageBucket: STAGING_PROJECT + '.firebasestorage.app' }),
       DRIVE_CONNECTION_ENABLED: drive,
       JUSTKVIZ_OFFLINE_ENABLED: mode === 'disabled' ? 'false' : 'true',
-      JUSTKVIZ_OFFLINE_EVENT_IDS: 'synthetic-discovery-only',
-      JUSTKVIZ_OFFLINE_RECOVERY_ONLY: mode === 'recovery' ? 'true' : 'false',
+      JUSTKVIZ_OFFLINE_RECOVERY_ONLY: mode.startsWith('recovery') ? 'true' : 'false',
+      ...(mode.endsWith('-all') ? { JUSTKVIZ_OFFLINE_ALL_ELIGIBLE_EVENTS: 'true' }
+        : { JUSTKVIZ_OFFLINE_EVENT_IDS: 'synthetic-discovery-only' }),
     });
     const bindings = JSON.parse(execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--inspect', ...args],
       { cwd: root, env, encoding: 'utf8', windowsHide: true }));
     for (const name of Object.keys(bindings)) {
       const expected = name === 'readQuizMedia' && drive === 'true' ? driveKeys :
-        mode === 'enabled' && ['readOfflineTrust', 'prepareOfflineEvent'].includes(name) ? [key] : [];
+        mode.startsWith('enabled') && ['readOfflineTrust', 'prepareOfflineEvent'].includes(name) ? [key] : [];
       assert.deepEqual(bindings[name], expected, name + ' ' + mode + ' Drive ' + drive);
     }
     proof[mode + '-drive-' + drive] = bindings;

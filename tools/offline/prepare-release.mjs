@@ -107,7 +107,13 @@ if (!synthetic) {
     create: inventory.newCallableFunctions, update: existing, previous: Object.fromEntries(existing.map(name => [name, live.functions[name]])),
     skip: inventory.compatibleMediaPrerequisitesIfMissing, storageRules: 'unchanged', firestoreRules: 'unchanged',
     activate: { JUSTKVIZ_OFFLINE_ENABLED: mode === 'disabled' ? 'false' : 'true',
-      JUSTKVIZ_OFFLINE_RECOVERY_ONLY: mode === 'recovery' ? 'true' : 'false', eventIdsRequired: mode !== 'disabled',
+      JUSTKVIZ_OFFLINE_RECOVERY_ONLY: mode === 'recovery' ? 'true' : 'false',
+      eventScope: mode === 'disabled' ? undefined : {
+        chooseExactlyOne: {
+          allEligible: { set: 'JUSTKVIZ_OFFLINE_ALL_ELIGIBLE_EVENTS=true', unset: 'JUSTKVIZ_OFFLINE_EVENT_IDS' },
+          selected: { set: 'JUSTKVIZ_OFFLINE_EVENT_IDS=<comma-separated event IDs>', unset: 'JUSTKVIZ_OFFLINE_ALL_ELIGIBLE_EVENTS' },
+        },
+      },
       signingBinding: mode === 'enabled' ? ['readOfflineTrust', 'prepareOfflineEvent'] : [] },
     guard: 'Review exact live configuration before writes. Preserve all unlisted environment variables, existing runtime identities, bindings and traffic. No IAM operation is authorized.',
   }, null, 2) + '\n');

@@ -23,12 +23,13 @@ const untrustedOrigins = ['null', 'http://justkviz.cz', 'http://justkviz-v2.web.
 const demoProject = 'demo-filmovy-kviz-v2';
 const eventId = 'synthetic-event';
 const cloudEnv = { GCLOUD_PROJECT: project, JUSTKVIZ_OFFLINE_ENABLED: 'true', JUSTKVIZ_OFFLINE_EVENT_IDS: eventId + ',other-event' };
+const globalEnv = { GCLOUD_PROJECT: project, JUSTKVIZ_OFFLINE_ENABLED: 'true', JUSTKVIZ_OFFLINE_ALL_ELIGIBLE_EVENTS: 'true' };
 const demoEnv = {
   GCLOUD_PROJECT: demoProject, FUNCTIONS_EMULATOR: 'true', FIREBASE_AUTH_EMULATOR_HOST: '127.0.0.1:9099',
   FIRESTORE_EMULATOR_HOST: '127.0.0.1:8080', FIREBASE_STORAGE_EMULATOR_HOST: '127.0.0.1:9199',
   STORAGE_EMULATOR_HOST: 'http://127.0.0.1:9199',
 };
-const environmentKeys = [...Object.keys(cloudEnv), ...Object.keys(demoEnv), 'GOOGLE_CLOUD_PROJECT', 'FIREBASE_CONFIG',
+const environmentKeys = [...Object.keys(cloudEnv), ...Object.keys(globalEnv), ...Object.keys(demoEnv), 'GOOGLE_CLOUD_PROJECT', 'FIREBASE_CONFIG',
   'FIREBASE_EMULATOR_HUB', 'FIREBASE_EMULATOR_HUB_ORIGIN', 'JUSTKVIZ_OFFLINE_RECOVERY_ONLY', 'JUSTKVIZ_OFFLINE_SIGNING_KEY'];
 const auth = { uid: 'synthetic-staff', token: { email_verified: true, auth_time: 50 } };
 const request = (data: unknown, requestOrigin: string | null = origin): Parameters<typeof readOfflineTrust.run>[0] => ({
@@ -81,6 +82,52 @@ describe('offline V2 activation', () => {
     expect(offlineCloudActivation({ ...cloudEnv, GOOGLE_CLOUD_PROJECT: project, FUNCTIONS_EMULATOR: 'false',
       FIREBASE_CONFIG: JSON.stringify({ projectId: project, storageBucket: project + '.firebasestorage.app' }) })?.mode).toBe('enabled');
     expectNoPrivilegedIo();
+  });
+
+  it('enables all eligible events only under the explicit global configuration', () => {
+    expect(offlineCloudActivation(globalEnv)).toEqual({ mode: 'enabled', allEligibleEvents: true });
+    expect(offlineCloudActivation({ ...globalEnv, JUSTKVIZ_OFFLINE_ENABLED: undefined })).toBeUndefined();
+    expect(offlineCloudActivation({ ...globalEnv, FIRESTORE_EMULATOR_HOST: 'localhost:8080' })).toBeUndefined();
+    for (const list of ['', eventId, '*']) {
+      expect(offlineCloudActivation({ ...globalEnv, JUSTKVIZ_OFFLINE_EVENT_IDS: list })).toBeUndefined();
+    }
+    for (const flag of ['', 'false', 'TRUE', '1']) {
+      expect(offlineCloudActivation({ ...globalEnv, JUSTKVIZ_OFFLINE_ALL_ELIGIBLE_EVENTS: flag })).toBeUndefined();
+      expect(offlineCloudActivation({ ...cloudEnv, JUSTKVIZ_OFFLINE_ALL_ELIGIBLE_EVENTS: flag })).toBeUndefined();
+    }
+
+    installEnv(globalEnv);
+    for (const id of [eventId, 'another-eligible-event']) {
+      expect(requireOfflineRuntime(id, origin, 'issue')).toEqual(scope);
+      expect(requireOfflineMedia(id, origin)).toBe(project);
+    }
+    sdk.app.mockClear();
+    for (const id of ['', '*', '../event', 'x'.repeat(151)]) {
+      expect(() => requireOfflineMedia(id, origin)).toThrow(expect.objectContaining(failed));
+    }
+    expect(() => requireOfflineMedia(eventId, 'https://www.justkviz.cz')).toThrow(expect.objectContaining(failed));
+    expect(sdk.app).not.toHaveBeenCalled();
+    expectNoPrivilegedIo();
+  });
+
+  it('requires a signed-in actor with current event scope even under global activation', async () => {
+    installEnv({ ...globalEnv, JUSTKVIZ_OFFLINE_SIGNING_KEY: privatePem() });
+    const { prepareOfflineEvent } = await import('../functions/src/offline/prepare');
+    const { offlinePermissions } = await import('../functions/src/offline/source');
+    expect(prepareOfflineEvent.__endpoint.secretEnvironmentVariables).toEqual([{ key: 'JUSTKVIZ_OFFLINE_SIGNING_KEY' }]);
+    const input = request({ eventId, requestId: 'synthetic-request' });
+    await expect(prepareOfflineEvent.run({ ...input, auth: undefined })).rejects.toMatchObject({ code: 'unauthenticated' });
+    expectNoPrivilegedIo();
+
+    const member = { uid: auth.uid, status: 'active', version: 1, sessionValidAfter: 0,
+      permissions: offlinePermissions, events: { mode: 'selected', ids: ['another-event'] } };
+    const transaction = { get: vi.fn().mockResolvedValue({ data: () => member }) };
+    sdk.auth.mockReturnValue({ getUser: vi.fn().mockResolvedValue({ uid: auth.uid, emailVerified: true }) });
+    sdk.firestore.mockReturnValue({ doc: (path: string) => path,
+      runTransaction: (action: (tx: typeof transaction) => Promise<unknown>) => action(transaction) });
+    await expect(prepareOfflineEvent.run(input)).rejects.toMatchObject({ code: 'permission-denied' });
+    expect(transaction.get).toHaveBeenCalledExactlyOnceWith('memberships/' + auth.uid);
+    expect(sdk.storage).not.toHaveBeenCalled();
   });
 
   it('uses only the two approved browser origins for cloud CORS and the runtime gate', async () => {
@@ -146,25 +193,29 @@ describe('offline V2 activation', () => {
     expectNoPrivilegedIo();
   });
 
-  it('keeps only preview and commit reachable in explicit recovery mode without signer access', async () => {
-    installEnv({ ...cloudEnv, JUSTKVIZ_OFFLINE_RECOVERY_ONLY: 'true' });
-    const { readOfflineTrust, prepareOfflineEvent, authorizeOfflineEvent } = await import('../functions/src/offline/prepare');
-    const { previewOfflineSync, commitOfflineSync } = await import('../functions/src/offline/sync');
-    for (const callable of [readOfflineTrust, prepareOfflineEvent, authorizeOfflineEvent, previewOfflineSync, commitOfflineSync]) {
-      expect(callable.__endpoint.secretEnvironmentVariables ?? []).toEqual([]);
-    }
-    await expect(readOfflineTrust.run(request({ eventId }))).rejects.toMatchObject(failed);
-    await expect(prepareOfflineEvent.run(request({ eventId, requestId: 'request' }))).rejects.toMatchObject(failed);
-    await expect(authorizeOfflineEvent.run(request({ eventId, exportId: payload.exportId, manifestDigest: payload.manifestDigest }))).rejects.toMatchObject(failed);
-    expect(() => requireOfflineMedia(eventId, origin)).toThrow(expect.objectContaining(failed));
-    expect(requireOfflineRuntime(eventId, origin, 'sync')).toEqual(scope);
-    for (const callable of [previewOfflineSync, commitOfflineSync]) {
-      await expect(callable.run(request({ eventId, exportId: payload.exportId, operations: 'invalid' }))).rejects.toMatchObject({ code: 'invalid-argument' });
-      await expect(callable.run(request({ eventId: 'different-event' }))).rejects.toMatchObject(failed);
-      await expect(callable.run(request({ eventId }, null))).rejects.toMatchObject(failed);
-    }
-    expectNoPrivilegedIo();
-  });
+  it.each([{ policy: 'pilot', env: cloudEnv }, { policy: 'global', env: globalEnv }])(
+    'keeps only preview and commit reachable in $policy recovery mode without signer access', async ({ policy, env }) => {
+      installEnv({ ...env, JUSTKVIZ_OFFLINE_RECOVERY_ONLY: 'true' });
+      const { readOfflineTrust, prepareOfflineEvent, authorizeOfflineEvent } = await import('../functions/src/offline/prepare');
+      const { previewOfflineSync, commitOfflineSync } = await import('../functions/src/offline/sync');
+      for (const callable of [readOfflineTrust, prepareOfflineEvent, authorizeOfflineEvent, previewOfflineSync, commitOfflineSync]) {
+        expect(callable.__endpoint.secretEnvironmentVariables ?? []).toEqual([]);
+      }
+      await expect(readOfflineTrust.run(request({ eventId }))).rejects.toMatchObject(failed);
+      await expect(prepareOfflineEvent.run(request({ eventId, requestId: 'request' }))).rejects.toMatchObject(failed);
+      await expect(authorizeOfflineEvent.run(request({ eventId, exportId: payload.exportId, manifestDigest: payload.manifestDigest }))).rejects.toMatchObject(failed);
+      expect(() => requireOfflineMedia(eventId, origin)).toThrow(expect.objectContaining(failed));
+      expect(requireOfflineRuntime(eventId, origin, 'sync')).toEqual(scope);
+      for (const callable of [previewOfflineSync, commitOfflineSync]) {
+        await expect(callable.run(request({ eventId, exportId: payload.exportId, operations: 'invalid' }))).rejects.toMatchObject({ code: 'invalid-argument' });
+        await expect(callable.run(request({ eventId: 'different-event' }))).rejects.toMatchObject(
+          policy === 'pilot' ? failed : { code: 'invalid-argument' },
+        );
+        await expect(callable.run(request({ eventId }, null))).rejects.toMatchObject(failed);
+      }
+      expectNoPrivilegedIo();
+    },
+  );
 
   it('binds only issuance to a valid private PKCS8 P-256 key and validates it before privileged I/O', async () => {
     const pem = privatePem();

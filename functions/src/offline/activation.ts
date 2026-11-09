@@ -17,10 +17,9 @@ export interface OfflineScope {
 }
 
 type OfflineAccess = 'issue' | 'authorize' | 'media' | 'sync';
-interface CloudActivation {
+type CloudActivation = {
   readonly mode: 'enabled' | 'recovery';
-  readonly events: ReadonlySet<string>;
-}
+} & ({ readonly allEligibleEvents: true } | { readonly events: ReadonlySet<string> });
 
 /** No cloud resources are consulted to decide if activation is available. */
 export function offlineCloudActivation(env: NodeJS.ProcessEnv = process.env): CloudActivation | undefined {
@@ -38,12 +37,17 @@ export function offlineCloudActivation(env: NodeJS.ProcessEnv = process.env): Cl
         || (config.storageBucket !== undefined && (typeof config.storageBucket !== 'string' || !cloudBuckets.has(config.storageBucket)))) return undefined;
     } catch { return undefined; }
   }
+  const mode = env.JUSTKVIZ_OFFLINE_RECOVERY_ONLY === 'true' ? 'recovery' : 'enabled';
+  const allEligibleEvents = env.JUSTKVIZ_OFFLINE_ALL_ELIGIBLE_EVENTS;
   const configuredEvents = env.JUSTKVIZ_OFFLINE_EVENT_IDS;
+  if (allEligibleEvents !== undefined) {
+    return allEligibleEvents === 'true' && configuredEvents === undefined ? { mode, allEligibleEvents: true } : undefined;
+  }
   if (!configuredEvents || configuredEvents.length > maximumEventListLength) return undefined;
   const ids = configuredEvents.split(',');
   const events = new Set(ids);
   if (ids.length > maximumEvents || events.size !== ids.length || ids.some(id => !eventIdPattern.test(id))) return undefined;
-  return { mode: env.JUSTKVIZ_OFFLINE_RECOVERY_ONLY === 'true' ? 'recovery' : 'enabled', events };
+  return { mode, events };
 }
 
 export const offlineCors = process.env.FUNCTIONS_EMULATOR === 'true' ? true : [...cloudOrigins];
@@ -54,7 +58,8 @@ export function requireOfflineRuntime(eventId: string, origin: string | undefine
     return { environment: offlineDemoProject, audience };
   }
   const activation = offlineCloudActivation();
-  if (!activation || !cloudOrigins.some(allowed => origin === allowed) || !activation.events.has(eventId)
+  if (!activation || !cloudOrigins.some(allowed => origin === allowed) || typeof eventId !== 'string' || !eventIdPattern.test(eventId)
+    || ('events' in activation && !activation.events.has(eventId))
     || (activation.mode === 'recovery' && access !== 'sync')) throw offlineInactive();
   try {
     const { projectId, storageBucket } = getApp().options;
