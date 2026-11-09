@@ -48,18 +48,24 @@ function loopbackTls() {
 const modes = { disabled: '', armed: 'true', recovery: 'recovery' };
 await mkdir(path.dirname(output), { recursive: true });
 await mkdir(output);
+const stage = {
+  ...process.env,
+  VITE_FIREBASE_PROJECT_ID: STAGING_PROJECT, VITE_FIREBASE_APP_ID: STAGING_APP,
+  VITE_FIREBASE_AUTH_DOMAIN: STAGING_PROJECT + '.firebaseapp.com',
+  VITE_FIREBASE_STORAGE_BUCKET: STAGING_PROJECT + '.firebasestorage.app',
+  VITE_FIREBASE_MESSAGING_SENDER_ID: '177615774316', VITE_FIREBASE_API_KEY: 'synthetic-offline-hosting-artifact-only',
+  VITE_FIREBASE_USE_EMULATORS: 'false', VITE_FIREBASE_ALLOW_NON_DEMO_PROJECT: 'true',
+  VITE_APP_ENV: 'staging',
+};
+function build(name, env) {
+  return execFileSync(process.execPath, [path.join(web, 'node_modules/vite/bin/vite.js'), 'build', '--mode', 'staging', '--outDir', path.join(output, name)],
+    { cwd: web, env, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', windowsHide: true });
+}
+assert.throws(() => build('rejected', { ...stage, VITE_JUSTKVIZ_OFFLINE: 'true', VITE_UNEXPECTED_TEST_MARKER: 'synthetic-nonpublic' }),
+  /Unexpected public V2 build variables: VITE_UNEXPECTED_TEST_MARKER/u);
+await assert.rejects(stat(path.join(output, 'rejected')), { code: 'ENOENT' });
 for (const [name, flag] of Object.entries(modes)) {
-  const env = {
-    ...process.env,
-    VITE_FIREBASE_PROJECT_ID: STAGING_PROJECT, VITE_FIREBASE_APP_ID: STAGING_APP,
-    VITE_FIREBASE_AUTH_DOMAIN: STAGING_PROJECT + '.firebaseapp.com',
-    VITE_FIREBASE_STORAGE_BUCKET: STAGING_PROJECT + '.firebasestorage.app',
-    VITE_FIREBASE_MESSAGING_SENDER_ID: '177615774316', VITE_FIREBASE_API_KEY: 'synthetic-offline-hosting-artifact-only',
-    VITE_FIREBASE_USE_EMULATORS: 'false', VITE_FIREBASE_ALLOW_NON_DEMO_PROJECT: 'true',
-    VITE_APP_ENV: 'staging', VITE_JUSTKVIZ_OFFLINE: flag,
-  };
-  const log = execFileSync(process.execPath, [path.join(web, 'node_modules/vite/bin/vite.js'), 'build', '--mode', 'staging', '--outDir', path.join(output, name)],
-    { cwd: web, env, encoding: 'utf8', windowsHide: true });
+  const log = build(name, { ...stage, VITE_JUSTKVIZ_OFFLINE: flag });
   await writeFile(path.join(output, name + '-build.log'), log, { flag: 'wx' });
 }
 for (const name of artifacts) await assert.rejects(stat(path.join(output, 'disabled', name)), { code: 'ENOENT' });
@@ -206,7 +212,8 @@ try {
   assert.deepEqual(pageErrors, []);
   await writeFile(path.join(output, 'hosting-proof.json'), JSON.stringify({
     status: 'PASS', browser: browser.version(), targetOrigin: origin, syntheticConfig: true, localTlsOnly: true,
-    disabledArtifactAbsent: true, tamperedPrecacheRejected: true, oldClientKeptItsCachedChunk: true,
+    disabledArtifactAbsent: true, unapprovedClientVariableRejectedBeforeOutput: true,
+    tamperedPrecacheRejected: true, oldClientKeptItsCachedChunk: true,
     recoveryOnlyActivatedAfterOldClientClosed: true, offlineReloadUsedNoServerRequests: true, reports,
   }, null, 2) + '\n', { flag: 'wx' });
   console.log('OFFLINE_HOSTING_VALIDATION_PASS ' + path.relative(root, output));

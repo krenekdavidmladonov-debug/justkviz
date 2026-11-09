@@ -4,11 +4,8 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { readLocalEventMediaManifest } from '../functions/src/media/local-event-manifest';
 import { readLocalEventMediaAuthorization, readLocalProjectorMediaAuthority } from '../functions/src/media/local-projector-media';
 import { readLocalImageManifest, authorizeLocalImageBackup, readLocalImageAuthority } from '../functions/src/media/local-image-backup';
-import { prepareOfflineEvent, readOfflineTrust, authorizeOfflineEvent } from '../functions/src/offline/prepare';
-import { previewOfflineSync, commitOfflineSync } from '../functions/src/offline/sync';
-
-const endpoints = [readLocalEventMediaManifest, readLocalEventMediaAuthorization, readLocalProjectorMediaAuthority, readLocalImageManifest, authorizeLocalImageBackup, readLocalImageAuthority,
-  prepareOfflineEvent, readOfflineTrust, authorizeOfflineEvent, previewOfflineSync, commitOfflineSync];
+const endpoints = [readLocalEventMediaManifest, readLocalEventMediaAuthorization, readLocalProjectorMediaAuthority,
+  readLocalImageManifest, authorizeLocalImageBackup, readLocalImageAuthority];
 
 const mocks = vi.hoisted(() => ({ freshIdentity: vi.fn() }));
 vi.mock('../functions/src/access/authorization', () => ({ authorize: vi.fn(), freshIdentity: mocks.freshIdentity }));

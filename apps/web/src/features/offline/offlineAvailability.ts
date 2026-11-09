@@ -7,19 +7,27 @@ export const offlineAudience = 'justkviz-offline-v1';
 export const offlinePreparationPermissions = ['event.read', 'event.export', 'event.answers.read', 'event.answers.export',
   'event.notes.read', 'event.live', 'event.score', 'event.manage'] as const satisfies readonly Permission[];
 
-export function offlineBrowserMode(env: ImportMetaEnv, location: Pick<Location, 'origin' | 'hostname'>) {
-  if (env.VITE_FIREBASE_USE_EMULATORS === 'true' && env.VITE_FIREBASE_PROJECT_ID === demoOfflineEnvironment
+interface OfflineBrowserConfig {
+  readonly mode: string;
+  readonly projectId: string | undefined;
+  readonly useEmulators: string | undefined;
+  readonly release: string | undefined;
+}
+
+export function offlineBrowserMode(config: OfflineBrowserConfig, location: Pick<Location, 'origin' | 'hostname'>) {
+  if (config.useEmulators === 'true' && config.projectId === demoOfflineEnvironment
     && ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname)) return 'demo';
-  if (env.MODE === 'staging' && env.VITE_FIREBASE_USE_EMULATORS === 'false' && env.VITE_FIREBASE_PROJECT_ID === v2OfflineEnvironment
+  if (config.mode === 'staging' && config.useEmulators === 'false' && config.projectId === v2OfflineEnvironment
     && location.origin === v2OfflineOrigin) {
-    if (env.VITE_JUSTKVIZ_OFFLINE === 'true') return 'enabled';
-    if (env.VITE_JUSTKVIZ_OFFLINE === 'recovery') return 'recovery';
+    if (config.release === 'true') return 'enabled';
+    if (config.release === 'recovery') return 'recovery';
   }
   return undefined;
 }
 
 export function currentOfflineMode() {
-  return offlineBrowserMode(import.meta.env, window.location);
+  return offlineBrowserMode({ mode: import.meta.env.MODE, projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    useEmulators: import.meta.env.VITE_FIREBASE_USE_EMULATORS, release: import.meta.env.VITE_JUSTKVIZ_OFFLINE }, window.location);
 }
 
 export function currentOfflineEnvironment() {

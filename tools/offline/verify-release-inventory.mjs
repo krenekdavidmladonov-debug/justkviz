@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { sanitizedEnvironment } from '../event-night/restart-acceptance.mjs';
@@ -12,6 +12,14 @@ const inventory = json('tools/offline/deployment-manifest.json');
 const hosting = json(inventory.hostingConfig);
 const names = [...inventory.newCallableFunctions, ...inventory.existingFunctionsToUpdate];
 const key = 'JUSTKVIZ_OFFLINE_SIGNING_KEY';
+const args = process.argv.slice(2).filter(argument => argument !== '--inspect');
+assert(args.length === 0 || (args.length === 2 && args[0] === '--package'));
+const bundle = args.length ? realpathSync(args[1]) : undefined;
+if (bundle) {
+  const parent = realpathSync(path.join(root, '.local-data/offline-release'));
+  assert.equal(path.dirname(bundle), parent);
+  assert(/^[a-f0-9]{40}-(?:disabled|enabled|recovery)(?:-synthetic)?$/u.test(path.basename(bundle)));
+}
 
 assert.equal(inventory.projectId, STAGING_PROJECT);
 assert.equal(inventory.hostingSite, 'justkviz-v2');
@@ -24,7 +32,9 @@ assert.equal(inventory.default, 'disabled');
 
 if (process.argv[2] === '--inspect') {
   assert.equal(process.env.EVENT_NIGHT_RESTART_NETWORK_GUARD, '1');
-  const sdk = await import(pathToFileURL(path.join(root, 'functions/lib/index.js')));
+  const sdk = await import(pathToFileURL(path.join(bundle ?? root, 'functions/lib/index.js')));
+  if (bundle) assert.deepEqual(Object.keys(sdk).sort(), [...names, ...inventory.compatibleMediaPrerequisitesIfMissing,
+    ...inventory.compatibleDeletionRegistryIfMissing].sort());
   const endpoints = Object.fromEntries(names.map(name => {
     const entry = sdk[name]?.__endpoint;
     assert(entry, 'Missing SDK endpoint: ' + name);
@@ -50,11 +60,11 @@ if (process.argv[2] === '--inspect') {
       JUSTKVIZ_OFFLINE_EVENT_IDS: 'synthetic-discovery-only',
       JUSTKVIZ_OFFLINE_RECOVERY_ONLY: mode === 'recovery' ? 'true' : 'false',
     });
-    const bindings = JSON.parse(execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--inspect'],
+    const bindings = JSON.parse(execFileSync(process.execPath, [fileURLToPath(import.meta.url), '--inspect', ...args],
       { cwd: root, env, encoding: 'utf8', windowsHide: true }));
     for (const name of names) assert.deepEqual(bindings[name],
       mode === 'enabled' && ['readOfflineTrust', 'prepareOfflineEvent'].includes(name) ? [key] : [], name + ' ' + mode);
     proof[mode] = bindings;
   }
-  console.log('OFFLINE_SDK_DISCOVERY_PASS ' + JSON.stringify(proof));
+  console.log((bundle ? 'OFFLINE_PACKAGED_SDK_DISCOVERY_PASS ' : 'OFFLINE_SDK_DISCOVERY_PASS ') + JSON.stringify(proof));
 }

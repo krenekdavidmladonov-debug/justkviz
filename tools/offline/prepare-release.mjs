@@ -68,12 +68,11 @@ write('functions/lib/index.js', [
   '',
 ].join('\n'));
 const config = json(inventory.hostingConfig);
+assert.deepEqual(Object.keys(config), ['hosting']);
 assert.equal(config.hosting.site, inventory.hostingSite);
 config.hosting.public = 'hosting';
-config.functions = { source: 'functions', codebase: 'default', runtime: 'nodejs22' };
-config.storage = { rules: 'storage.rules' };
 cpSync(path.join(root, 'storage.rules'), path.join(out, 'storage.rules'));
-write(synthetic ? 'firebase.offline-release.example.json' : 'firebase.offline-release.json', JSON.stringify(config, null, 2) + '\n');
+write(synthetic ? 'firebase.offline-hosting.example.json' : 'firebase.offline-hosting.json', JSON.stringify(config, null, 2) + '\n');
 const checksums = {};
 function inspect(dir, prefix = '') {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -92,6 +91,7 @@ write('receipt.json', JSON.stringify({
   project: STAGING_PROJECT, site: inventory.hostingSite, node: process.versions.node,
   newFunctions: inventory.newCallableFunctions, updatedFunctions: inventory.existingFunctionsToUpdate,
   conditionalFunctions: [...inventory.compatibleMediaPrerequisitesIfMissing, ...inventory.compatibleDeletionRegistryIfMissing],
+  backendActivation: 'A separately reviewed exact endpoint list is required. No backend deploy config is generated.',
   checksums,
 }, null, 2) + '\n');
 console.log('OFFLINE_RELEASE_PREPARED ' + path.relative(root, out));
