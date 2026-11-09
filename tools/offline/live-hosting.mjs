@@ -130,7 +130,7 @@ export function buildLiveHosting({ root, baseline, metadata, config, out, scratc
     const wrapper = path.join(scratch, 'offline-only.vite.mts');
     const publicDir = path.join(scratch, 'offline-public');
     mkdirSync(path.join(publicDir, 'brand'), { recursive: true });
-    cpSync(path.join(root, appPath, 'public/brand/justkviz-icon.svg'), path.join(publicDir, 'brand/justkviz-icon.svg'));
+    cpSync(path.join(previous, 'brand/justkviz-icon.svg'), path.join(publicDir, 'brand/justkviz-icon.svg'));
     writeFileSync(wrapper, [
       'import base from ' + JSON.stringify(path.join(root, appPath, 'vite.config.ts')) + ';',
       'export default async env => { const config = await base(env);',
