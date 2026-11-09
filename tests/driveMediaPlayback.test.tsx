@@ -9,6 +9,8 @@ import { validateSlideInput } from '../functions/src/editor/validation';
 import { MediaPlayer } from '../apps/web/src/features/presentation/MediaPlayer';
 import { SlideRenderer } from '../apps/web/src/features/presentation/SlideRenderer';
 import { AssetImage } from '../apps/web/src/features/media/AssetImage';
+import { LocalProjectorMediaContext } from '../apps/web/src/features/media/LocalProjectorMediaContext';
+import type { PublicLiveState } from '../apps/web/src/features/live/types';
 import { quizMediaReadFailure, readQuizMediaBlob, uploadQuizMedia } from '../apps/web/src/features/media/mediaApi';
 import { MediaBlobCache, quizMediaBlobCache } from '../apps/web/src/features/media/mediaBlobCache';
 import { getFirebaseServices } from '../apps/web/src/services/firebase/client';
@@ -236,6 +238,42 @@ it('reports a still-failed owned image on the next display generation without fe
   await show(3);
   expect(diagnostics).toHaveBeenCalledTimes(2);
   expect(http).toHaveBeenCalledTimes(2);
+});
+
+it('keeps the displayed online question image across public revisions of the same session and asset', async () => {
+  const state: PublicLiveState = {
+    sessionId: 'session-1', quizTitle: 'Zkouška', status: 'active', slidePosition: 1, slideKind: 'image',
+    options: [], media: [], presentation: {}, questionImage: source, presentationMode: 'slide', renderMode: 'question',
+    mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: 1, introGeneration: 0, answerRevealed: false, revision: 1,
+  };
+  const show = (value: PublicLiveState, reference: string) => act(async () => {
+    root.render(<LocalProjectorMediaContext.Provider value={value}>
+      <AssetImage source={reference} sessionId={value.sessionId} alt="Syntetická otázka" mediaRole="question-image"
+        diagnosticGeneration={value.revision} />
+    </LocalProjectorMediaContext.Provider>);
+  });
+  http.mockImplementation(() => Promise.resolve(new Response('synthetic-image', { headers: { 'Content-Type': 'image/png' } })));
+
+  await show(state, source);
+  const originalImage = host.querySelector('img')!;
+  expect(originalImage).not.toBeNull();
+  expect(http).toHaveBeenCalledOnce();
+
+  await show({ ...state, revision: 2, answerRevealed: true, revealedAnswer: 'Syntetická odpověď' }, source);
+  expect(http).toHaveBeenCalledOnce();
+  expect(host.querySelector('img')).toBe(originalImage);
+  expect(revoke).not.toHaveBeenCalled();
+
+  await show({ ...state, revision: 3, questionImage: other }, other);
+  expect(http).toHaveBeenCalledTimes(2);
+  expect(originalImage.isConnected).toBe(false);
+  const replacement = host.querySelector('img')!;
+  expect(replacement).not.toBeNull();
+
+  await show({ ...state, sessionId: 'session-2', questionImage: other }, other);
+  expect(http).toHaveBeenCalledTimes(3);
+  expect(replacement.isConnected).toBe(false);
+  expect(host.querySelector('img')).not.toBeNull();
 });
 
 it('rejects an unsupported WebM upload before opening Firebase services', async () => {

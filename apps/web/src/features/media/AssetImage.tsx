@@ -8,6 +8,7 @@ import { LocalProjectorMediaContext, localProjectorMediaEpoch } from './LocalPro
 import { localProjectorImageEligible, watchProjectorQuestionImage } from './localProjectorMedia';
 import { notifyLocalProjectorMediaUsed } from '../live/localMediaBackupRelay';
 import type { LocalProjectorMediaAuthority } from '../live/localMediaBackupAuthority';
+import type { PublicLiveState } from '../live/types';
 import type { LocalImageAuthority, LocalImageRole } from '@filmovy-kviz/quiz-domain';
 import { localImageEligible, watchProjectorImage } from './localImageProjector';
 import { notifyLocalImageUsed } from '../live/localImageRelay';
@@ -24,26 +25,33 @@ type AssetImageProps = {
   mediaRole?: LocalImageRole | undefined;
 };
 
+type ProjectorImagePilot = { kind: 'multi-image' | 'legacy'; state: PublicLiveState };
+
+function selectProjectorImagePilot(state: PublicLiveState | null, { source, sessionId, mediaRole }: AssetImageProps): ProjectorImagePilot | undefined {
+  if (!state || sessionId !== state.sessionId || !mediaRole || !parseQuizAsset(source)) return undefined;
+  if (localImageEligible(state, source, mediaRole)) return { kind: 'multi-image', state };
+  if (mediaRole === 'question-image' && typeof window !== 'undefined'
+    && new URLSearchParams(window.location.search).get('backupPilot') === '1'
+    && localProjectorImageEligible(state, source)) return { kind: 'legacy', state };
+  return undefined;
+}
+
 export function AssetImage(props: AssetImageProps) {
   const state = useContext(LocalProjectorMediaContext);
   const offline = useContext(OfflineMediaContext);
-  const needsEpoch = state && (props.mediaRole === 'question-image'
-    || (props.mediaRole && parseQuizAsset(props.source) && localImageEligible(state, props.source, props.mediaRole)));
-  const epoch = offline?.epoch ?? (needsEpoch && state ? localProjectorMediaEpoch(state) : '');
-  return <ResolvedAssetImage key={props.source + ':' + (props.sessionId ?? 'private') + ':' + epoch} {...props} />;
+  const pilot = offline ? undefined : selectProjectorImagePilot(state, props);
+  const epoch = offline ? 'offline:' + offline.epoch : pilot ? pilot.kind + ':' + localProjectorMediaEpoch(pilot.state) : '';
+  return <ResolvedAssetImage key={props.source + ':' + (props.sessionId ?? 'private') + ':' + epoch} {...props} pilot={pilot} />;
 }
 
-function ResolvedAssetImage({ source, alt, sessionId, diagnosticGeneration, onDiagnostic, onDiagnosticResolved, onTiming, mediaRole }: AssetImageProps) {
+function ResolvedAssetImage({
+  source, alt, sessionId, diagnosticGeneration, onDiagnostic, onDiagnosticResolved, onTiming, mediaRole, pilot,
+}: AssetImageProps & { pilot: ProjectorImagePilot | undefined }) {
   const snapshotId = useContext(SnapshotMediaContext);
   const offline = useContext(OfflineMediaContext);
-  const publicState = useContext(LocalProjectorMediaContext);
-  const imageState = mediaRole && publicState && sessionId === publicState.sessionId
-    && localImageEligible(publicState, source, mediaRole) ? publicState : null;
-  const legacyPilot = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('backupPilot') === '1';
-  const localState = !imageState && legacyPilot && mediaRole === 'question-image' && publicState && sessionId === publicState.sessionId
-    && localProjectorImageEligible(publicState, source) ? publicState : null;
-  const localEpochState = imageState ?? localState;
-  const localEpoch = localEpochState ? localProjectorMediaEpoch(localEpochState) : undefined;
+  const imageState = pilot?.kind === 'multi-image' ? pilot.state : null;
+  const localState = pilot?.kind === 'legacy' ? pilot.state : null;
+  const localEpoch = pilot ? localProjectorMediaEpoch(pilot.state) : undefined;
   const [loaded, setLoaded] = useState<{ source: string; sessionId?: string | undefined; snapshotId?: string | undefined; url: string; mediaSource?: 'online' | 'local'; authority?: LocalProjectorMediaAuthority | LocalImageAuthority | undefined }>();
   const [failure, setFailure] = useState<string>();
   const [retry, setRetry] = useState(0);

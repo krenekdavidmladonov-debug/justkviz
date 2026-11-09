@@ -1,7 +1,7 @@
 {
   "projectId": "filmovy-kviz-v2-staging",
   "hostingSite": "justkviz-v2",
-  "origin": "https://justkviz-v2.web.app",
+  "origins": ["https://justkviz.cz", "https://justkviz-v2.web.app"],
   "region": "europe-west1",
   "newCallableFunctions": [
     "readOfflineTrust", "prepareOfflineEvent", "authorizeOfflineEvent",

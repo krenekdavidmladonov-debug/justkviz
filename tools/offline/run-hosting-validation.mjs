@@ -11,8 +11,12 @@ import { STAGING_APP, STAGING_PROJECT } from '../staging/guard.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const web = path.join(root, 'apps/web');
-const host = 'justkviz-v2.web.app';
-const origin = 'https://' + host;
+const [fixtureFlag, disabledBundle, enabledBundle, recoveryBundle, testOrigin = 'https://justkviz-v2.web.app'] = process.argv.slice(2);
+const fromRelease = fixtureFlag === '--artifacts';
+assert(process.argv.length === 2 || (fromRelease && (process.argv.length === 6 || process.argv.length === 7)));
+assert(['https://justkviz.cz', 'https://justkviz-v2.web.app'].includes(testOrigin));
+const origin = testOrigin;
+const host = new URL(origin).hostname;
 const date = new Date().toISOString().replace(/[^0-9]/gu, '').slice(0, 17);
 const output = path.join(root, '.local-data', 'offline-hosting', date);
 const sha = bytes => createHash('sha256').update(bytes);
@@ -46,6 +50,8 @@ function loopbackTls() {
 }
 
 const modes = { disabled: '', armed: 'true', recovery: 'recovery' };
+const bundles = { disabled: disabledBundle, armed: enabledBundle, recovery: recoveryBundle };
+const artifact = mode => fromRelease ? path.join(bundles[mode], 'hosting') : path.join(output, mode);
 await mkdir(path.dirname(output), { recursive: true });
 await mkdir(output);
 const stage = {
@@ -61,17 +67,31 @@ function build(name, env) {
   return execFileSync(process.execPath, [path.join(web, 'node_modules/vite/bin/vite.js'), 'build', '--mode', 'staging', '--outDir', path.join(output, name)],
     { cwd: web, env, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8', windowsHide: true });
 }
-assert.throws(() => build('rejected', { ...stage, VITE_JUSTKVIZ_OFFLINE: 'true', VITE_UNEXPECTED_TEST_MARKER: 'synthetic-nonpublic' }),
-  /Unexpected public V2 build variables: VITE_UNEXPECTED_TEST_MARKER/u);
-await assert.rejects(stat(path.join(output, 'rejected')), { code: 'ENOENT' });
-for (const [name, flag] of Object.entries(modes)) {
-  const log = build(name, { ...stage, VITE_JUSTKVIZ_OFFLINE: flag });
-  await writeFile(path.join(output, name + '-build.log'), log, { flag: 'wx' });
+let releaseCommit;
+if (fromRelease) {
+  for (const [mode, folder] of Object.entries(bundles)) {
+    const receipt = JSON.parse(await readFile(path.join(folder, 'receipt.json'), 'utf8'));
+    assert.equal(receipt.status, 'PREPARED_NOT_DEPLOYED');
+    assert.equal(receipt.mode, mode === 'armed' ? 'enabled' : mode);
+    releaseCommit ??= receipt.commit;
+    assert.equal(receipt.commit, releaseCommit);
+    for (const [file, expected] of Object.entries(receipt.checksums)) {
+      if (file.startsWith('hosting/')) assert.equal(sha(await readFile(path.join(folder, file))).digest('hex'), expected);
+    }
+  }
+} else {
+  assert.throws(() => build('rejected', { ...stage, VITE_JUSTKVIZ_OFFLINE: 'true', VITE_UNEXPECTED_TEST_MARKER: 'synthetic-nonpublic' }),
+    /Unexpected public V2 build variables: VITE_UNEXPECTED_TEST_MARKER/u);
+  await assert.rejects(stat(path.join(output, 'rejected')), { code: 'ENOENT' });
+  for (const [name, flag] of Object.entries(modes)) {
+    const log = build(name, { ...stage, VITE_JUSTKVIZ_OFFLINE: flag });
+    await writeFile(path.join(output, name + '-build.log'), log, { flag: 'wx' });
+  }
 }
-for (const name of artifacts) await assert.rejects(stat(path.join(output, 'disabled', name)), { code: 'ENOENT' });
+for (const name of artifacts) await assert.rejects(stat(path.join(artifact('disabled'), name)), { code: 'ENOENT' });
 const reports = {};
 for (const mode of ['armed', 'recovery']) {
-  const dir = path.join(output, mode);
+  const dir = artifact(mode);
   const worker = await readFile(path.join(dir, 'offline-sw.js'), 'utf8');
   const files = JSON.parse(/const FILES=(\[[^\n]*?\]);/u.exec(worker)[1]);
   const integrity = JSON.parse(/const INTEGRITY=(\{[^\n]*?\});/u.exec(worker)[1]);
@@ -114,7 +134,7 @@ const server = createServer({ key: tls.key, cert: tls.cert }, async (request, re
   }
   requests.push(uri.pathname);
   try {
-    const data = await readFile(path.join(output, served, relative));
+    const data = await readFile(path.join(artifact(served), relative));
     response.writeHead(200, { 'Content-Type': types[path.extname(relative)] ?? 'application/octet-stream', 'Cache-Control': 'no-cache' });
     response.end(tamper && relative === 'brand/justkviz-icon.svg' ? Buffer.concat([data, Buffer.from('\n<!-- invalid fixture -->')]) : data);
   } catch {
@@ -211,8 +231,8 @@ try {
   assert.deepEqual(external, []);
   assert.deepEqual(pageErrors, []);
   await writeFile(path.join(output, 'hosting-proof.json'), JSON.stringify({
-    status: 'PASS', browser: browser.version(), targetOrigin: origin, syntheticConfig: true, localTlsOnly: true,
-    disabledArtifactAbsent: true, unapprovedClientVariableRejectedBeforeOutput: true,
+    status: 'PASS', browser: browser.version(), targetOrigin: origin, syntheticConfig: !fromRelease, localTlsOnly: true, releaseCommit,
+    disabledArtifactAbsent: true, unapprovedClientVariableRejectedBeforeOutput: !fromRelease,
     tamperedPrecacheRejected: true, oldClientKeptItsCachedChunk: true,
     recoveryOnlyActivatedAfterOldClientClosed: true, offlineReloadUsedNoServerRequests: true, reports,
   }, null, 2) + '\n', { flag: 'wx' });

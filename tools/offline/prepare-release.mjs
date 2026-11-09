@@ -5,6 +5,8 @@ import { cpSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertStagingEnvironment, STAGING_APP, STAGING_PROJECT } from '../staging/guard.mjs';
+import { runtimeClosure } from '../staging/restart-build-core.mjs';
+import { buildLiveHosting } from './live-hosting.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const json = file => JSON.parse(readFileSync(path.join(root, file), 'utf8'));
@@ -12,9 +14,11 @@ const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8'
 const clean = () => assert.equal(git('status', '--porcelain', '--untracked-files=all'), '', 'Commit reviewed inputs before preparing a release.');
 assert.equal(process.versions.node.split('.')[0], '22');
 clean();
-const [mode, synthetic] = process.argv.slice(2);
-assert(process.argv.length <= 4 && ['disabled', 'enabled', 'recovery'].includes(mode) && [undefined, '--synthetic'].includes(synthetic),
-  'Use: node tools/offline/prepare-release.mjs disabled|enabled|recovery [--synthetic]');
+const [mode, type, baseline, metadata] = process.argv.slice(2);
+const synthetic = type === '--synthetic';
+assert(['disabled', 'enabled', 'recovery'].includes(mode) && ((synthetic && process.argv.length === 4)
+  || (type === '--live' && process.argv.length === 6)),
+  'Use: node tools/offline/prepare-release.mjs disabled|enabled|recovery (--synthetic | --live <verified-baseline> <live-metadata>)');
 const commit = git('rev-parse', 'HEAD'), tree = git('rev-parse', 'HEAD^{tree}');
 const inventory = json('tools/offline/deployment-manifest.json');
 assert.equal(inventory.projectId, STAGING_PROJECT);
@@ -33,21 +37,38 @@ for (const directory of [localData, releaseRoot]) {
   assert(lstatSync(directory).isDirectory() && !lstatSync(directory).isSymbolicLink());
 }
 const out = path.join(releaseRoot, commit + '-' + mode + (synthetic ? '-synthetic' : ''));
+const scratch = out + '.work';
+const config = json(inventory.hostingConfig);
+assert.deepEqual(Object.keys(config), ['hosting']);
+assert.equal(config.hosting.site, inventory.hostingSite);
+config.hosting.public = 'hosting';
+let live;
+if (!synthetic) {
+  live = JSON.parse(readFileSync(metadata, 'utf8'));
+  const web = { apiKey: env.VITE_FIREBASE_API_KEY, appId: env.VITE_FIREBASE_APP_ID, authDomain: env.VITE_FIREBASE_AUTH_DOMAIN,
+    messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID, projectId: env.VITE_FIREBASE_PROJECT_ID, storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET };
+  assert.equal(live.webConfigHash, createHash('sha256').update(JSON.stringify(web)).digest('hex'), 'Public SDK settings differ from V2 metadata.');
+  assert.equal(live.region, inventory.region);
+  assert.equal(live.functionsPaginated, false);
+  assert.equal(live.status.functions, 200);
+  assert.equal(env.VITE_ENABLE_TEAM_EMAIL, 'false'); // Reproduced and checked byte-for-byte in the current online baseline.
+}
 mkdirSync(out);
+mkdirSync(scratch);
 const write = (name, value) => writeFileSync(path.join(out, name), value, { flag: 'wx' });
 const run = (file, args, cwd = root) => execFileSync(process.execPath, [path.join(root, file), ...args], { cwd, env, stdio: 'inherit' });
-const compiledFunctions = path.join(out, '.compiled-functions');
+const compiledFunctions = path.join(scratch, 'compiled-functions');
 run('node_modules/typescript/bin/tsc', ['-p', 'packages/quiz-domain/tsconfig.json']);
 run('node_modules/typescript/bin/tsc', ['-p', 'functions/tsconfig.json', '--outDir', compiledFunctions]);
-run('apps/web/node_modules/vite/bin/vite.js', ['build', '--mode', 'staging', '--outDir', path.join(out, 'hosting')], path.join(root, 'apps/web'));
+if (synthetic) {
+  run('apps/web/node_modules/vite/bin/vite.js', ['build', '--mode', 'staging', '--outDir', path.join(out, 'hosting')], path.join(root, 'apps/web'));
+} else {
+  write('hosting-manifest.json', JSON.stringify(buildLiveHosting({ root, baseline, metadata, config, out, scratch, env, mode }), null, 2) + '\n');
+}
 
 const functions = path.join(out, 'functions');
 mkdirSync(path.join(functions, 'vendor', 'quiz-domain'), { recursive: true });
-cpSync(compiledFunctions, path.join(functions, 'lib'), { recursive: true, filter: source => {
-  const relative = path.relative(compiledFunctions, source);
-  assert(!lstatSync(source).isSymbolicLink());
-  return relative !== 'dev' && relative !== 'index.js';
-} });
+
 run('node_modules/typescript/bin/tsc', ['-p', 'packages/quiz-domain/tsconfig.json', '--outDir', path.join(functions, 'vendor/quiz-domain/lib')]);
 cpSync(path.join(root, 'packages/quiz-domain/package.json'), path.join(functions, 'vendor/quiz-domain/package.json'));
 const deployPkg = json('functions/package.json');
@@ -57,21 +78,40 @@ const lock = json('tools/staging/functions-package-lock.json');
 assert.deepEqual(deployPkg.dependencies, lock.packages[''].dependencies);
 write('functions/package.json', JSON.stringify(deployPkg, null, 2) + '\n');
 cpSync(path.join(root, 'tools/staging/functions-package-lock.json'), path.join(functions, 'package-lock.json'));
-write('functions/lib/index.js', [
+const index = [
   "import { getApps, initializeApp } from 'firebase-admin/app';",
   'if (!getApps().length) initializeApp();',
   "export { readOfflineTrust, prepareOfflineEvent, authorizeOfflineEvent } from './offline/prepare.js';",
   "export { previewOfflineSync, commitOfflineSync } from './offline/sync.js';",
   "export { readQuizMedia } from './media/endpoint.js';",
-  "export { beginQuizMediaUpload, finalizeQuizMediaUpload } from './media/callables.js';",
+  ...(synthetic ? ["export { beginQuizMediaUpload, finalizeQuizMediaUpload } from './media/callables.js';"] : []),
   "export { deleteEvent } from './events/deletion.js';",
   '',
-].join('\n'));
-const config = json(inventory.hostingConfig);
-assert.deepEqual(Object.keys(config), ['hosting']);
-assert.equal(config.hosting.site, inventory.hostingSite);
-config.hosting.public = 'hosting';
-cpSync(path.join(root, 'storage.rules'), path.join(out, 'storage.rules'));
+].join('\n');
+for (const [file, contents] of runtimeClosure(index, name => readFileSync(path.join(compiledFunctions, name), 'utf8'), Object.keys(deployPkg.dependencies))) {
+  mkdirSync(path.dirname(path.join(functions, 'lib', file)), { recursive: true });
+  write('functions/lib/' + file, contents);
+}
+const exports = [...inventory.newCallableFunctions, ...inventory.existingFunctionsToUpdate,
+  ...inventory.compatibleDeletionRegistryIfMissing, ...(synthetic ? inventory.compatibleMediaPrerequisitesIfMissing : [])];
+if (!synthetic) {
+  assert(inventory.newCallableFunctions.every(name => live.functions[name] === null), 'New callable IDs unexpectedly already exist.');
+  const existing = [...inventory.existingFunctionsToUpdate, ...inventory.compatibleDeletionRegistryIfMissing];
+  for (const name of existing) {
+    assert(live.functions[name]?.allTrafficOnLatest && live.functions[name]?.runtime === 'nodejs22', 'Live update baseline differs: ' + name);
+  }
+  const gateway = live.functions.readQuizMedia;
+  assert.equal(gateway.relevantFlags.DRIVE_CONNECTION_ENABLED, 'true');
+  assert.deepEqual(gateway.secretBindings, [{ key: 'DRIVE_OAUTH_CLIENT_SECRET', version: '1' }, { key: 'DRIVE_TOKEN_KEYRING', version: '1' }]);
+  write('backend-scope.json', JSON.stringify({ project: STAGING_PROJECT, region: inventory.region, mode,
+    create: inventory.newCallableFunctions, update: existing, previous: Object.fromEntries(existing.map(name => [name, live.functions[name]])),
+    skip: inventory.compatibleMediaPrerequisitesIfMissing, storageRules: 'unchanged', firestoreRules: 'unchanged',
+    activate: { JUSTKVIZ_OFFLINE_ENABLED: mode === 'disabled' ? 'false' : 'true',
+      JUSTKVIZ_OFFLINE_RECOVERY_ONLY: mode === 'recovery' ? 'true' : 'false', eventIdsRequired: mode !== 'disabled',
+      signingBinding: mode === 'enabled' ? ['readOfflineTrust', 'prepareOfflineEvent'] : [] },
+    guard: 'Review exact live configuration before writes. Preserve all unlisted environment variables, existing runtime identities, bindings and traffic. No IAM operation is authorized.',
+  }, null, 2) + '\n');
+}
 write(synthetic ? 'firebase.offline-hosting.example.json' : 'firebase.offline-hosting.json', JSON.stringify(config, null, 2) + '\n');
 const checksums = {};
 function inspect(dir, prefix = '') {
@@ -89,8 +129,8 @@ clean();
 write('receipt.json', JSON.stringify({
   status: synthetic ? 'SYNTHETIC_NOT_DEPLOYABLE' : 'PREPARED_NOT_DEPLOYED', commit, tree, mode,
   project: STAGING_PROJECT, site: inventory.hostingSite, node: process.versions.node,
-  newFunctions: inventory.newCallableFunctions, updatedFunctions: inventory.existingFunctionsToUpdate,
-  conditionalFunctions: [...inventory.compatibleMediaPrerequisitesIfMissing, ...inventory.compatibleDeletionRegistryIfMissing],
+  exports, newFunctions: inventory.newCallableFunctions, updatedFunctions: inventory.existingFunctionsToUpdate,
+  deletionRegistry: inventory.compatibleDeletionRegistryIfMissing,
   backendActivation: 'A separately reviewed exact endpoint list is required. No backend deploy config is generated.',
   checksums,
 }, null, 2) + '\n');

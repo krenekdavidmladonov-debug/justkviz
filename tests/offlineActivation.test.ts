@@ -1,6 +1,7 @@
 import { createPublicKey, generateKeyPairSync, verify } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { canonicalOfflineJson, type OfflineGrantPayload } from '../packages/quiz-domain/src/offline-event';
+import { offlineBrowserMode } from '../apps/web/src/features/offline/offlineAvailability';
 import { offlineCloudActivation, requireOfflineMedia, requireOfflineRuntime } from '../functions/src/offline/activation';
 import type { readOfflineTrust } from '../functions/src/offline/prepare';
 
@@ -14,6 +15,11 @@ vi.mock('../functions/node_modules/firebase-admin/lib/esm/storage/index.js', () 
 
 const project = 'filmovy-kviz-v2-staging';
 const origin = 'https://justkviz-v2.web.app';
+const trustedOrigins = ['https://justkviz.cz', origin];
+const untrustedOrigins = ['null', 'http://justkviz.cz', 'http://justkviz-v2.web.app', 'https://www.justkviz.cz',
+  'https://justkviz.cz/', 'https://justkviz.cz:444', 'https://justkviz.cz.example.test', 'https://user@justkviz.cz',
+  'https://filmovy-kviz-v2-staging.web.app', 'https://justkviz-v2--preview.web.app', origin + '/',
+  origin + '.example.test', origin + ':444', 'https://user@justkviz-v2.web.app'];
 const demoProject = 'demo-filmovy-kviz-v2';
 const eventId = 'synthetic-event';
 const cloudEnv = { GCLOUD_PROJECT: project, JUSTKVIZ_OFFLINE_ENABLED: 'true', JUSTKVIZ_OFFLINE_EVENT_IDS: eventId + ',other-event' };
@@ -77,12 +83,15 @@ describe('offline V2 activation', () => {
     expectNoPrivilegedIo();
   });
 
-  it('admits only the approved browser origin, exact event, and matching Admin project and media bucket', () => {
+  it('uses only the two approved browser origins for cloud CORS and the runtime gate', async () => {
     installEnv(cloudEnv);
-    expect(requireOfflineRuntime(eventId, origin, 'issue')).toEqual(scope);
-    expect(requireOfflineMedia(eventId, origin)).toBe(project);
-    for (const wrongOrigin of [undefined, 'null', 'https://justkviz.cz', 'http://justkviz-v2.web.app', origin + '/',
-      origin + '.example.test', origin + ':444', 'https://user@justkviz-v2.web.app']) {
+    const { offlineCors } = await import('../functions/src/offline/activation');
+    expect(offlineCors).toEqual(trustedOrigins);
+    for (const trustedOrigin of trustedOrigins) {
+      expect(requireOfflineRuntime(eventId, trustedOrigin, 'issue')).toEqual(scope);
+      expect(requireOfflineMedia(eventId, trustedOrigin)).toBe(project);
+    }
+    for (const wrongOrigin of [undefined, ...untrustedOrigins]) {
       expect(() => requireOfflineMedia(eventId, wrongOrigin)).toThrow(expect.objectContaining(failed));
     }
     expect(() => requireOfflineMedia('different-event', origin)).toThrow(expect.objectContaining(failed));
@@ -93,11 +102,26 @@ describe('offline V2 activation', () => {
     expectNoPrivilegedIo();
   });
 
+  it('enables the browser only at the two exact V2 origins with the selected release mode', () => {
+    const config = { mode: 'staging', projectId: project, useEmulators: 'false', release: 'true' };
+    const location = (value: string) => ({ origin: value, hostname: value });
+    for (const trustedOrigin of trustedOrigins) {
+      expect(offlineBrowserMode(config, location(trustedOrigin))).toBe('enabled');
+      expect(offlineBrowserMode({ ...config, release: 'recovery' }, location(trustedOrigin))).toBe('recovery');
+      expect(offlineBrowserMode({ ...config, release: undefined }, location(trustedOrigin))).toBeUndefined();
+    }
+    for (const wrongOrigin of untrustedOrigins) {
+      expect(offlineBrowserMode(config, location(wrongOrigin))).toBeUndefined();
+    }
+  });
+
   it('preserves strict loopback demo operation without access to the cloud signer', async () => {
     installEnv({ ...demoEnv, JUSTKVIZ_OFFLINE_SIGNING_KEY: privatePem() });
     sdk.app.mockReturnValue({ options: { projectId: demoProject } });
     const demoScope = requireOfflineRuntime(eventId, undefined, 'issue');
+    const { offlineCors } = await import('../functions/src/offline/activation');
     const { cloudOfflineSigner, offlineSigningSecrets } = await import('../functions/src/offline/signing');
+    expect(offlineCors).toBe(true);
     expect(demoScope.environment).toBe(demoProject);
     expect(cloudOfflineSigner(demoScope)).toBeUndefined();
     expect(offlineSigningSecrets).toEqual([]);

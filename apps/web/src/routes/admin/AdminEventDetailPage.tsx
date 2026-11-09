@@ -19,7 +19,7 @@ import { ManualTeamDialog } from '../../features/events/ManualTeamDialog';
 import { EventPublicationButton } from '../../features/events/EventPublicationButton';
 import { LocalEventMediaPanel } from '../../features/events/LocalEventMediaPanel';
 import { localEventMediaAvailable } from '../../features/events/localEventMediaApi';
-import { currentOfflineMode, offlinePreparationPermissions } from '../../features/offline/offlineAvailability';
+import { OfflinePreparationLink } from '../../features/offline/OfflinePreparationLink';
 import { eventCapacity, eventDateLabel, registrationPresentation } from '../../features/events/eventPresentation';
 import { RegistrationSharePanel } from '../../features/events/RegistrationSharePanel';
 import { getEvent } from '../../features/events/eventRepository';
@@ -202,7 +202,6 @@ export function AdminEventDetailPage() {
   const admin = can('event.manage') && eventOperational(event);
   const hidden = ['trash', 'deleting'].includes(eventDisposition(event));
   const locked = event.quizAssignment;
-  const offlineMode = currentOfflineMode();
   const registration = registrationPresentation(event, now), capacity = eventCapacity(event);
   const sourceRevision = locked && libraryComparison?.eventId === event.id && libraryComparison.quizId === locked.quizId
     ? libraryComparison.revision : selectedQuiz?.id === locked?.quizId ? selectedQuiz?.revision : undefined;
@@ -252,12 +251,7 @@ export function AdminEventDetailPage() {
         <LocalEventMediaPanel key={`${event.id}:${locked.snapshotId}:${event.startsAt.getTime()}:${currentUser.uid}:${membership?.version}`}
           eventId={event.id} snapshotId={locked.snapshotId} quizRevision={locked.quizRevision} actorId={currentUser.uid} />}
 
-      {locked && currentUser && offlinePreparationPermissions.every(permission => can(permission)) && eventOperational(event)
-        && (offlineMode === 'demo' || offlineMode === 'enabled') && <section className="event-section">
-        <h2>Kvíz bez připojení</h2>
-        <p>Zašifrovaná kopie celého večera včetně médií, bodování a pozdější synchronizace.</p>
-        <a className="secondary-link" href={`/offline.html#/prepare?eventId=${encodeURIComponent(event.id)}`}>Připravit offline kvíz</a>
-      </section>}
+      {locked && currentUser && eventOperational(event) && <OfflinePreparationLink eventId={event.id} can={can} />}
 
       {!hidden && can('event.read') && event.lifecycleStatus === 'completed' && <section className="event-section">
         <div className="event-section-heading"><div><p className="eyebrow">Dokončená akce</p><h2>Konečné výsledky</h2></div></div>

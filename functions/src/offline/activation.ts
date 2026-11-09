@@ -4,7 +4,7 @@ import { requireDemoEmulators } from '../media/local-event-manifest.js';
 
 export const offlineDemoProject = 'demo-filmovy-kviz-v2';
 const cloudProject = 'filmovy-kviz-v2-staging';
-const cloudOrigin = 'https://justkviz-v2.web.app';
+const cloudOrigins = ['https://justkviz.cz', 'https://justkviz-v2.web.app'] as const;
 const audience = 'justkviz-offline-v1';
 const eventIdPattern = /^[A-Za-z0-9_-]{1,150}$/u;
 const maximumEvents = 10;
@@ -46,7 +46,7 @@ export function offlineCloudActivation(env: NodeJS.ProcessEnv = process.env): Cl
   return { mode: env.JUSTKVIZ_OFFLINE_RECOVERY_ONLY === 'true' ? 'recovery' : 'enabled', events };
 }
 
-export const offlineCors = process.env.FUNCTIONS_EMULATOR === 'true' ? true : cloudOrigin;
+export const offlineCors = process.env.FUNCTIONS_EMULATOR === 'true' ? true : [...cloudOrigins];
 
 export function requireOfflineRuntime(eventId: string, origin: string | undefined, access: OfflineAccess): OfflineScope {
   if (process.env.FUNCTIONS_EMULATOR === 'true' && process.env.GCLOUD_PROJECT === offlineDemoProject) {
@@ -54,7 +54,7 @@ export function requireOfflineRuntime(eventId: string, origin: string | undefine
     return { environment: offlineDemoProject, audience };
   }
   const activation = offlineCloudActivation();
-  if (!activation || origin !== cloudOrigin || !activation.events.has(eventId)
+  if (!activation || !cloudOrigins.some(allowed => origin === allowed) || !activation.events.has(eventId)
     || (activation.mode === 'recovery' && access !== 'sync')) throw offlineInactive();
   try {
     const { projectId, storageBucket } = getApp().options;
