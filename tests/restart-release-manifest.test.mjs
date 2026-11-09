@@ -14,6 +14,7 @@ const show = json('tools/show-mode/deployment-manifest.json');
 const drive = json('tools/drive/deployment-manifest.json');
 const driveMedia = json('tools/drive-media/deployment-manifest.json');
 const driveLocal = json('tools/drive-local/deployment-manifest.json');
+const offline = json('tools/offline/deployment-manifest.json');
 const sorted = values => [...values].sort();
 const union = values => sorted(new Set(values));
 const emailExports = [
@@ -25,11 +26,10 @@ const emailExports = [
 const localDemoExports = [
   'authorizeLocalImageBackup', 'readLocalImageAuthority', 'readLocalImageManifest',
   'readLocalEventMediaAuthorization', 'readLocalEventMediaManifest', 'readLocalProjectorMediaAuthority',
-  'authorizeOfflineEvent', 'commitOfflineSync', 'prepareOfflineEvent', 'previewOfflineSync', 'readOfflineTrust',
 ];
 assert(localDemoExports.every(name => access.unchangedExcluded[name]?.includes('Demo emulators only. Excluded from cloud releases.')));
 const laterFeatureExports = [
-  ...localDemoExports,
+  ...localDemoExports, ...offline.newCallableFunctions,
   ...show.newFunctions, ...drive.functions, ...driveMedia.newFunctions, ...driveLocal.newFunctions,
   'restoreQuiz', 'trashQuiz', 'completeEvent',
 ];
@@ -104,7 +104,11 @@ test('later exports belong to their feature manifests or documented quiz-trash/c
   for (const feature of [show, driveMedia, driveLocal]) assert(feature.newFunctions.every(name => feature.functions.includes(name)));
   assert.equal(show.projectId, null); // The historical SHOW inventory grants no cloud target.
   assert.equal(show.region, manifest.region);
-  for (const feature of [drive, driveMedia, driveLocal]) {
+  assert.deepEqual(sorted(offline.newCallableFunctions), ['authorizeOfflineEvent', 'commitOfflineSync', 'prepareOfflineEvent', 'previewOfflineSync', 'readOfflineTrust']);
+  assert.equal(offline.default, 'disabled');
+  assert.equal(offline.activationRequiresSeparateApproval, true);
+  assert(offline.newCallableFunctions.every(name => access.unchangedExcluded[name]?.includes('default-disabled')));
+  for (const feature of [drive, driveMedia, driveLocal, offline]) {
     assert.equal(feature.projectId, manifest.projectId);
     assert.equal(feature.region, manifest.region);
   }
