@@ -47,7 +47,16 @@ function Move-FixturePath {
 function New-Snapshot {
   param([string]$Directory, [psobject]$Paths, [string]$Payload)
   [System.IO.Directory]::CreateDirectory((Get-EventNightNativePath $Directory)) | Out-Null
-  Write-FixtureFile (Join-Path $Directory 'firebase-export-metadata.json') '{"synthetic":true}'
+  foreach ($subdirectory in @('auth_export', 'firestore_export/all_namespaces/all_kinds', 'storage_export/blobs', 'storage_export/metadata')) {
+    [System.IO.Directory]::CreateDirectory((Get-EventNightNativePath (Join-Path $Directory $subdirectory))) | Out-Null
+  }
+  Write-FixtureFile (Join-Path $Directory 'firebase-export-metadata.json') '{"auth":{"path":"auth_export"},"firestore":{"path":"firestore_export","metadata_file":"firestore_export/firestore_export.overall_export_metadata"},"storage":{"path":"storage_export"}}'
+  Write-FixtureFile (Join-Path $Directory 'auth_export/accounts.json') '{"users":[]}'
+  Write-FixtureFile (Join-Path $Directory 'auth_export/config.json') '{}'
+  Write-FixtureFile (Join-Path $Directory 'firestore_export/firestore_export.overall_export_metadata') 'synthetic overall metadata'
+  Write-FixtureFile (Join-Path $Directory 'firestore_export/all_namespaces/all_kinds/all_namespaces_all_kinds.export_metadata') 'synthetic shard metadata'
+  Write-FixtureFile (Join-Path $Directory 'firestore_export/all_namespaces/all_kinds/output-0') 'synthetic Firestore shard'
+  Write-FixtureFile (Join-Path $Directory 'storage_export/buckets.json') '{"buckets":[]}'
   Write-FixtureFile (Join-Path $Directory 'payload.json') $Payload
   New-EventNightSnapshotManifest $Directory $Paths
   Assert-EventNightSnapshot $Directory $Paths | Out-Null
@@ -128,6 +137,48 @@ Check ((Fingerprint $case.Paths.SnapshotDirectory) -eq $case.Next) 'successful p
 Check (-not (Test-Path -LiteralPath $case.Paths.PromotionJournal)) 'successful promotion removes journal'
 Restore-EventNightSnapshot $case.Repo $case.Paths | Out-Null
 Check ((Fingerprint $case.Paths.SnapshotDirectory) -eq $case.Next) 'valid canonical without journal unchanged'
+
+# A successful CLI process and a self-consistent manifest must never certify
+# a checkpoint that lacks part of the Auth, Firestore or Storage export.
+foreach ($missing in @('auth_export/accounts.json', 'firestore_export/all_namespaces/all_kinds/output-0', 'storage_export/buckets.json')) {
+  $case = New-Case ('missing-' + [System.IO.Path]::GetFileName($missing))
+  [System.IO.File]::Delete((Get-EventNightNativePath (Join-Path $case.Paths.ExportStaging $missing)))
+  [System.IO.File]::Delete((Get-EventNightNativePath (Join-Path $case.Paths.ExportStaging '.event-night-manifest.json')))
+  Fails { New-EventNightSnapshotManifest $case.Paths.ExportStaging $case.Paths } "cannot certify a partial export missing $missing"
+  Check (-not (Test-Path -LiteralPath (Join-Path $case.Paths.ExportStaging '.event-night-manifest.json'))) 'partial export has no new manifest'
+  Check ((Fingerprint $case.Paths.SnapshotDirectory) -eq $case.Previous) 'partial export preserves previous snapshot'
+}
+
+$case = New-Case 'wrong-export-path'
+Write-FixtureFile (Join-Path $case.Paths.ExportStaging 'firebase-export-metadata.json') '{"auth":{"path":"../auth_export"},"firestore":{"path":"firestore_export","metadata_file":"firestore_export/firestore_export.overall_export_metadata"},"storage":{"path":"storage_export"}}'
+Fails { New-EventNightSnapshotManifest $case.Paths.ExportStaging $case.Paths } 'export metadata cannot reference an outside service directory'
+
+$case = New-Case 'export-array'
+$metadataPath = Join-Path $case.Paths.ExportStaging 'firebase-export-metadata.json'
+$metadata = Get-Content -LiteralPath $metadataPath -Raw -Encoding UTF8
+Write-FixtureFile $metadataPath ('[' + $metadata.Trim() + ']')
+Fails { New-EventNightSnapshotManifest $case.Paths.ExportStaging $case.Paths } 'export metadata must have an object root'
+
+$case = New-Case 'export-case-alias'
+$metadataPath = Join-Path $case.Paths.ExportStaging 'firebase-export-metadata.json'
+$metadata = Get-Content -LiteralPath $metadataPath -Raw -Encoding UTF8
+Write-FixtureFile $metadataPath ($metadata.Replace('"path":"storage_export"', '"Path":"storage_export"'))
+Fails { New-EventNightSnapshotManifest $case.Paths.ExportStaging $case.Paths } 'export metadata property names must match the Firebase importer'
+
+$case = New-Case 'missing-empty-storage-directory'
+[System.IO.Directory]::Delete((Get-EventNightNativePath (Join-Path $case.Paths.SnapshotDirectory 'storage_export/blobs')))
+Check ((Fingerprint $case.Paths.SnapshotDirectory) -eq $case.Previous) 'removing the empty Storage directory leaves file checksums unchanged'
+Fails { Restore-EventNightSnapshot $case.Repo $case.Paths } 'restore refuses a manifest-valid checkpoint with a missing empty Storage directory'
+
+$case = New-Case 'storage-pair'
+$storage = Join-Path $case.Paths.ExportStaging 'storage_export'
+Write-FixtureFile (Join-Path $storage 'metadata/fixture.json') '{}'
+Fails { New-EventNightSnapshotManifest $case.Paths.ExportStaging $case.Paths } 'Storage metadata without matching blob is incomplete'
+[System.IO.File]::WriteAllBytes((Get-EventNightNativePath (Join-Path $storage 'blobs/fixture')), [byte[]]@())
+New-EventNightSnapshotManifest $case.Paths.ExportStaging $case.Paths
+Assert-EventNightSnapshot $case.Paths.ExportStaging $case.Paths | Out-Null
+Write-FixtureFile (Join-Path $storage 'blobs/orphan') 'unpaired blob'
+Fails { New-EventNightSnapshotManifest $case.Paths.ExportStaging $case.Paths } 'Storage blob without matching metadata is incomplete'
 
 $case = New-Case 'initial-existing'
 Fails { Promote-EventNightSnapshot $case.Repo $case.Paths -Initial } 'initial prepare refuses existing canonical with valid staging'

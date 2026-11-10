@@ -273,15 +273,83 @@ function Get-EventNightCandidate {
   return $manifest.candidate
 }
 
+function Assert-EventNightExportLayout {
+  param([Parameter(Mandatory = $true)][string]$SnapshotDirectory)
+
+  Assert-EventNightNoReparse $SnapshotDirectory -Recurse
+  $hint = 'Ponechte poslední ověřený snapshot a lokální export zopakujte.'
+  $metadataPath = Get-EventNightNativePath (Join-Path $SnapshotDirectory 'firebase-export-metadata.json')
+  if (-not [System.IO.File]::Exists($metadataPath) -or [System.IO.FileInfo]::new($metadataPath).Length -gt 16384) {
+    Throw-QaError 'Firebase emulator export nemá platná metadata.' $hint
+  }
+  try {
+    $json = Get-Content -LiteralPath $metadataPath -Raw -Encoding UTF8
+    # ConvertFrom-Json can unwrap a singleton array; Firebase requires an object root.
+    if ([string]::IsNullOrWhiteSpace($json) -or -not $json.TrimStart().StartsWith('{', [StringComparison]::Ordinal)) {
+      throw 'Expected an export metadata object.'
+    }
+    $metadata = $json | ConvertFrom-Json
+  } catch {
+    Throw-QaError 'Firebase emulator export nemá platná metadata.' $hint
+  }
+  $firestoreMetadata = 'firestore_export/firestore_export.overall_export_metadata'
+  foreach ($service in @('auth', 'firestore', 'storage')) {
+    $property = if ($null -ne $metadata) { $metadata.PSObject.Properties[$service] }
+    $entry = if ($null -ne $property) { $property.Value }
+    $declared = if ($null -ne $entry) { $entry.PSObject.Properties['path'] }
+    $firestoreFile = if ($null -ne $entry) { $entry.PSObject.Properties['metadata_file'] }
+    if ($null -eq $property -or $property.Name -cne $service -or $null -eq $declared -or $declared.Name -cne 'path' -or
+        $declared.Value -isnot [string] -or $declared.Value -cne ($service + '_export') -or
+        ($service -eq 'firestore' -and ($null -eq $firestoreFile -or $firestoreFile.Name -cne 'metadata_file' -or $firestoreFile.Value -isnot [string] -or
+          $firestoreFile.Value -cne $firestoreMetadata))) {
+      Throw-QaError "Firebase emulator export nemá očekávanou strukturu služby $service." $hint
+    }
+  }
+
+  # Layout produced by the pinned Emulator Suite. File hashes alone cannot
+  # distinguish a complete export from an incomplete one sealed with a manifest.
+  $shard = 'firestore_export/all_namespaces/all_kinds'
+  foreach ($required in @('auth_export/accounts.json', 'auth_export/config.json', $firestoreMetadata,
+      ($shard + '/all_namespaces_all_kinds.export_metadata'), 'storage_export/buckets.json')) {
+    $file = Get-EventNightNativePath (Join-Path $SnapshotDirectory $required)
+    if (-not [System.IO.File]::Exists($file) -or [System.IO.FileInfo]::new($file).Length -eq 0) {
+      Throw-QaError "Firebase emulator export nemá požadovaný soubor $required." $hint
+    }
+  }
+  $shardPath = Get-EventNightNativePath (Join-Path $SnapshotDirectory $shard)
+  $shardFiles = @([System.IO.Directory]::GetFiles($shardPath, 'output-*') |
+    Where-Object { [System.IO.Path]::GetFileName($_) -cmatch '^output-\d+$' })
+  if ($shardFiles.Count -eq 0) {
+    Throw-QaError 'Firestore export neobsahuje data.' $hint
+  }
+
+  $blobs = Get-EventNightNativePath (Join-Path $SnapshotDirectory 'storage_export/blobs')
+  $objectMetadata = Get-EventNightNativePath (Join-Path $SnapshotDirectory 'storage_export/metadata')
+  if (-not [System.IO.Directory]::Exists($blobs) -or -not [System.IO.Directory]::Exists($objectMetadata)) {
+    Throw-QaError 'Storage export nemá oba adresáře pro objekty a jejich metadata.' $hint
+  }
+  $blobFiles = [System.IO.Directory]::GetFiles($blobs, '*', [System.IO.SearchOption]::AllDirectories)
+  $metadataFiles = [System.IO.Directory]::GetFiles($objectMetadata, '*', [System.IO.SearchOption]::AllDirectories)
+  if ($blobFiles.Length -ne $metadataFiles.Length) {
+    Throw-QaError 'Storage export nemá ke všem objektům odpovídající metadata.' $hint
+  }
+  foreach ($item in $metadataFiles) {
+    $relative = $item.Substring($objectMetadata.Length + 1)
+    if (-not $relative.EndsWith('.json', [StringComparison]::Ordinal) -or
+        [System.IO.FileInfo]::new($item).Length -eq 0 -or
+        -not [System.IO.File]::Exists([System.IO.Path]::Combine($blobs, $relative.Substring(0, $relative.Length - 5)))) {
+      Throw-QaError 'Storage export nemá ke všem metadatům odpovídající objekt.' $hint
+    }
+  }
+}
+
 function New-EventNightSnapshotManifest {
   param(
     [Parameter(Mandatory = $true)][string]$SnapshotDirectory,
     [Parameter(Mandatory = $true)][psobject]$Paths
   )
 
-  if (-not (Test-Path -LiteralPath (Get-EventNightNativePath (Join-Path $SnapshotDirectory 'firebase-export-metadata.json')) -PathType Leaf)) {
-    Throw-QaError 'Firebase emulator export neobsahuje metadata.' 'Ponechte poslední known-good snapshot a přípravu nebo backup zopakujte.'
-  }
+  Assert-EventNightExportLayout $SnapshotDirectory
   $candidate = Get-EventNightCandidate $Paths
   $health = if (Test-Path -LiteralPath $Paths.HealthPath -PathType Leaf) {
     Get-Content -LiteralPath $Paths.HealthPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -308,7 +376,7 @@ function Assert-EventNightSnapshot {
   )
 
   $manifestPath = Join-Path $SnapshotDirectory '.event-night-manifest.json'
-  Assert-EventNightNoReparse $SnapshotDirectory -Recurse
+  Assert-EventNightExportLayout $SnapshotDirectory
   if (-not (Test-Path -LiteralPath (Get-EventNightNativePath $manifestPath) -PathType Leaf)) {
     Throw-QaError 'Persistentní snapshot nemá event-night manifest.' 'Nejdřív spusťte PREPARE_EVENT_NIGHT.cmd.'
   }
