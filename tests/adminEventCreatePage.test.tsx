@@ -27,6 +27,7 @@ let loadList: (() => Promise<null>) | undefined;
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.mocked(createEvent).mockReset();
+  window.sessionStorage.clear();
   Object.assign(auth, { uid: 'staff-one', version: 1 });
   loadList = undefined;
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
@@ -59,6 +60,15 @@ async function fillForm() {
   expect(form().checkValidity()).toBe(true);
 }
 
+async function changeField(label: string, value: string) {
+  const element = [...form().querySelectorAll('label')].find(item => item.querySelector('span')?.textContent === label)!.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input,textarea,select')!;
+  const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(element, value);
+    element.dispatchEvent(new Event(element instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
+  });
+}
+
 function deferCreate() {
   let resolve!: (value: EventMutationResponse) => void;
   let reject!: (error: Error) => void;
@@ -73,7 +83,7 @@ it('sends a single create request for two valid submissions in the same React ba
   await act(async () => { form().requestSubmit(); form().requestSubmit(); });
 
   expect(createEvent).toHaveBeenCalledTimes(1);
-  expect(createEvent).toHaveBeenCalledWith(expect.objectContaining({ title: 'Testovací večer', startsAt: '2030-10-20T19:00', venueName: 'Testovací sál', publicLocation: 'Praha' }));
+  expect(createEvent).toHaveBeenCalledWith(expect.objectContaining({ title: 'Testovací večer', startsAt: '2030-10-20T19:00', venueName: 'Testovací sál', publicLocation: 'Praha' }), expect.any(String));
   expect(submitButton().disabled).toBe(true);
   await act(async () => request.resolve(created));
   expect(router.state.location.pathname).toBe(createdPath);
@@ -146,5 +156,98 @@ it('re-enables the same form after a rejection and navigates after a successful 
   vi.mocked(createEvent).mockResolvedValueOnce(created);
   await act(async () => form().requestSubmit());
   expect(createEvent).toHaveBeenCalledTimes(2);
+  expect(router.state.location.pathname).toBe(createdPath);
+});
+
+it('retains the exact submitted event and request identity after an uncertain response and same-user remount', async () => {
+  const request = deferCreate();
+  await render();
+  await fillForm();
+  await act(async () => form().requestSubmit());
+  const first = vi.mocked(createEvent).mock.calls[0]!;
+  expect(first[1]).toEqual(expect.any(String));
+  await act(async () => request.reject(new Error('Synthetic response lost after commit')));
+  auth.version++;
+  await render();
+  expect(form().querySelector<HTMLInputElement>('input')!.value).toBe('Testovací večer');
+  expect([...form().querySelectorAll('fieldset')].every(item => item.disabled)).toBe(true);
+  vi.mocked(createEvent).mockResolvedValueOnce(created);
+  await act(async () => form().requestSubmit());
+  expect(vi.mocked(createEvent).mock.calls[1]).toEqual(first);
+  expect(router.state.location.pathname).toBe(createdPath);
+});
+
+it('restores the full submitted configuration from durable recovery after a complete component remount', async () => {
+  const request = deferCreate();
+  await render(); await fillForm();
+  await changeField('Datum a čas v Praze', '2030-10-27T02:30');
+  await changeField('Europe/Prague · při opakovaném čase', '+01:00');
+  await changeField('Popis akce', 'Synthetic original description');
+  await changeField('Způsob účtování', 'per-event');
+  await changeField('Cena v Kč', '1700');
+  await changeField('Maximální počet týmů', '17');
+  await changeField('Minimální počet členů týmu', '1');
+  await act(async () => form().querySelector<HTMLInputElement>('input[type=checkbox]')!.click());
+  await act(async () => form().requestSubmit());
+  const first = vi.mocked(createEvent).mock.calls[0]!;
+  expect(first[0]).toMatchObject({ utcOffset: '+01:00', pricingMode: 'per-event', pricingAmountCzk: 1700, pricingHidden: true, description: 'Synthetic original description', teamCapacity: 17, teamSizeMin: 1 });
+  await act(async () => request.reject(new Error('Synthetic lost ACK')));
+  await act(async () => root.unmount()); root = createRoot(host);
+  await render();
+  expect(form().querySelector<HTMLTextAreaElement>('textarea')!.value).toBe('Synthetic original description');
+  expect([...form().querySelectorAll('fieldset')].every(item => item.disabled)).toBe(true);
+  vi.mocked(createEvent).mockResolvedValueOnce(created);
+  await act(async () => form().requestSubmit());
+  expect(vi.mocked(createEvent).mock.calls[1]).toEqual(first);
+  expect(router.state.location.pathname).toBe(createdPath);
+});
+
+it('keeps an unobserved successful attempt across A to B to A without exposing its fields to B', async () => {
+  const request = deferCreate();
+  await render(); await fillForm();
+  await act(async () => form().requestSubmit());
+  const first = vi.mocked(createEvent).mock.calls[0]!;
+  auth.uid = 'staff-two'; await render();
+  expect(form().querySelector<HTMLInputElement>('input')!.value).toBe('');
+  await act(async () => request.resolve(created));
+  expect(router.state.location.pathname).toBe(createPath);
+  auth.uid = 'staff-one'; await render();
+  expect(form().querySelector<HTMLInputElement>('input')!.value).toBe('Testovací večer');
+  vi.mocked(createEvent).mockResolvedValueOnce(created);
+  await act(async () => form().requestSubmit());
+  expect(vi.mocked(createEvent).mock.calls[1]).toEqual(first);
+  expect(router.state.location.pathname).toBe(createdPath);
+});
+
+it('does not dispatch a creation whose recovery snapshot could not be persisted', async () => {
+  await render(); await fillForm();
+  const write = vi.spyOn(window.sessionStorage, 'setItem').mockImplementation(() => { throw Error('Synthetic storage denial'); });
+  await act(async () => form().requestSubmit());
+  expect(createEvent).not.toHaveBeenCalled();
+  expect(host.querySelector('[role=alert]')?.textContent).toContain('Akce nebyla odeslána');
+  expect(form().querySelector<HTMLInputElement>('input')!.value).toBe('Testovací večer');
+  write.mockRestore();
+  vi.mocked(createEvent).mockResolvedValueOnce(created);
+  await act(async () => form().requestSubmit());
+  expect(router.state.location.pathname).toBe(createdPath);
+});
+
+it('requires an explicit checked reset before editing an ambiguous submission', async () => {
+  const request = deferCreate();
+  await render(); await fillForm();
+  await act(async () => form().requestSubmit());
+  const first = vi.mocked(createEvent).mock.calls[0]!;
+  await act(async () => request.reject(new Error('Synthetic lost response')));
+  const reset = [...host.querySelectorAll<HTMLButtonElement>('button')].find(item => item.textContent === 'Začít nový pokus')!;
+  expect(reset.disabled).toBe(true);
+  const checked = [...host.querySelectorAll<HTMLInputElement>('input[type=checkbox]')].find(item => item.parentElement!.textContent.includes('Zkontroloval'))!;
+  await act(async () => checked.click());
+  await act(async () => { reset.click(); form().requestSubmit(); });
+  expect(createEvent).toHaveBeenCalledTimes(1);
+  expect(form().querySelector<HTMLInputElement>('input')!.value).toBe('');
+  await fillForm();
+  vi.mocked(createEvent).mockResolvedValueOnce(created);
+  await act(async () => form().requestSubmit());
+  expect(vi.mocked(createEvent).mock.calls[1]![1]).not.toBe(first[1]);
   expect(router.state.location.pathname).toBe(createdPath);
 });

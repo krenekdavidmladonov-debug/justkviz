@@ -22,6 +22,7 @@ import {
 import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
 
 import { requireFullEmulatorEnvironment } from '../../tools/local-emulator-environment.mjs';
+import { editorIdentity } from './editor-identity.mjs';
 
 const { projectId, authEndpoint, firestoreEndpoint, functionsEndpoint } = requireFullEmulatorEnvironment(
   globalThis.process.env,
@@ -75,6 +76,73 @@ async function inspectSnapshot(snapshotId) {
   };
 }
 
+async function verifyCreationRecovery() {
+  const creator = await editorIdentity(), other = await editorIdentity();
+  try {
+    const member = (await adminDb.collection('memberships').where('email', '==', creator.email).get()).docs[0];
+    await member.ref.update({ role: 'owner', events: { mode: 'selected', ids: [] } });
+    const initialMember = (await member.ref.get()).data();
+    const payload = { expectedRevision: 0, requestId: 'same-request-different-actor', event: eventInput('Concurrent synthetic recovery') };
+    const results = await Promise.all(Array.from({ length: 3 }, () => creator.call('createEvent', payload)));
+    assert.deepEqual(results[1], results[0]); assert.deepEqual(results[2], results[0]);
+    const receipt = results[0], root = adminDb.doc('events/' + receipt.eventId), projection = adminDb.doc('publicEvents/' + receipt.eventId);
+    const grantedMember = (await member.ref.get()).data();
+    assert.equal(grantedMember.version, initialMember.version + 1);
+    assert.deepEqual(grantedMember.events, { mode: 'selected', ids: [receipt.eventId] });
+    assert.equal((await adminDb.collection('accessAudit').where('resourceId', '==', receipt.eventId).get()).size, 1);
+    const publicData = (await projection.get()).data();
+    assert.equal('creationFingerprint' in publicData, false);
+    assert.equal('createdBy' in publicData, false);
+    const changedConfigurations = [
+      { title: 'Changed title' }, { description: 'Changed description' }, { startsAt: '2026-10-21T17:00:00Z' }, { timeZone: 'UTC' },
+      { venue: { ...payload.event.venue, name: 'Changed venue' } }, { venue: { ...payload.event.venue, publicLocation: 'Changed location' } },
+      { teamCapacity: 21 }, { peopleCapacity: 121 }, { teamSizeMin: 1 }, { teamSizeMax: 3 },
+      { pricing: { mode: 'per-event', amountCzk: 2000 } },
+      { pricing: { mode: 'per-team', amountCzk: 700 } },
+      { pricing: { mode: 'per-team', amountCzk: 350, hidden: true } },
+    ];
+    const originalRoot = (await root.get()).data();
+    for (const change of changedConfigurations) await expectFunctionError(
+      () => creator.call('createEvent', { ...payload, event: { ...payload.event, ...change } }), 'functions/already-exists');
+    await expectFunctionError(() => creator.call('createEvent', { ...payload, requestId: '../invalid' }), 'functions/invalid-argument');
+    assert.deepEqual((await root.get()).data(), originalRoot);
+    assert.deepEqual((await projection.get()).data(), publicData);
+    const foreign = await other.call('createEvent', payload);
+    assert.notEqual(foreign.eventId, receipt.eventId);
+
+    await creator.call('updateEvent', { eventId: receipt.eventId, expectedRevision: 1, event: { ...payload.event, title: 'Later edit must survive retry' } });
+    const edited = (await root.get()).data(), editedPublic = (await projection.get()).data();
+    assert.deepEqual(await creator.call('createEvent', payload), receipt);
+    assert.deepEqual((await root.get()).data(), edited);
+    assert.deepEqual((await projection.get()).data(), editedPublic);
+    assert.equal((await member.ref.get()).data().version, grantedMember.version);
+    assert.equal((await adminDb.collection('accessAudit').where('resourceId', '==', receipt.eventId).get()).size, 1);
+
+    for (const revoked of [
+      { events: { mode: 'selected', ids: [] } }, { status: 'suspended' },
+      { permissions: grantedMember.permissions.filter(permission => permission !== 'event.create') },
+      { permissions: grantedMember.permissions.filter(permission => permission !== 'event.read') },
+    ]) {
+      await member.ref.set({ ...grantedMember, ...revoked, version: grantedMember.version + 1 });
+      await expectFunctionError(() => creator.call('createEvent', payload), 'functions/permission-denied');
+      assert.deepEqual((await root.get()).data(), edited);
+      assert.deepEqual((await projection.get()).data(), editedPublic);
+      assert.equal((await adminDb.collection('accessAudit').where('resourceId', '==', receipt.eventId).get()).size, 1);
+    }
+    await member.ref.set({ ...grantedMember, version: grantedMember.version + 2 });
+    const cancelled = await creator.call('cancelEvent', { eventId: receipt.eventId, expectedRevision: edited.revision });
+    await creator.call('trashEvent', { eventId: receipt.eventId, expectedRevision: cancelled.revision });
+    await expectFunctionError(() => creator.call('createEvent', payload), 'functions/permission-denied');
+    const trashed = (await root.get()).data();
+    const deleted = await creator.call('deleteEvent', { eventId: receipt.eventId, expectedRevision: trashed.revision, confirmTitle: trashed.title });
+    assert.equal(deleted.state, 'complete');
+    assert.equal((await root.get()).exists, false);
+    assert.equal((await adminDb.doc('eventTombstones/' + receipt.eventId).get()).exists, true);
+    await expectFunctionError(() => creator.call('createEvent', payload), 'functions/failed-precondition');
+    assert.equal((await root.get()).exists, false); assert.equal((await projection.get()).exists, false);
+  } finally { await Promise.all([creator.dispose(), other.dispose()]); }
+}
+
 async function run() {
   await expectFunctionError(
     () => invoke('createEvent', { expectedRevision: 0, event: eventInput() }),
@@ -96,6 +164,20 @@ async function run() {
   await signOut(auth);
 
   await signInWithEmailAndPassword(auth, 'admin@example.test', 'LocalQuiz123!');
+  const retryPayload = { expectedRevision: 0, requestId: 'events-lost-ack-recovery', event: eventInput('Synthetic lost ACK creation') };
+  let committed;
+  await assert.rejects(async () => {
+    committed = await invoke('createEvent', retryPayload);
+    throw new Error('Synthetic transport failure after real server commit');
+  }, /Synthetic transport failure/u);
+  const recovered = await invoke('createEvent', retryPayload);
+  assert.equal(recovered.eventId, committed.eventId, 'A lost creation ACK must retry the same event, not create a duplicate.');
+  assert.deepEqual(recovered, committed);
+  const matchingRoots = await adminDb.collection('events').where('title', '==', retryPayload.event.title).get();
+  const matchingPublic = await adminDb.collection('publicEvents').where('title', '==', retryPayload.event.title).get();
+  assert.equal(matchingRoots.size, 1);
+  assert.equal(matchingPublic.size, 1);
+  await verifyCreationRecovery();
   const created = await invoke('createEvent', { expectedRevision: 0, event: eventInput() });
   assert.equal(created.revision, 1);
   const eventRef = doc(db, 'events', created.eventId);
@@ -214,6 +296,8 @@ async function run() {
     directWritesDenied: true, editorialFindingsAdvisory: true, warningAcknowledgementOptional: true,
     immutableSnapshots: true, supersededSnapshotReadsDenied: true, currentSnapshotReadsAllowed: true,
     relockBeforeScoring: true, staleQuizRevisionDenied: true,
+    creationLostAcknowledgementRecovery: true, concurrentCreateDeduplicated: true,
+    retryPreservesEditsAndGrants: true, replayRevocationEnforced: true, deletedEventNotResurrected: true,
   }, null, 2));
 }
 

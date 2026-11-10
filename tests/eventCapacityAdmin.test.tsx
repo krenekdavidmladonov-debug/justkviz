@@ -86,6 +86,15 @@ it.each([-1, 0.5, 1_000_001, NaN])('rejects invalid amount %s before calling the
   expect(mocks.invoke).not.toHaveBeenCalled();
 });
 
+it('sends the recovery request identity only for a keyed creation', async () => {
+  await createEvent(values, 'retained-event-request');
+  expect(mocks.invoke).toHaveBeenLastCalledWith(expect.objectContaining({ expectedRevision: 0, requestId: 'retained-event-request' }));
+  await createEvent(values);
+  expect(mocks.invoke.mock.calls.at(-1)?.[0]).not.toHaveProperty('requestId');
+  await updateEvent('event', 2, values);
+  expect(mocks.invoke.mock.calls.at(-1)?.[0]).not.toHaveProperty('requestId');
+});
+
 it('toggles public price visibility without clearing the editable amount', async () => {
   let saved: typeof values | undefined;
   function EditableForm() {

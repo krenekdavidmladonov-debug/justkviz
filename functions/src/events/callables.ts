@@ -1,8 +1,9 @@
 import { assertPlayableQuizSource } from '../quizzes/playable.js';
 import { eventSessions } from '../live/event-lifecycle.js';
 import { assertQuizAssets } from '../media/model.js';
-import { assertEventOperational } from './guards.js';
+import { assertEventOperational, assertEventReadable } from './guards.js';
 import { storedEventPricing } from './pricing.js';
+import { eventCreationIdentity } from './creation.js';
 export { cancelEvent, archiveEvent } from './management.js';
 import {
   mapEditorQuiz,
@@ -18,7 +19,7 @@ import {
   type Transaction,
 } from 'firebase-admin/firestore';
 import { HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
-import { accessActor, securedOnCall, runAccessTransaction, grantCreatedResource } from '../access/authorization.js';
+import { accessActor, authorize, securedOnCall, runAccessTransaction, grantCreatedResource } from '../access/authorization.js';
 
 import {
   buildPublicEventProjection,
@@ -45,6 +46,7 @@ import {
   expectedRevision,
   isObject,
   requestedEventConfiguration,
+  requestedEventCreationRequestId,
   requiredId,
 } from './validation.js';
 
@@ -186,13 +188,16 @@ export const createEvent = securedOnCall('createEvent', callableOptions, async (
   const initialRevision = expectedRevision(request.data);
   if (initialRevision !== 0) throw new HttpsError('invalid-argument', 'A new event must use expectedRevision 0.');
   const configuration = requestedEventConfiguration(request.data);
-  const eventRef = db.collection('events').doc();
+  const requestId = requestedEventCreationRequestId(request.data);
+  const creation = requestId === undefined ? undefined : eventCreationIdentity(actor.uid, requestId, configuration);
+  const eventRef = creation ? db.collection('events').doc(creation.eventId) : db.collection('events').doc();
   const publicRef = db.collection('publicEvents').doc(eventRef.id);
   const now = Timestamp.now();
   const registrationStatus: RegistrationStatus = 'scheduled';
   const lifecycleStatus: EventLifecycleStatus = 'scheduled';
   const eventData = {
     schemaVersion: 1,
+    ...(creation ? { creationFingerprint: creation.fingerprint } : {}),
     ...configurationFields(configuration),
     registrationStatus,
     registrationPublished: false,
@@ -210,8 +215,18 @@ export const createEvent = securedOnCall('createEvent', callableOptions, async (
     updatedBy: actor.uid,
   };
   await runAccessTransaction(db, async (transaction) => {
-    if ((await transaction.get(eventRef)).exists) {
-      throw new HttpsError('already-exists', 'Event identifier collision. Try again.');
+    const existing = await transaction.get(eventRef);
+    if (creation && (await transaction.get(db.doc(`eventTombstones/${eventRef.id}`))).exists) {
+      throw new HttpsError('failed-precondition', 'Akce byla trvale odstraněna. Po kontrole seznamu začněte nový pokus.');
+    }
+    if (existing.exists) {
+      const current = snapshotData(existing, 'Event');
+      if (!creation || current.createdBy !== actor.uid || current.creationFingerprint !== creation.fingerprint) {
+        throw new HttpsError('already-exists', 'requestId was already used for another event creation.');
+      }
+      const member = await authorize(request.auth, ['event.read', 'event.create'], { kind: 'event', id: eventRef.id }, transaction);
+      assertEventReadable(current, member);
+      return;
     }
     grantCreatedResource(transaction, 'event', eventRef.id);
     transaction.create(eventRef, eventData);

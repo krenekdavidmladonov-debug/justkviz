@@ -9,11 +9,12 @@ interface EventFormProps {
   readonly submitLabel: string;
   readonly pendingLabel?: string;
   readonly live?: boolean;
+  readonly fieldsLocked?: boolean;
   readonly onChange: (values: EventFormValues) => void;
   readonly onSubmit: () => void;
 }
 
-export function EventForm({ values, pending, submitLabel, pendingLabel = 'Ukládám…', onChange, onSubmit, live = false }: EventFormProps) {
+export function EventForm({ values, pending, submitLabel, pendingLabel = 'Ukládám…', onChange, onSubmit, live = false, fieldsLocked = false }: EventFormProps) {
   const validAmount = Number.isInteger(values.pricingAmountCzk) && values.pricingAmountCzk >= 0 && values.pricingAmountCzk <= 1_000_000;
   const pricePreview = values.pricingMode === 'agreement'
     ? eventPriceLabel({ mode: 'agreement', amountCzk: null })
@@ -27,7 +28,7 @@ export function EventForm({ values, pending, submitLabel, pendingLabel = 'Uklád
   };
   return (
     <form className="event-form" onSubmit={submit} aria-busy={pending}>
-      <fieldset className="event-form-section" disabled={pending}>
+      <fieldset className="event-form-section" disabled={pending || fieldsLocked}>
       <legend>Základní údaje</legend>
       <div className="event-form-grid">
       <label className="form-field event-field-wide">
@@ -52,7 +53,7 @@ export function EventForm({ values, pending, submitLabel, pendingLabel = 'Uklád
       <label className="form-field event-field-wide"><span>Popis akce</span><textarea maxLength={2000} value={values.description ?? ''} onChange={event => update('description', event.target.value)} /></label>
       </div>
       </fieldset>
-      <fieldset className="event-form-section" disabled={pending}>
+      <fieldset className="event-form-section" disabled={pending || fieldsLocked}>
         <legend>Cena akce</legend>
         <label className="event-pricing-visibility"><input type="checkbox" checked={values.pricingHidden !== true} onChange={event => update('pricingHidden', !event.target.checked)} /> Zobrazovat cenu na veřejném webu</label>
         <p className="event-muted" id="event-pricing-help">{values.pricingHidden ? 'Cena zůstává uložená pro správce a na veřejném webu se nezobrazuje.' : 'Tato cena se zobrazuje veřejně v přehledu a detailu zveřejněné akce.'} Pro individuální domluvu zvolte Dle dohody.</p>
@@ -68,7 +69,7 @@ export function EventForm({ values, pending, submitLabel, pendingLabel = 'Uklád
         </div>
         <p className="event-muted" aria-live="polite">{values.pricingHidden ? 'Veřejně se cena nezobrazuje. Uložená cena: ' : 'Veřejné zobrazení: '}<strong>{pricePreview}</strong></p>
       </fieldset>
-      <fieldset className="event-form-section" disabled={pending || live}>
+      <fieldset className="event-form-section" disabled={pending || live || fieldsLocked}>
       <legend>Kapacita a velikost týmů</legend>
       <p className="event-muted" id="event-capacity-help">{live && 'Během živého běhu je kapacita uzamčená. '}Kapacitu určuje počet týmů. Každý tým může mít nejvýše 4 členy.</p>
       <div className="event-form-grid" aria-describedby="event-capacity-help">

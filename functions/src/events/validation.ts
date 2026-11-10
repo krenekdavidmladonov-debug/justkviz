@@ -19,6 +19,15 @@ export function requiredId(data: unknown, field: string): string {
   return value;
 }
 
+export function requestedEventCreationRequestId(data: unknown): string | undefined {
+  if (!isObject(data)) throw new HttpsError('invalid-argument', 'Event creation request is required.');
+  if (!Object.hasOwn(data, 'requestId')) return undefined;
+  if (typeof data.requestId !== 'string' || !/^[A-Za-z0-9_-]{1,150}$/u.test(data.requestId)) {
+    throw new HttpsError('invalid-argument', 'requestId is invalid.');
+  }
+  return data.requestId;
+}
+
 export function expectedRevision(data: unknown, field = 'expectedRevision'): number {
   if (!isObject(data) || !Number.isInteger(data[field]) || (data[field] as number) < 0) {
     throw new HttpsError('invalid-argument', `${field} must be a non-negative integer.`);

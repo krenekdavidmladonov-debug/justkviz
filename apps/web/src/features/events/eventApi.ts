@@ -27,8 +27,9 @@ async function invoke(name: string, data: Record<string, unknown>): Promise<Even
   )(data)).data;
 }
 
-export const createEvent = (values: EventFormValues) => invoke('createEvent', {
+export const createEvent = (values: EventFormValues, requestId?: string) => invoke('createEvent', {
   expectedRevision: 0,
+  ...(requestId === undefined ? {} : { requestId }),
   event: eventPayload({ ...values, peopleCapacity: values.teamCapacity * Math.min(4, values.teamSizeMax) }),
 });
 

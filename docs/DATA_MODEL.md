@@ -84,6 +84,32 @@ The local seed uses stable quiz, round, and question IDs. It is development data
 
 ### `events/{eventId}`
 
+New keyed `createEvent` calls accept an optional `requestId` (1–150 ASCII letters,
+digits, `_` or `-`). They derive `event_` + SHA-256 of the JSON array
+`[actorUid, requestId]` and add a private immutable `creationFingerprint` to the
+root. Its v1 input is the explicit normalized creation configuration in
+`functions/src/events/creation.ts`; keep that input stable for old retries.
+No migration is required; callers omitting the ID keep random IDs and existing
+records need no new field. The fingerprint is omitted from the public projection.
+
+An identical retry rechecks current active membership, `event.create`,
+`event.read`, event scope and readable disposition in the transaction. It returns
+the original creation acknowledgement (revision 1, scheduled lifecycle and
+registration), without modifying later edits, counters, projection or scope.
+Read the current event before a subsequent mutation. A changed normalized payload
+under the same key is rejected. Trash/deleting records and existing
+`eventTombstones/{eventId}` block replay or recreation.
+
+The create form records the actor-bound request and complete submitted values in
+per-user tab session storage before dispatch. Ambiguous responses retain them for
+an exact retry after remount/reload; they survive switching to another account in
+the same tab. Unavailable or unreadable storage blocks a new dispatch with an
+actionable message. Starting a different attempt requires explicitly checking the
+event list first. Closing the tab or clearing its storage ends this recovery;
+check the event list before a new attempt in that case. This is reload recovery
+within the tab, not a cross-browser draft store. Legacy no-ID callers do not gain
+lost-response deduplication.
+
 Authoritative event record implemented by Events Foundation: `schemaVersion`, title/start/time zone, private venue configuration, team capacity, retained legacy people capacity, accepted team/people counters, per-event team-size bounds (up to four for new settings and new/edited registrations), registration window/publication/status, lifecycle status, nullable immutable quiz assignment, fixed-point scoring foundation (`unitScale: 2`, `rankingMode: dense`, server-owned `started`), monotonic revision, and trusted audit fields. Staff may read the root; every client write is denied and mutations use trusted Functions.
 
 Event `pricing` is `{ mode: 'per-team' | 'per-event' | 'agreement', amountCzk, hidden? }`.
