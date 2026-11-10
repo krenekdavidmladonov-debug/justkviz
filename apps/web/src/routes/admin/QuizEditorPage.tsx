@@ -203,6 +203,10 @@ function revisionConflict(error: unknown): boolean {
 
 export function QuizEditorPage() {
   const { quizId } = useParams<{ quizId: string }>();
+  return <QuizEditorQuiz key={quizId} quizId={quizId} />;
+}
+
+function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const [searchParams] = useSearchParams();
   const { can, currentUser, membership, loading: authLoading } = useAuth();
   const readOnly = !can('quiz.edit');

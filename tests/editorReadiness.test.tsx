@@ -5,7 +5,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { QuizEditorPage } from '../apps/web/src/routes/admin/QuizEditorPage';
 import { getEditorQuiz } from '../apps/web/src/features/editor/editorRepository';
-import { createQuizSlide, deleteQuizSlide, removeQuizRound, updateQuizSlide } from '../apps/web/src/features/editor/editorApi';
+import { createQuizRound, createQuizSlide, deleteQuizSlide, removeQuizRound, updateQuizSlide } from '../apps/web/src/features/editor/editorApi';
 import { runQuizPreflight } from '../apps/web/src/features/preflight/validation';
 import { QuizPractice } from '../apps/web/src/features/editor/QuizPractice';
 import { SlideRenderer } from '../apps/web/src/features/presentation/SlideRenderer';
@@ -38,7 +38,7 @@ let host: HTMLDivElement, root: Root;
 beforeEach(() => {
   vi.useFakeTimers(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.mocked(getEditorQuiz).mockReset().mockResolvedValue(quiz); vi.mocked(runQuizPreflight).mockClear();
-  vi.mocked(createQuizSlide).mockReset(); vi.mocked(updateQuizSlide).mockReset();
+  vi.mocked(createQuizRound).mockReset(); vi.mocked(createQuizSlide).mockReset(); vi.mocked(updateQuizSlide).mockReset();
   vi.mocked(deleteQuizSlide).mockReset(); vi.mocked(removeQuizRound).mockReset(); access.denied = [];
   vi.mocked(SlideRenderer).mockClear();
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
@@ -58,6 +58,50 @@ async function setText(field: string, value: string) {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
 }
+
+it('isolates the editor during a failed quiz switch and writes only to the retried quiz', async () => {
+  const otherQuiz: EditorQuiz = { ...quiz, id: 'other', title: 'Druhý filmový večer', revision: 8 };
+  let rejectOther!: (reason: Error) => void;
+  vi.mocked(getEditorQuiz).mockResolvedValueOnce(quiz)
+    .mockImplementationOnce(() => new Promise((_, reject) => { rejectOther = reject; }))
+    .mockResolvedValue(otherQuiz);
+  vi.mocked(createQuizRound).mockRejectedValue(new Error('Synthetic write stopped'));
+  const router = await render('');
+  expect(host.querySelector('.round-editor-title strong')?.textContent).toBe(quiz.title);
+  expect(host.querySelector('.editor-get-started button')).not.toBeNull();
+
+  await act(async () => router.navigate('/admin/quizzes/other/edit'));
+  expect(router.state.location.pathname).toBe('/admin/quizzes/other/edit');
+  expect(getEditorQuiz).toHaveBeenLastCalledWith('other');
+  expect(host.textContent).toContain('Načítám editor kvízu');
+  expect(host.textContent).not.toContain(quiz.title);
+  expect(host.querySelector('.editor-get-started button')).toBeNull();
+
+  await act(async () => rejectOther(Object.assign(new Error('Synthetic quiz denied'), { code: 'functions/permission-denied' })));
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('nemáte oprávnění');
+  expect(host.textContent).not.toContain(quiz.title);
+  expect(host.querySelector('.editor-get-started button')).toBeNull();
+  expect(createQuizRound).not.toHaveBeenCalled();
+
+  await act(async () => host.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
+  expect(host.querySelector('.round-editor-title strong')?.textContent).toBe(otherQuiz.title);
+  expect(getEditorQuiz).toHaveBeenLastCalledWith('other');
+  await act(async () => host.querySelector<HTMLButtonElement>('.editor-get-started button')!.click());
+  expect(createQuizRound).toHaveBeenCalledExactlyOnceWith('other', 8, '2. kolo');
+});
+
+it('keeps a dirty question and its blocker when a same-quiz deep link is cancelled', async () => {
+  const router = await render();
+  await setText('prompt', 'Rozepsané zadání otázky 1');
+  await act(async () => router.navigate('/admin/quizzes/quiz/edit?questionId=q2'));
+  expect(router.state.location.search).toBe('?questionId=q1');
+  expect(host.querySelector('dialog')).not.toBeNull();
+  await act(async () => host.querySelector('dialog')!.dispatchEvent(new Event('cancel', { cancelable: true })));
+  expect(host.querySelector('dialog')).toBeNull();
+  expect(questionField('prompt').value).toBe('Rozepsané zadání otázky 1');
+  expect(getEditorQuiz).toHaveBeenCalledTimes(1);
+  expect(updateQuizSlide).not.toHaveBeenCalled();
+});
 
 it('visiting a missing system screen does not add its pristine local draft to automatic readiness', async () => {
   await render('?section=agenda');
