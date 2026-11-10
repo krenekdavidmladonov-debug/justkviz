@@ -43,6 +43,10 @@ Při konfliktu bodů uvidíte původní, místní i online hodnotu. Bez výslovn
 
 Ztracená odpověď po úspěšném zápisu se řeší opakováním stejného importu, nikoli přičtením bodů znovu. Výsledky se označí za synchronizované až po skutečném serverovém potvrzení a jeho místním uložení.
 
+Před odesláním potvrzení aplikace odolně uloží záměr synchronizace v šifrovaném místním průběhu. Ten váže požadavek na přesnou historii, náhled a rozhodnutí o konfliktech. Do dokončení se nepřijímají další místní příkazy ani hlášení přehrávače. Síťová chyba, ztracená odpověď nebo neúspěšné místní uložení potvrzení zámek neruší; zachová se i po zavření a odemčení téhož uloženého večera. Použijte **Znovu ověřit synchronizaci**, které opakuje původní požadavek. Nahrazení tohoto místního průběhu nouzovým souborem je do vyjasnění odmítnuto.
+
+Výslovné odmítnutí prvního pokusu kvůli změně náhledu před serverovým zápisem dovolí nové porovnání. U opakování po předchozí nejednoznačné odpovědi zůstane historie uzamčená, dokud server nepotvrdí stejný import; samotná další chyba nedokazuje, že starší požadavek nic nezapsal. Tento zámek náleží konkrétnímu místnímu úložišti. Přenosný formát `JUSTKVIZ-OFFLINE/1` se nemění a nenese místní rozpracovaný záměr synchronizace; otevření starší nebo nouzové kopie v jiném profilu nepotvrzuje, zda již původní profil import odeslal. V takové situaci nejprve ověřte online výsledek a zachovejte původní profil.
+
 ## Deklarované limity
 
 | Oblast | Limit |

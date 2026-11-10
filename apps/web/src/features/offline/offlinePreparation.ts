@@ -162,6 +162,7 @@ export async function importOfflineEvent(file: File, password: string, progress:
                 state: unknown;
                 maxSeenMs: number;
                 syncedReceipt?: unknown;
+                pendingSynchronization?: unknown;
             };
             const oldState = await replayOfflineOperations(metadata.manifest, saved.operations);
             if (oldState.sequence !== existing.sequence || oldState.headHash !== existing.headHash || canonicalOfflineJson(oldState) !== canonicalOfflineJson(saved.state)) {
@@ -169,6 +170,9 @@ export async function importOfflineEvent(file: File, password: string, progress:
             }
             if (saved.syncedReceipt) {
                 throw new Error('Tento večer již má potvrzení synchronizace. Obnova jej nesmí vrátit zpět.');
+            }
+            if (saved.pendingSynchronization !== undefined) {
+                throw new Error('Předchozí synchronizace čeká na potvrzení. Nejprve večer odemkněte a znovu ověřte stejnou synchronizaci. Původní průběh nebyl přepsán.');
             }
             if (incoming.sequence < oldState.sequence) {
                 throw new Error('Nouzový soubor je starší než uložený průběh.');

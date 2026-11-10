@@ -108,12 +108,14 @@ export async function fetchOfflineAsset(manifest: OfflineEventManifest, asset: O
     return new Blob([bytes], { type: asset.contentType });
 }
 export async function previewOfflineSynchronization(eventId: string, exportId: string, operations: readonly OfflineOperation[], resolutions?: readonly OfflineSyncResolution[], completeRecovery = false): Promise<OfflineSyncPreview> {
-    return call('previewOfflineSync', { eventId, exportId, operations, ...(resolutions ? { resolutions } : {}), ...(completeRecovery ? { completeRecovery: true } : {}) }, 120000, true);
+    const input = structuredClone({ eventId, exportId, operations, ...(resolutions ? { resolutions } : {}), ...(completeRecovery ? { completeRecovery: true } : {}) });
+    return call('previewOfflineSync', input, 120000, true);
 }
 export async function commitOfflineSynchronization(eventId: string, exportId: string, operations: readonly OfflineOperation[], previewDigest: string, resolutions?: readonly OfflineSyncResolution[], completeRecovery = false): Promise<OfflineSyncReceipt> {
-    const receipt = await call<OfflineSyncReceipt>('commitOfflineSync', { eventId, exportId, operations, previewDigest, ...(resolutions ? { resolutions } : {}), ...(completeRecovery ? { completeRecovery: true } : {}) }, 120000, true);
-    if (!receipt || receipt.exportId !== exportId || receipt.operationCount !== operations.length
-        || receipt.headHash !== (operations.at(-1)?.hash ?? '0'.repeat(64)) || typeof receipt.sessionId !== 'string'
+    const input = structuredClone({ eventId, exportId, operations, previewDigest, ...(resolutions ? { resolutions } : {}), ...(completeRecovery ? { completeRecovery: true } : {}) });
+    const receipt = await call<OfflineSyncReceipt>('commitOfflineSync', input, 120000, true);
+    if (!receipt || receipt.exportId !== exportId || receipt.operationCount !== input.operations.length
+        || receipt.headHash !== (input.operations.at(-1)?.hash ?? '0'.repeat(64)) || typeof receipt.sessionId !== 'string'
         || typeof receipt.receiptId !== 'string' || !receipt.receiptId || typeof receipt.replayed !== 'boolean') {
         throw new Error('Potvrzení synchronizace neodpovídá odeslané historii. Místní data zůstala zachována.');
     }

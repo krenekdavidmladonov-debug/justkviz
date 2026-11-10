@@ -562,12 +562,15 @@ async function syncPhase() {
       if (route.request().method() !== 'POST') return route.continue();
       const response = await route.fetch(); expect(response.status()).toBe(200); dropped = true; await route.abort('failed');
     });
-    await button(browser.page, 'Potvrdit synchronizaci výsledků').click();
+    await expect(browser.page.locator('[data-offline-sync-pending]')).toBeVisible();
+    await button(browser.page, 'Znovu ověřit synchronizaci').click();
     await expect.poll(() => dropped).toBe(true); await expect(browser.page.locator('[data-offline-error]')).toBeVisible();
     expect((await record.get()).get('status')).toBe('synchronized');
     expect(await storedHead(browser.page, credentials.sessionId)).toEqual(head);
     await browser.context.unroute('**/commitOfflineSync');
-    await button(browser.page, 'Potvrdit synchronizaci výsledků').click();
+    await unlock(browser.page, credentials.sessionId);
+    await expect(browser.page.locator('[data-offline-sync-pending]')).toBeVisible();
+    await button(browser.page, 'Znovu ověřit synchronizaci').click();
     await expect(browser.page.locator('[data-offline-sync-receipt]')).toBeVisible();
     const scores = await db.collection(`events/${credentials.eventId}/scores`).get(); expect(scores.size).toBe(20);
     let history = 0, corrected = false;
@@ -598,7 +601,7 @@ async function syncPhase() {
     await writeFile(path.join(directory, 'sync-proof.json'), JSON.stringify({ status: 'PASS', phase: 'sync', actualImportedEmulatorData: true,
       freshOnlineModeratorLogin: true,
       interruptedBeforeDelivery: { requests: blockedBeforeDelivery, sameLocalHead: true, serverExportStillPrepared: true, newScores: 0, newHistory: 0, newFinalVersions: 0 },
-      lostAcknowledgementAfterActualServerCommit: true, actualUiRetry: true, scoreCells: scores.size, historyMutations: history,
+      lostAcknowledgementAfterActualServerCommit: true, reopenedAfterDroppedAcknowledgement: true, actualUiRetry: true, scoreCells: scores.size, historyMutations: history,
       finalVersions: versions.size, rows: 10, points: 11, halfPoints: 22, sharedRank: 1, actualOnlineHistoryTable: true }, null, 2), { flag: 'wx' });
   } finally { await browser.context.close(); await sdk.deleteApp(server); }
 }

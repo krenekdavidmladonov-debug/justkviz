@@ -11,7 +11,7 @@ import { buildOfflineProjection } from './offlineProjection';
 import { connectOfflineProjector, openOfflineProjector, type OfflineProjectorConnection } from './offlineProjector';
 import { exportOfflineRecovery, exportStoredOfflineEvent, importOfflineEvent } from './offlinePreparation';
 import { OfflinePreparationWizard } from './OfflinePreparationWizard';
-import { openOfflineRuntime, type OfflineRuntime } from './offlineRuntime';
+import { openOfflineRuntime, type OfflineRuntime, type OfflineSynchronizationRequest } from './offlineRuntime';
 import { checkOfflineShell, installOfflineShell, proveOfflineShellBoot, testOfflineShellBoot } from './offlineShell';
 import { listOfflineSessions, verifyStoredOfflineStorage, type StoredOfflineSession } from './offlineStore';
 import { currentOfflineMode } from './offlineAvailability';
@@ -257,7 +257,9 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [reason, setReason] = useState('');
   const [recoveryPassword, setRecoveryPassword] = useState('');
-  const [preview, setPreview] = useState<OfflineSyncPreview | null>(null);
+  const [loadedPreview, setPreview] = useState<OfflineSyncPreview | null>(null);
+  const previewHead = useRef<string | null>(null);
+  const preview = !runtime.pendingSynchronization && previewHead.current === state.headHash ? loadedPreview : null;
   const [resolutions, setResolutions] = useState<OfflineSyncResolution[]>([]);
   const [completeRecovery, setCompleteRecovery] = useState(false);
   const [previewRecovery, setPreviewRecovery] = useState(false);
@@ -292,6 +294,24 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
     return blob;
   } }), [runtime, manifest.sessionId, state.mediaGeneration]);
   const command = (value: OfflineCommand) => void task(async () => { await runtime.append(value); setPreview(null); progress('Změna je odolně uložená na tomto počítači.'); });
+  const compare = async (choices: readonly OfflineSyncResolution[] | undefined, recovery: boolean) => {
+    const head = runtime.state.headHash;
+    const online = await import('./offlineOnline');
+    if (head !== runtime.state.headHash) throw new Error('Místní průběh se změnil. Zkontrolujte jej a porovnání zopakujte.');
+    const result = await online.previewOfflineSynchronization(manifest.event.id, manifest.exportId, runtime.operations, choices, recovery);
+    if (head !== runtime.state.headHash) throw new Error('Místní průběh se změnil. Zkontrolujte jej a porovnání zopakujte.');
+    previewHead.current = head;
+    setPreview(result);
+  };
+  const synchronize = async (request: OfflineSynchronizationRequest) => {
+    await runtime.synchronize(request, async (operations, intent) => {
+      const online = await import('./offlineOnline');
+      return online.commitOfflineSynchronization(manifest.event.id, manifest.exportId, operations, intent.previewDigest, intent.resolutions, intent.completeRecovery);
+    });
+    setPreview(null);
+    progress('Výsledky byly potvrzeny serverem. Opakování nevytvoří další zápisy.');
+  };
+  const pendingSynchronization = runtime.pendingSynchronization;
   const playable = manifest.slides.filter(slide => !slide.hidden || !canHideInfoSlide(slide));
   const index = playable.findIndex(slide => slide.position === state.slidePosition);
   const current = manifest.slides.find(slide => slide.position === (state.revealPosition ?? state.slidePosition));
@@ -361,12 +381,19 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
     </section>
     <section aria-label="Synchronizace offline výsledků"><h2>Synchronizovat výsledky</h2>
       <p>Synchronizace vyžaduje připojení a aktuální online přihlášení. Online změny nikdy nepřepíše automaticky.</p>
-      {state.status === 'active' && allScoresComplete && !runtime.syncedReceipt && <label><input type="checkbox" checked={completeRecovery} disabled={busy} onChange={event => { setCompleteRecovery(event.target.checked); setPreview(null); }} />Dokončit uložený průběh při synchronizaci</label>}
-      <button disabled={busy || (state.status !== 'ended' && !(state.status === 'active' && allScoresComplete && completeRecovery)) || Boolean(runtime.syncedReceipt)} onClick={() => void task(async () => {
-        const online = await import('./offlineOnline');
+      {pendingSynchronization && !runtime.syncedReceipt && <div role="status" data-offline-sync-pending>
+        <p>Předchozí synchronizace čeká na potvrzení. Ověření použije stejnou historii a původní rozhodnutí; další změny jsou do té doby uzamčené.</p>
+        <button disabled={busy} onClick={() => void task(() => synchronize({
+          previewDigest: pendingSynchronization.previewDigest,
+          resolutions: pendingSynchronization.resolutions,
+          completeRecovery: pendingSynchronization.completeRecovery,
+        }))}>Znovu ověřit synchronizaci</button>
+      </div>}
+      {state.status === 'active' && allScoresComplete && !runtime.syncedReceipt && !pendingSynchronization && <label><input type="checkbox" checked={completeRecovery} disabled={busy} onChange={event => { setCompleteRecovery(event.target.checked); setPreview(null); }} />Dokončit uložený průběh při synchronizaci</label>}
+      <button disabled={busy || Boolean(pendingSynchronization) || (state.status !== 'ended' && !(state.status === 'active' && allScoresComplete && completeRecovery)) || Boolean(runtime.syncedReceipt)} onClick={() => void task(async () => {
         setResolutions([]);
         setPreviewRecovery(completeRecovery);
-        setPreview(await online.previewOfflineSynchronization(manifest.event.id, manifest.exportId, runtime.operations, undefined, completeRecovery));
+        await compare(undefined, completeRecovery);
       })}>Porovnat s online stavem</button>
       {preview && <div data-offline-sync-preview>
         <p>Místně: {preview.local.operationCount} kroků, {preview.local.scoreChanges} změn bodů. Online: {preview.server.scoreChanges} změn bodů.</p>
@@ -393,18 +420,14 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
             </li>;
           })}</ul>
           {preview.resolutionAllowed ? <button disabled={busy || preview.conflicts.some(conflict => !resolutions.some(value => value.teamId === conflict.teamId && value.roundId === conflict.roundId && value.reason.trim()))} onClick={() => void task(async () => {
-            const online = await import('./offlineOnline');
-            setPreview(await online.previewOfflineSynchronization(manifest.event.id, manifest.exportId, runtime.operations, resolutions, previewRecovery));
+            await compare(resolutions, previewRecovery);
           })}>Zkontrolovat zvolené řešení konfliktů</button> : <p>Změnu kvízu, týmů nebo oprávnění nelze sloučit bodovou opravou. Exportujte nouzový soubor a zkontrolujte akci online.</p>}
         </> : <>
           {preview.merged && <div data-offline-sync-merged><h3>Výsledky po zvoleném řešení</h3><ol>{preview.merged.rows.map((row, rowIndex) => <li key={rowIndex}>{row.rank}. {row.teamName} — {pointsText(row.halfPoints)} b.</li>)}</ol><p>{preview.resolutions?.length ?? 0} výslovně zvolených oprav. Původní offline historie zůstane uchována.</p></div>}
           {previewRecovery && <p>Server po novém ověření oprávnění dokončí uložený průběh. Do offline historie se nedopisuje zpětně datovaný příkaz.</p>}
           <button disabled={busy} onClick={() => void task(async () => {
-            const online = await import('./offlineOnline');
-            const receipt = await online.commitOfflineSynchronization(manifest.event.id, manifest.exportId, runtime.operations, preview.previewDigest, preview.resolutions, previewRecovery);
-            await runtime.markSynced(receipt);
-            setPreview(null);
-            progress('Výsledky byly potvrzeny serverem. Opakování nevytvoří další zápisy.');
+            if (previewHead.current !== runtime.state.headHash) throw new Error('Místní průběh se změnil. Porovnejte jej znovu s online stavem.');
+            await synchronize({ previewDigest: preview.previewDigest, resolutions: preview.resolutions, completeRecovery: previewRecovery });
           })}>Potvrdit synchronizaci výsledků</button>
         </>}
         <button disabled={busy} onClick={() => setPreview(null)}>Zrušit porovnání</button>

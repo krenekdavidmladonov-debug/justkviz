@@ -4,14 +4,20 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { OfflineApp } from '../apps/web/src/features/offline/OfflineApp';
 import { checkOfflineShell, installOfflineShell, testOfflineShellBoot } from '../apps/web/src/features/offline/offlineShell';
+import { listOfflineSessions } from '../apps/web/src/features/offline/offlineStore';
+import { openOfflineRuntime, type OfflineRuntime } from '../apps/web/src/features/offline/offlineRuntime';
+import { commitOfflineSynchronization } from '../apps/web/src/features/offline/offlineOnline';
+import { initialOfflineState } from '../packages/quiz-domain/src/offline-event';
+import { offlineManifest } from './offline-fixture';
 
 vi.mock('../apps/web/src/features/offline/offlineShell', () => ({
   checkOfflineShell: vi.fn(), installOfflineShell: vi.fn(), testOfflineShellBoot: vi.fn(), proveOfflineShellBoot: vi.fn(),
 }));
-vi.mock('../apps/web/src/features/offline/offlineStore', () => ({ listOfflineSessions: async () => [], verifyStoredOfflineStorage: vi.fn() }));
+vi.mock('../apps/web/src/features/offline/offlineStore', () => ({ listOfflineSessions: vi.fn(), verifyStoredOfflineStorage: vi.fn() }));
 vi.mock('../apps/web/src/features/offline/offlinePreparation', () => ({ exportOfflineRecovery: vi.fn(), exportStoredOfflineEvent: vi.fn(), importOfflineEvent: vi.fn() }));
 vi.mock('../apps/web/src/features/offline/offlineRuntime', () => ({ openOfflineRuntime: vi.fn() }));
 vi.mock('../apps/web/src/features/offline/OfflinePreparationWizard', () => ({ OfflinePreparationWizard: () => null }));
+vi.mock('../apps/web/src/features/offline/offlineOnline', () => ({ commitOfflineSynchronization: vi.fn() }));
 
 const proof = { type: 'offline-shell-proof' as const, version: 'synthetic', ready: true };
 const installLabel = 'Uložit aplikaci pro offline spuštění';
@@ -34,6 +40,9 @@ beforeEach(() => {
   vi.mocked(checkOfflineShell).mockReset().mockResolvedValue(proof);
   vi.mocked(installOfflineShell).mockReset().mockResolvedValue(proof);
   vi.mocked(testOfflineShellBoot).mockReset().mockResolvedValue(undefined);
+  vi.mocked(listOfflineSessions).mockReset().mockResolvedValue([]);
+  vi.mocked(openOfflineRuntime).mockReset();
+  vi.mocked(commitOfflineSynchronization).mockReset();
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
@@ -97,4 +106,35 @@ it('keeps a new route task active when the previous route task rejects', async (
   expect(button(installLabel).disabled).toBe(true);
   await act(async () => current.resolve(proof));
   expect(button(installLabel).disabled).toBe(false);
+});
+
+it('retries the persisted synchronization from the actual reopened operator without changing its request', async () => {
+  const manifest = offlineManifest();
+  const state = { ...initialOfflineState(manifest), status: 'ended' as const };
+  const intent = { previewDigest: 'd'.repeat(64), resolutions: [{ teamId: 'team-1', roundId: 'round-1', choice: 'online' as const, reason: 'Původní volba' }], completeRecovery: true };
+  const marker = { ...intent, headHash: state.headHash, operationCount: 0 };
+  const receipt = { exportId: manifest.exportId, sessionId: manifest.sessionId, receiptId: 'synthetic-receipt', replayed: true, headHash: state.headHash, operationCount: 0, rows: [] };
+  const synchronize = vi.fn<OfflineRuntime['synchronize']>().mockImplementation(async (request, submit) => {
+    expect(request).toEqual(intent);
+    expect(Object.keys(request).sort()).toEqual(['completeRecovery', 'previewDigest', 'resolutions']);
+    return submit([], request);
+  });
+  const runtime = { manifest, state, operations: [], pendingSynchronization: marker, syncedReceipt: undefined,
+    playBlock: 'Čeká na potvrzení synchronizace.', synchronize, close: vi.fn(),
+  } as unknown as OfflineRuntime;
+  vi.mocked(listOfflineSessions).mockResolvedValue([{ sessionId: manifest.sessionId, title: manifest.event.title, sequence: 0 } as Awaited<ReturnType<typeof listOfflineSessions>>[number]]);
+  vi.mocked(openOfflineRuntime).mockResolvedValue(runtime);
+  vi.mocked(commitOfflineSynchronization).mockResolvedValue(receipt);
+  await render();
+  const password = host.querySelector<HTMLInputElement>('input[type=password]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(password, 'synthetic-offline-password');
+    password.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => button('Odemknout a pokračovat').click());
+  expect(host.querySelector('[data-offline-sync-pending]')).not.toBeNull();
+  await act(async () => button('Znovu ověřit synchronizaci').click());
+  expect(synchronize).toHaveBeenCalledTimes(1);
+  expect(commitOfflineSynchronization).toHaveBeenCalledWith(manifest.event.id, manifest.exportId, [], intent.previewDigest, intent.resolutions, true);
+  expect(host.querySelector('[data-offline-error]')).toBeNull();
 });

@@ -1,4 +1,4 @@
-import { applyOfflineOperation, canonicalOfflineJson, initialOfflineState, offlineEventLimits, offlineOperationContent, parseOfflineOperations, type OfflineCommand, type OfflineEventManifest, type OfflineOperation, type OfflineState } from '@filmovy-kviz/quiz-domain';
+import { applyOfflineOperation, canonicalOfflineJson, initialOfflineState, offlineEventLimits, offlineOperationContent, parseOfflineOperations, type OfflineCommand, type OfflineEventManifest, type OfflineOperation, type OfflineState, type OfflineSyncReceipt, type OfflineSyncResolution } from '@filmovy-kviz/quiz-domain';
 import { decryptOfflineValue, encryptOfflineValue, offlineDigest } from './offlineCrypto';
 import { offlineAssetClips, offlineMediaFailure, readOfflineAsset, unlockOfflineMetadata, verifyOfflineMedia, type OfflineArchiveHeader, type OfflineArchiveMetadata, type OfflineRecordReader } from './offlineFile';
 import { acquireOfflineWriter, commitOfflineSession, readOfflineTrusts, readStoredOfflineRecord, readStoredOfflineSession, type StoredOfflineSession } from './offlineStore';
@@ -7,6 +7,44 @@ interface DurableProgress {
     readonly operations: readonly OfflineOperation[];
     readonly maxSeenMs: number;
     readonly syncedReceipt?: unknown;
+    readonly pendingSynchronization?: PendingOfflineSynchronization;
+}
+export interface OfflineSynchronizationRequest {
+    readonly previewDigest: string;
+    readonly resolutions?: readonly OfflineSyncResolution[];
+    readonly completeRecovery?: boolean;
+}
+export interface PendingOfflineSynchronization extends OfflineSynchronizationRequest {
+    readonly headHash: string;
+    readonly operationCount: number;
+}
+function parseSynchronizationRequest(value: unknown): OfflineSynchronizationRequest {
+    const request = value as Record<string, unknown> | null;
+    if (!request || typeof request !== 'object' || Array.isArray(request)
+        || Object.keys(request).some(key => !['previewDigest', 'resolutions', 'completeRecovery'].includes(key))
+        || typeof request.previewDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(request.previewDigest)
+        || (request.completeRecovery !== undefined && typeof request.completeRecovery !== 'boolean')
+        || (request.resolutions !== undefined && (!Array.isArray(request.resolutions) || request.resolutions.length > offlineEventLimits.scoreCells))) {
+        throw new Error('Uložený požadavek synchronizace je poškozený.');
+    }
+    const resolutions = request.resolutions as unknown[] | undefined;
+    const cells = new Set<string>();
+    for (const value of resolutions ?? []) {
+        const resolution = value as Record<string, unknown> | null;
+        if (!resolution || typeof resolution !== 'object' || Array.isArray(resolution)
+            || Object.keys(resolution).some(key => !['teamId', 'roundId', 'choice', 'reason'].includes(key))
+            || typeof resolution.teamId !== 'string' || !/^[A-Za-z0-9_-]{1,150}$/u.test(resolution.teamId)
+            || typeof resolution.roundId !== 'string' || !/^[A-Za-z0-9_-]{1,150}$/u.test(resolution.roundId)
+            || (resolution.choice !== 'online' && resolution.choice !== 'offline') || typeof resolution.reason !== 'string'
+            || resolution.reason.length > 300 || /[\p{Cc}\p{Cf}]/u.test(resolution.reason)
+            || (resolution.choice === 'offline' && !resolution.reason.trim())) {
+            throw new Error('Uložený požadavek synchronizace je poškozený.');
+        }
+        const cell = JSON.stringify([resolution.teamId, resolution.roundId]);
+        if (cells.has(cell)) throw new Error('Uložený požadavek synchronizace je poškozený.');
+        cells.add(cell);
+    }
+    return structuredClone(request) as unknown as OfflineSynchronizationRequest;
 }
 const progressBinding = (session: StoredOfflineSession) => `offline-state:${session.sessionId}:${session.sequence}:${session.headHash}`;
 export async function replayOfflineOperations(manifest: OfflineEventManifest, values: unknown): Promise<OfflineState> {
@@ -34,11 +72,13 @@ export interface OfflineRuntime {
     readonly state: OfflineState;
     readonly operations: readonly OfflineOperation[];
     readonly syncedReceipt?: unknown;
+    readonly pendingSynchronization: PendingOfflineSynchronization | undefined;
     readonly playBlock: string | null;
     append(command: OfflineCommand): Promise<void>;
     asset(reference: string): Promise<Blob>;
     close(): void;
     markSynced(receipt: unknown): Promise<void>;
+    synchronize(request: OfflineSynchronizationRequest, submit: (operations: readonly OfflineOperation[], request: OfflineSynchronizationRequest) => Promise<OfflineSyncReceipt>): Promise<OfflineSyncReceipt>;
 }
 
 interface OfflineReadinessCheck {
@@ -65,6 +105,46 @@ export async function openOfflineRuntime(sessionId: string, password: string, on
             throw new Error('Uložený průběh byl poškozen. Obnovte nouzový soubor.');
         }
         let maxSeenMs = Math.max(value.maxSeenMs, Date.now()), busy = false, syncedReceipt = value.syncedReceipt;
+        let pendingSynchronization: PendingOfflineSynchronization | undefined;
+        if (value.pendingSynchronization !== undefined) {
+            const marker = value.pendingSynchronization;
+            if (!marker || typeof marker !== 'object' || Array.isArray(marker) || syncedReceipt || !operations.length
+                || marker.headHash !== state.headHash || marker.operationCount !== operations.length
+                || Object.keys(marker).some(key => !['headHash', 'operationCount', 'previewDigest', 'resolutions', 'completeRecovery'].includes(key))) {
+                throw new Error('Uložený požadavek synchronizace neodpovídá historii.');
+            }
+            const { headHash, operationCount, ...request } = marker;
+            pendingSynchronization = { ...parseSynchronizationRequest(request), headHash, operationCount };
+        }
+        const persistSynchronization = async (pending: PendingOfflineSynchronization | undefined, receipt = syncedReceipt) => {
+            const next = { ...stored!, encrypted: await encryptOfflineValue(key, {
+                state, operations, maxSeenMs, ...(pending ? { pendingSynchronization: pending } : {}),
+                ...(receipt === undefined ? {} : { syncedReceipt: receipt }),
+            }, progressBinding(stored!)) };
+            await commitOfflineSession(next, state.sequence);
+            stored = next;
+            pendingSynchronization = pending;
+            syncedReceipt = receipt;
+            if (!closed) onChange();
+        };
+        const persistReceipt = async (receipt: unknown): Promise<OfflineSyncReceipt> => {
+            const confirmation = structuredClone(receipt) as Record<string, unknown> | null;
+            if (!confirmation || typeof confirmation !== 'object' || confirmation.exportId !== metadata.manifest.exportId
+                || confirmation.sessionId !== metadata.manifest.sessionId || confirmation.headHash !== state.headHash
+                || confirmation.operationCount !== operations.length || typeof confirmation.receiptId !== 'string'
+                || !confirmation.receiptId || typeof confirmation.replayed !== 'boolean' || !Array.isArray(confirmation.rows)
+                || confirmation.rows.length > metadata.manifest.teams.length
+                || confirmation.rows.some((value: unknown) => {
+                    if (!value || typeof value !== 'object') return true;
+                    const row = value as Record<string, unknown>;
+                    return !Number.isSafeInteger(row.rank) || (row.rank as number) < 1 || typeof row.teamName !== 'string'
+                        || !Number.isSafeInteger(row.halfPoints) || (row.halfPoints as number) < 0;
+                })) {
+                throw new Error('Serverové potvrzení neodpovídá tomuto uloženému večeru. Zkuste synchronizaci znovu.');
+            }
+            await persistSynchronization(undefined, confirmation);
+            return structuredClone(confirmation) as unknown as OfflineSyncReceipt;
+        };
         let readinessFailure: string | null = null;
         const clockBlock = (now: number) => {
             const previousTime = maxSeenMs;
@@ -101,8 +181,12 @@ export async function openOfflineRuntime(sessionId: string, password: string, on
             get syncedReceipt() {
                 return syncedReceipt;
             },
+            get pendingSynchronization() {
+                return pendingSynchronization ? structuredClone(pendingSynchronization) : undefined;
+            },
             get playBlock() {
                 if (closed) return 'Offline relace je zamčená.';
+                if (pendingSynchronization) return 'Synchronizace čeká na potvrzení. Opakujte uložený požadavek.';
                 return readinessFailure ?? clockBlock(Date.now());
             },
             async append(command) {
@@ -112,6 +196,7 @@ export async function openOfflineRuntime(sessionId: string, password: string, on
                 if (syncedReceipt) {
                     throw new Error('Výsledky byly synchronizovány. Další změny provádějte online.');
                 }
+                if (pendingSynchronization) throw new Error('Synchronizace čeká na potvrzení. Opakujte uložený požadavek.');
                 const now = Date.now();
                 const observedAtMs = Math.max(now, maxSeenMs);
                 const playBlock = readinessFailure ?? clockBlock(now);
@@ -164,36 +249,46 @@ export async function openOfflineRuntime(sessionId: string, password: string, on
                 }
             },
             async markSynced(receipt) {
-                if (closed || busy) {
+                if (closed || busy || pendingSynchronization) {
                     throw new Error('Počkejte na dokončení ukládání.');
-                }
-                const confirmation = receipt as Record<string, unknown> | null;
-                if (!confirmation || typeof confirmation !== 'object' || confirmation.exportId !== metadata.manifest.exportId
-                    || confirmation.sessionId !== metadata.manifest.sessionId || confirmation.headHash !== state.headHash
-                    || confirmation.operationCount !== operations.length || typeof confirmation.receiptId !== 'string'
-                    || !confirmation.receiptId || typeof confirmation.replayed !== 'boolean' || !Array.isArray(confirmation.rows)
-                    || confirmation.rows.length > metadata.manifest.teams.length
-                    || confirmation.rows.some((value: unknown) => {
-                        if (!value || typeof value !== 'object') return true;
-                        const row = value as Record<string, unknown>;
-                        return !Number.isSafeInteger(row.rank) || (row.rank as number) < 1 || typeof row.teamName !== 'string'
-                            || !Number.isSafeInteger(row.halfPoints) || (row.halfPoints as number) < 0;
-                    })) {
-                    throw new Error('Serverové potvrzení neodpovídá tomuto uloženému večeru. Zkuste synchronizaci znovu.');
                 }
                 busy = true;
                 try {
-                    const next = { ...stored!, encrypted: await encryptOfflineValue(key, { state, operations, maxSeenMs, syncedReceipt: receipt }, progressBinding(stored!)) };
-                    await commitOfflineSession(next, state.sequence);
-                    stored = next;
-                    syncedReceipt = receipt;
-                    onChange();
+                    await persistReceipt(receipt);
                 }
                 finally {
                     busy = false;
                     if (closed) {
                         release();
                     }
+                }
+            },
+            async synchronize(request, submit) {
+                if (closed || busy || syncedReceipt) throw new Error('Počkejte na dokončení ukládání.');
+                if (!operations.length) throw new Error('Offline průběh zatím nemá potvrzené operace.');
+                const copiedRequest = parseSynchronizationRequest(request);
+                const marker = { ...copiedRequest, headHash: state.headHash, operationCount: operations.length };
+                if (pendingSynchronization && canonicalOfflineJson(marker) !== canonicalOfflineJson(pendingSynchronization)) {
+                    throw new Error('Nejprve opakujte přesně uložený požadavek synchronizace.');
+                }
+                const firstAttempt = pendingSynchronization === undefined;
+                busy = true;
+                try {
+                    if (!pendingSynchronization) await persistSynchronization(marker);
+                    if (closed) throw new Error('Offline relace je zamčená.');
+                    let receipt: OfflineSyncReceipt;
+                    try {
+                        receipt = await submit(structuredClone(operations), structuredClone(copiedRequest));
+                    } catch (error) {
+                        if (firstAttempt && error && typeof error === 'object' && 'code' in error && error.code === 'functions/aborted') {
+                            await persistSynchronization(undefined);
+                        }
+                        throw error;
+                    }
+                    return await persistReceipt(receipt);
+                } finally {
+                    busy = false;
+                    if (closed) release();
                 }
             },
         };
