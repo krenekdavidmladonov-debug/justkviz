@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { httpsCallable } from 'firebase/functions';
 import { doc, runTransaction } from 'firebase/firestore';
+import { normalizeResultPagination } from '@filmovy-kviz/quiz-domain';
 import { getFirebaseServices } from '../../services/firebase/client';
 import { getFirebaseFirestore } from '../../services/firebase/firestore';
 import type { ResultsPreview } from '../leaderboard/types';
@@ -34,6 +35,23 @@ export function EventNightControls({ session, slides, navigation }: Props) {
   const final = session.finalReveal;
   const busy = pending || show?.busy === true;
 
+  function resultIntent(value: LiveControlState): string {
+    const finale = value.finalReveal, interim = value.interimResults;
+    const finalFormat = finale ? normalizeResultPagination(finale) : null;
+    const interimFormat = interim ? normalizeResultPagination(interim) : null;
+    return JSON.stringify([
+      value.sessionId, value.eventId, value.snapshotId, value.status, value.currentSlidePosition, value.mediaGeneration, value.showCue?.id,
+      finale ? [finale.versionId, finale.visible, finale.mode, finale.rank, finale.revealedCount, finale.totalGroups,
+        finale.page, finale.pageCount, finale.historyPage ?? 0, finalFormat?.presentationStyle, finalFormat?.pageSize] : null,
+      interim ? [interim.versionId, interim.roundNumber, interim.page, interim.pageCount, interimFormat?.presentationStyle, interimFormat?.pageSize] : null,
+    ]);
+  }
+  function assertResultIntent(latest: LiveControlState, revision: number, intent: string) {
+    if (!mounted.current || latest.status !== 'active' || latest.revision !== revision || resultIntent(latest) !== intent) {
+      throw new Error('Výsledky: Projekce se mezitím změnila. Zkontrolujte aktuální stav a použijte tlačítko znovu.');
+    }
+  }
+
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; navigation.current = null; };
@@ -51,33 +69,42 @@ export function EventNightControls({ session, slides, navigation }: Props) {
     try { await work(); return true; }
     catch (cause) {
       setInterimOwner(null); setWinnerVersion(null);
-      if (mounted.current) setError(cause instanceof Error && cause.message.startsWith('Finále:') ? cause.message
+      if (mounted.current) setError(cause instanceof Error && (cause.message.startsWith('Finále:') || cause.message.startsWith('Výsledky:')) ? cause.message
         : (cause as { code?: string })?.code === 'functions/failed-precondition' ? 'Výsledky zatím nejsou připravené. Zkontrolujte uložené body rozhodčího.'
           : failureMessage);
       return false;
     } finally { locked.current = false; if (mounted.current) setPending(false); }
   }
-  async function interim(action: 'current' | 'hide' | 'page', page?: number) {
+  async function interim(action: 'current' | 'hide' | 'page', page?: number, intent = resultIntent(session)) {
     if (!show) return;
     await perform(async () => {
+      assertResultIntent(current.current, current.current.revision, intent);
       show.stopAudio();
-      const result = await show.execute((latest, revision) => httpsCallable<unknown, RevisionedResult>(getFirebaseServices().functions, 'controlInterimResults')({
-        eventId: latest.eventId, sessionId: latest.sessionId, expectedRevision: revision,
-        requestId: crypto.randomUUID(), action, ...(page === undefined ? {} : { page }),
-      }).then(response => response.data));
+      const result = await show.execute((latest, revision) => {
+        assertResultIntent(latest, revision, intent);
+        return httpsCallable<unknown, RevisionedResult>(getFirebaseServices().functions, 'controlInterimResults')({
+          eventId: latest.eventId, sessionId: latest.sessionId, expectedRevision: revision,
+          requestId: crypto.randomUUID(), action, ...(page === undefined ? {} : { page }),
+        }).then(response => response.data);
+      });
       acknowledged.current = result.revision;
       setInterimOwner(action === 'hide' ? null : session.sessionId);
     }, action === 'page' ? 'Stránku průběžných výsledků se nepodařilo přepnout. Zkontrolujte spojení, zavřete výsledky a znovu je otevřete.' : undefined);
   }
   async function finalCommand(action: 'hide' | 'page' | 'reveal' | 'table', page?: number) {
     if (!show) return false;
+    const intent = resultIntent(session);
     return perform(async () => {
-      const result = await show.execute((latest, revision) => httpsCallable<unknown, FinalResponse>(getFirebaseServices().functions, 'controlFinalReveal')({
-        eventId: latest.eventId, sessionId: latest.sessionId, expectedRevision: revision,
-        requestId: crypto.randomUUID(), versionId: latest.finalReveal?.versionId ?? null, action,
-        ...(action === 'reveal' ? { motion: 'animate' } : {}),
-        ...(page === undefined ? {} : { page }),
-      }).then(response => response.data));
+      assertResultIntent(current.current, current.current.revision, intent);
+      const result = await show.execute((latest, revision) => {
+        assertResultIntent(latest, revision, intent);
+        return httpsCallable<unknown, FinalResponse>(getFirebaseServices().functions, 'controlFinalReveal')({
+          eventId: latest.eventId, sessionId: latest.sessionId, expectedRevision: revision,
+          requestId: crypto.randomUUID(), versionId: session.finalReveal?.versionId ?? null, action,
+          ...(action === 'reveal' ? { motion: 'animate' } : {}),
+          ...(page === undefined ? {} : { page }),
+        }).then(response => response.data);
+      });
       acknowledged.current = result.revision;
       if (action === 'hide') setWinnerVersion(null);
       if (result.winnerRevealed && !result.replayed && mounted.current) {
@@ -120,6 +147,7 @@ export function EventNightControls({ session, slides, navigation }: Props) {
           return true;
         }
         if (direction === 1) {
+          const intent = resultIntent(session);
           // A finale selected from the question list still leads to the closing
           // slide, never back into an arbitrary question beneath the show.
           await perform(async () => {
@@ -130,13 +158,7 @@ export function EventNightControls({ session, slides, navigation }: Props) {
               // A delayed report can hold this gesture in the queue while
               // another operator changes the show. A fresh revision alone
               // must not turn the old table-exit gesture into a new command.
-              if (latest.revision !== revision || latest.status !== 'active' || latest.sessionId !== session.sessionId
-                || latest.eventId !== session.eventId || latest.snapshotId !== session.snapshotId
-                || latest.currentSlidePosition !== session.currentSlidePosition || latest.mediaGeneration !== session.mediaGeneration
-                || latest.finalReveal?.visible !== true || latest.finalReveal.mode !== 'table'
-                || latest.finalReveal.versionId !== session.finalReveal?.versionId) {
-                throw new Error('Finále: Projekce se mezitím změnila. Zkontrolujte aktuální stav a použijte tlačítko znovu.');
-              }
+              assertResultIntent(latest, revision, intent);
               return httpsCallable<unknown, RevisionedResult>(getFirebaseServices().functions, closing ? 'goToSlide' : 'endLiveSession')({
                 sessionId: latest.sessionId, expectedRevision: revision,
                 ...(closing ? { position: closing.position } : {}),
@@ -166,7 +188,8 @@ export function EventNightControls({ session, slides, navigation }: Props) {
     if (interimOwner !== session.sessionId || !canControlInterim || busy || session.status !== 'active'
       || interimPage === undefined || interimPageCount === undefined || interimPageCount < 2
       || session.revision !== acknowledged.current) return;
-    const timer = window.setTimeout(() => { void interimCommand.current('page', (interimPage + 1) % interimPageCount); }, 7000);
+    const intent = resultIntent(session);
+    const timer = window.setTimeout(() => { void interimCommand.current('page', (interimPage + 1) % interimPageCount, intent); }, 7000);
     return () => window.clearTimeout(timer);
   }, [interimOwner, canControlInterim, busy, session.sessionId, session.status, session.revision, interimVersion, interimPage, interimPageCount]);
   useEffect(() => {

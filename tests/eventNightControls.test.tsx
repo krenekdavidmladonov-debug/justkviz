@@ -18,10 +18,10 @@ vi.mock('../apps/web/src/features/final-reveal/fanfare', () => ({ Fanfare: class
 let root: Root, host: HTMLDivElement, state: LiveControlState;
 const navigation = createRef<EventNightNavigation>();
 const slides: LiveControlSlide[] = ['recap', 'end'].map((kind, index) => ({ id: 's' + index, position: index + 1, kind, isQuestion: false, title: '', text: '', options: [], media: [], presentation: {} }));
-async function render(patch: Partial<LiveControlState> = {}, sourceSlides: readonly LiveControlSlide[] = slides, busy: boolean | null = false, execute?: ShowCommandCoordinator['execute']) {
+async function render(patch: Partial<LiveControlState> = {}, sourceSlides: readonly LiveControlSlide[] = slides, busy: boolean | null = false, execute?: ShowCommandCoordinator['execute'], onCommit?: () => void) {
   state = { ...state, ...patch };
   const coordinator: ShowCommandCoordinator | null = busy === null ? null : { busy, enabled: true, execute: execute ?? (action => action(state, state.revision)), prepareAudio: () => 0, playAudio: async () => {}, stopAudio: vi.fn() };
-  await act(async () => root.render(<ShowCommandContext.Provider value={coordinator}><EventNightControls session={state} slides={sourceSlides} navigation={navigation} /></ShowCommandContext.Provider>));
+  await act(async () => root.render(<ShowCommandContext.Provider value={coordinator}><React.Profiler id="event-night" onRender={() => onCommit?.()}><EventNightControls session={state} slides={sourceSlides} navigation={navigation} /></React.Profiler></ShowCommandContext.Provider>));
 }
 beforeEach(async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); vi.useFakeTimers(); vi.clearAllMocks();
@@ -62,9 +62,115 @@ test('one button publishes current saved scores, then closes without round setti
 });
 
 const interimPage = { versionId: 'a'.repeat(64), roundNumber: 2, page: 0, pageCount: 2, presentationStyle: 'show' as const, pageSize: 6 as const };
-async function publishInterim() {
+const finalIntro: NonNullable<LiveControlState['finalReveal']> = { versionId: 'a'.repeat(64), visible: true, mode: 'intro', rank: null,
+  revealedCount: 0, totalGroups: 3, page: 0, pageCount: 1, presentationStyle: 'show', pageSize: 6 };
+
+test.each(['reveal', 'hide'] as const)('rejects a queued final %s after the visible version is replaced', async action => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await render({ revision: 25, finalReveal: finalIntro }, slides, false, async work => { await gate; return work(state, state.revision); });
+  let gesture!: Promise<boolean>;
+  await act(async () => { gesture = navigation.current!.navigate(action === 'hide' ? -1 : 1); });
+  expect(calls.invoke).not.toHaveBeenCalled();
+  await render({ revision: 31, finalReveal: { ...finalIntro, versionId: 'b'.repeat(64) } });
+  await act(async () => { release(); await gesture; });
+  expect(calls.invoke).not.toHaveBeenCalled();
+});
+
+test.each(['rank advanced', 'page advanced', 'table entered'] as const)('rejects a queued same-version finale gesture after %s', async change => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const original = { ...finalIntro, mode: 'group' as const, rank: change === 'table entered' ? 1 : 3,
+    revealedCount: change === 'table entered' ? 3 : 1, pageCount: change === 'page advanced' ? 3 : 1 };
+  await render({ revision: 25, finalReveal: original }, slides, false, async work => { await gate; return work(state, state.revision); });
+  let gesture!: Promise<boolean>;
+  await act(async () => { gesture = navigation.current!.navigate(1); });
+  await render({ revision: 31, finalReveal: { ...original,
+    ...(change === 'rank advanced' ? { rank: 2, revealedCount: 2 } : {}),
+    ...(change === 'page advanced' ? { page: 2 } : {}),
+    ...(change === 'table entered' ? { mode: 'table' as const, rank: null, page: 1, pageCount: 2 } : {}),
+  } });
+  await act(async () => { release(); await gesture; });
+  expect(calls.invoke).not.toHaveBeenCalled();
+});
+
+test.each(['observed', 'unobserved'] as const)('uses only an %s newer revision for an unchanged queued final gesture', async observation => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await render({ revision: 25, finalReveal: finalIntro }, slides, false, async work => { await gate; return work(state, 31); });
+  let gesture!: Promise<boolean>;
+  await act(async () => { gesture = navigation.current!.navigate(1); });
+  if (observation === 'observed') await render({ revision: 31, finalReveal: { ...finalIntro } });
+  await act(async () => { release(); await gesture; });
+  if (observation === 'observed') expect(calls.invoke).toHaveBeenCalledExactlyOnceWith('controlFinalReveal',
+    expect.objectContaining({ action: 'reveal', versionId: finalIntro.versionId, expectedRevision: 31 }));
+  else expect(calls.invoke).not.toHaveBeenCalled();
+});
+
+test('rejects a queued manual interim hide after the publication is replaced', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await render({ revision: 25, interimResults: interimPage }, slides, false, async work => { await gate; return work(state, state.revision); });
   await act(async () => host.querySelector('button')!.click());
-  await render({ revision: 11, interimResults: { ...interimPage } });
+  await render({ revision: 31, interimResults: { ...interimPage, versionId: 'b'.repeat(64) } });
+  await act(async () => release());
+  expect(calls.invoke).not.toHaveBeenCalled();
+});
+
+test.each(['replaced', 'same-version page', 'observed telemetry', 'unobserved revision'] as const)('rechecks an already-fired interim page intent after %s', async change => {
+  const pageCount = change === 'same-version page' ? 3 : 2;
+  await publishInterim(pageCount);
+  calls.invoke.mockClear();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await render({}, slides, false, async work => { await gate; return work(state, change === 'unobserved revision' ? state.revision + 1 : state.revision); });
+  await act(async () => { vi.advanceTimersByTime(7000); });
+  expect(calls.invoke).not.toHaveBeenCalled();
+  await render({ revision: 17, interimResults: { ...interimPage, pageCount,
+    ...(change === 'replaced' ? { versionId: 'b'.repeat(64) } : {}), ...(change === 'same-version page' ? { page: 2 } : {}) } });
+  await act(async () => release());
+  if (change === 'observed telemetry') expect(calls.invoke).toHaveBeenCalledExactlyOnceWith('controlInterimResults',
+    expect.objectContaining({ action: 'page', page: 1, expectedRevision: 17 }));
+  else {
+    expect(calls.invoke).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('Projekce se mezitím změnila');
+    await act(async () => { vi.advanceTimersByTime(14000); });
+    expect(calls.invoke).not.toHaveBeenCalled();
+  }
+});
+
+test.each(['page ABA', 'telemetry'] as const)('binds a queued final page to its show cue through %s', async change => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const publication = { ...finalIntro, mode: 'group' as const, rank: 3, revealedCount: 1, pageCount: 3 };
+  const cue: NonNullable<LiveControlState['showCue']> = { id: 'c'.repeat(64), kind: 'reveal', motion: 'static', intensity: 'show',
+    topThree: true, winnerAnimation: true, startedAt: 1000, durationMs: 0 };
+  await render({ revision: 25, finalReveal: publication, showCue: cue }, slides, false, async work => { await gate; return work(state, state.revision); });
+  let gesture!: Promise<boolean>;
+  await act(async () => { gesture = navigation.current!.navigate(1); });
+  if (change === 'page ABA') await render({ revision: 30, finalReveal: { ...publication, page: 1 }, showCue: { ...cue, id: 'd'.repeat(64) } });
+  await render({ revision: 31, finalReveal: { ...publication }, showCue: { ...cue, ...(change === 'page ABA' ? { id: 'e'.repeat(64) } : {}) } });
+  await act(async () => { release(); await gesture; });
+  if (change === 'telemetry') expect(calls.invoke).toHaveBeenCalledExactlyOnceWith('controlFinalReveal', expect.objectContaining({ action: 'page', page: 1, expectedRevision: 31 }));
+  else expect(calls.invoke).not.toHaveBeenCalled();
+});
+
+test('keeps the original interim timer intent when it fires after render but before passive cleanup', async () => {
+  const scheduled = vi.spyOn(window, 'setTimeout');
+  await publishInterim();
+  const timeout = scheduled.mock.calls.find(call => call[1] === 7000)![0];
+  calls.invoke.mockClear();
+  let fired = false;
+  await render({ revision: 17, interimResults: { ...interimPage, versionId: 'b'.repeat(64) } }, slides, false, undefined, () => {
+    if (!fired && typeof timeout === 'function') { fired = true; timeout(); }
+  });
+  scheduled.mockRestore();
+  expect(fired).toBe(true);
+  expect(calls.invoke).not.toHaveBeenCalled();
+});
+async function publishInterim(pageCount = 2) {
+  await act(async () => host.querySelector('button')!.click());
+  await render({ revision: 11, interimResults: { ...interimPage, pageCount } });
 }
 async function pollInterim(milliseconds: number) {
   await act(async () => { vi.advanceTimersByTime(milliseconds); });
