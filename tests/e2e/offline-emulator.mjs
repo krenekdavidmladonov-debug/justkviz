@@ -275,6 +275,13 @@ try {
   assert.equal(pinnedRead.headers.get('cache-control'), 'no-store');
   assert.equal(pinnedRead.headers.get('etag'), descriptor.etag);
   assert.deepEqual(Buffer.from(await pinnedRead.arrayBuffer()), pngBytes);
+  assert.notEqual(f.user.uid, mediaFixture.user.uid);
+  await f.call('readOfflineTrust', { eventId: mediaFixture.eventId }); // The other moderator can access this event.
+  const otherActor = await fetch(gateway, { headers: { ...mediaHeaders, Authorization: 'Bearer ' + await f.user.getIdToken() } });
+  assert.equal(otherActor.status, 404);
+  assert.equal((await otherActor.arrayBuffer()).byteLength, 0);
+  assert.equal(otherActor.headers.get('etag'), null);
+  scenarios.push('OFF-MEDIA-other-authorized-moderator-cannot-read-foreign-offline-export');
   const differentExport = new URL(gateway);
   differentExport.searchParams.set('offlineExportId', '0'.repeat(64));
   assert.equal((await fetch(differentExport, { headers: mediaHeaders })).status, 404);
