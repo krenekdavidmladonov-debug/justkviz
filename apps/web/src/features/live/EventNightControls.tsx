@@ -126,10 +126,22 @@ export function EventNightControls({ session, slides, navigation }: Props) {
             if (!show) return;
             setWinnerVersion(null); show.stopAudio();
             const closing = [...slides].reverse().find(slide => slide.kind.toLowerCase() === 'end' && !slide.hidden);
-            await show.execute((latest, revision) => httpsCallable<unknown, RevisionedResult>(getFirebaseServices().functions, closing ? 'goToSlide' : 'endLiveSession')({
-              sessionId: latest.sessionId, expectedRevision: revision,
-              ...(closing ? { position: closing.position } : {}),
-            }).then(response => response.data));
+            await show.execute((latest, revision) => {
+              // A delayed report can hold this gesture in the queue while
+              // another operator changes the show. A fresh revision alone
+              // must not turn the old table-exit gesture into a new command.
+              if (latest.revision !== revision || latest.status !== 'active' || latest.sessionId !== session.sessionId
+                || latest.eventId !== session.eventId || latest.snapshotId !== session.snapshotId
+                || latest.currentSlidePosition !== session.currentSlidePosition || latest.mediaGeneration !== session.mediaGeneration
+                || latest.finalReveal?.visible !== true || latest.finalReveal.mode !== 'table'
+                || latest.finalReveal.versionId !== session.finalReveal?.versionId) {
+                throw new Error('Finále: Projekce se mezitím změnila. Zkontrolujte aktuální stav a použijte tlačítko znovu.');
+              }
+              return httpsCallable<unknown, RevisionedResult>(getFirebaseServices().functions, closing ? 'goToSlide' : 'endLiveSession')({
+                sessionId: latest.sessionId, expectedRevision: revision,
+                ...(closing ? { position: closing.position } : {}),
+              }).then(response => response.data);
+            });
           });
           return true;
         }

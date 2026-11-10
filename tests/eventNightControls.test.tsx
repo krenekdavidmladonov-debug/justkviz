@@ -18,9 +18,9 @@ vi.mock('../apps/web/src/features/final-reveal/fanfare', () => ({ Fanfare: class
 let root: Root, host: HTMLDivElement, state: LiveControlState;
 const navigation = createRef<EventNightNavigation>();
 const slides: LiveControlSlide[] = ['recap', 'end'].map((kind, index) => ({ id: 's' + index, position: index + 1, kind, isQuestion: false, title: '', text: '', options: [], media: [], presentation: {} }));
-async function render(patch: Partial<LiveControlState> = {}, sourceSlides: readonly LiveControlSlide[] = slides, busy: boolean | null = false) {
+async function render(patch: Partial<LiveControlState> = {}, sourceSlides: readonly LiveControlSlide[] = slides, busy: boolean | null = false, execute?: ShowCommandCoordinator['execute']) {
   state = { ...state, ...patch };
-  const coordinator: ShowCommandCoordinator | null = busy === null ? null : { busy, enabled: true, execute: action => action(state, state.revision), prepareAudio: () => 0, playAudio: async () => {}, stopAudio: vi.fn() };
+  const coordinator: ShowCommandCoordinator | null = busy === null ? null : { busy, enabled: true, execute: execute ?? (action => action(state, state.revision)), prepareAudio: () => 0, playAudio: async () => {}, stopAudio: vi.fn() };
   await act(async () => root.render(<ShowCommandContext.Provider value={coordinator}><EventNightControls session={state} slides={sourceSlides} navigation={navigation} /></ShowCommandContext.Provider>));
 }
 beforeEach(async () => {
@@ -198,6 +198,54 @@ test('next from a final table ends the session when its frozen source has no clo
   expect(intercepted).toBe(true);
   expect(calls.invoke).toHaveBeenCalledExactlyOnceWith('endLiveSession', { sessionId: 'session', expectedRevision: 25 });
 });
+
+for (const closing of [true, false]) {
+  const label = closing ? 'closing slide' : 'legacy session without a closing slide';
+  const source = closing ? slides : [slides[0]!];
+  const table: NonNullable<LiveControlState['finalReveal']> = { versionId: 'a'.repeat(64), visible: true, mode: 'table', rank: null, revealedCount: 3, totalGroups: 3, page: 0, pageCount: 1 };
+  test.each(['hidden', 'replaced', 'superseded generation', 'slide moved', 'ended', 'ranking resumed'] as const)(`does not leave the ${label} from a queued intent after the finale is %s`, async change => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    // This is the real coordinator boundary: a previously dispatched playback
+    // report can hold the queue without making show.busy true.
+    await render({ revision: 25, slideCount: source.length, finalReveal: { ...table } }, source, false,
+      async action => { await gate; return action(state, state.revision); });
+    let intercepted!: Promise<boolean>;
+    await act(async () => { intercepted = navigation.current!.navigate(1); });
+    expect(calls.invoke).not.toHaveBeenCalled();
+    await render({ revision: 31, finalReveal: { ...table,
+      ...(change === 'hidden' ? { visible: false } : {}),
+      ...(change === 'replaced' ? { versionId: 'b'.repeat(64) } : {}),
+      ...(change === 'ranking resumed' ? { mode: 'group' } : {}),
+    }, ...(change === 'superseded generation' ? { mediaGeneration: state.mediaGeneration + 2 } : {}),
+    ...(change === 'slide moved' ? { currentSlidePosition: state.currentSlidePosition + 1 } : {}),
+    ...(change === 'ended' ? { status: 'ended' } : {}) }, source);
+    await act(async () => { release(); expect(await intercepted).toBe(true); });
+    expect(calls.invoke).not.toHaveBeenCalled();
+  });
+
+  test(`allows a queued ${label} exit after a revision-only telemetry update`, async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    calls.invoke.mockResolvedValue({ data: { revision: 32 } });
+    await render({ revision: 25, slideCount: source.length, finalReveal: { ...table } }, source, false,
+      async action => { await gate; return action(state, state.revision); });
+    let intercepted!: Promise<boolean>;
+    await act(async () => { intercepted = navigation.current!.navigate(1); });
+    await render({ revision: 31, finalReveal: { ...table } }, source);
+    await act(async () => { release(); expect(await intercepted).toBe(true); });
+    expect(calls.invoke).toHaveBeenCalledExactlyOnceWith(closing ? 'goToSlide' : 'endLiveSession', {
+      sessionId: 'session', expectedRevision: 31, ...(closing ? { position: slides[1]!.position } : {}),
+    });
+  });
+
+  test(`does not leave the ${label} using a confirmed revision whose snapshot has not arrived`, async () => {
+    await render({ revision: 25, slideCount: source.length, finalReveal: { ...table } }, source, false,
+      action => action(state, 31));
+    await act(async () => { expect(await navigation.current!.navigate(1)).toBe(true); });
+    expect(calls.invoke).not.toHaveBeenCalled();
+  });
+}
 
 test.each([
   { rows: [], message: 'zatím nejsou přihlášené týmy' },
