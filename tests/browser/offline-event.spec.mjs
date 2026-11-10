@@ -550,7 +550,9 @@ async function syncPhase() {
       await expect(browser.page.locator('[data-offline-error]')).toBeVisible();
       expect(blockedBeforeDelivery).toBe(1);
       await expect(browser.page.locator('[data-offline-sync-receipt]')).toHaveCount(0);
-      expect(await storedHead(browser.page, credentials.sessionId)).toEqual(head);
+      const pendingHead = await storedHead(browser.page, credentials.sessionId);
+      expect(pendingHead).toMatchObject({ sequence: head.sequence, headHash: head.headHash, complete: head.complete });
+      expect(pendingHead.encryptedBytes).toBeGreaterThan(head.encryptedBytes);
       expect((await record.get()).get('status')).toBe('prepared');
       const scoreRefs = await db.collection(`events/${credentials.eventId}/scores`).listDocuments();
       expect(scoreRefs).toHaveLength(0); // Includes missing parents that still have history subcollections.
@@ -566,7 +568,9 @@ async function syncPhase() {
     await button(browser.page, 'Znovu ověřit synchronizaci').click();
     await expect.poll(() => dropped).toBe(true); await expect(browser.page.locator('[data-offline-error]')).toBeVisible();
     expect((await record.get()).get('status')).toBe('synchronized');
-    expect(await storedHead(browser.page, credentials.sessionId)).toEqual(head);
+    const awaitingReceipt = await storedHead(browser.page, credentials.sessionId);
+    expect(awaitingReceipt).toMatchObject({ sequence: head.sequence, headHash: head.headHash, complete: head.complete });
+    expect(awaitingReceipt.encryptedBytes).toBeGreaterThan(head.encryptedBytes);
     await browser.context.unroute('**/commitOfflineSync');
     await unlock(browser.page, credentials.sessionId);
     await expect(browser.page.locator('[data-offline-sync-pending]')).toBeVisible();
