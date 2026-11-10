@@ -7,7 +7,7 @@ import { AdminEventDetailPage } from '../apps/web/src/routes/admin/AdminEventDet
 import { getEvent } from '../apps/web/src/features/events/eventRepository';
 import { listQuizzes } from '../apps/web/src/features/quizzes/quizRepository';
 import { getEditorQuiz } from '../apps/web/src/features/editor/editorRepository';
-import { lockEventQuiz } from '../apps/web/src/features/events/eventApi';
+import { lockEventQuiz, updateEvent } from '../apps/web/src/features/events/eventApi';
 import { setEventPublication } from '../apps/web/src/features/events/registrationApi';
 import { registrationSharingState } from '../apps/web/src/features/events/registrationSharing';
 import type { EditorQuiz } from '../apps/web/src/features/editor/types';
@@ -16,13 +16,14 @@ import type { QuizSummary } from '../apps/web/src/features/quizzes/types';
 import { eventFormRecord } from './browser/events-form-ux.data';
 
 const access = vi.hoisted(() => ({ allowed: true, denied: [] as string[] }));
+const eventActions = vi.hoisted(() => vi.fn<(props: { onChanged: (message: string, deleted?: boolean) => Promise<void> }) => null>(() => null));
 vi.mock('../apps/web/src/auth/AuthProvider', () => ({ useAuth: () => ({ can: (permission: string) => access.allowed && !access.denied.includes(permission), currentUser: { uid: 'test' } }) }));
 vi.mock('../apps/web/src/features/events/eventRepository', () => ({ getEvent: vi.fn() }));
 vi.mock('../apps/web/src/features/quizzes/quizRepository', () => ({ listQuizzes: vi.fn() }));
 vi.mock('../apps/web/src/features/editor/editorRepository', () => ({ getEditorQuiz: vi.fn() }));
 vi.mock('../apps/web/src/features/events/eventApi', () => ({ eventActionError: () => 'Chyba', lockEventQuiz: vi.fn(), updateEvent: vi.fn() }));
 vi.mock('../apps/web/src/features/events/registrationApi', () => ({ setEventPublication: vi.fn() }));
-vi.mock('../apps/web/src/features/events/EventActions', () => ({ EventActions: () => null, lifecycleLabels: {} }));
+vi.mock('../apps/web/src/features/events/EventActions', () => ({ EventActions: eventActions, lifecycleLabels: {} }));
 vi.mock('../apps/web/src/features/leaderboard/EventLiveButton', () => ({ EventLiveButton: () => null }));
 vi.mock('../apps/web/src/features/referee/RefereeAccessPanel', () => ({ RefereeAccessPanel: () => null }));
 vi.mock('../apps/web/src/features/events/ManualTeamDialog', () => ({ ManualTeamDialog: () => null }));
@@ -38,14 +39,19 @@ beforeEach(() => {
   vi.mocked(listQuizzes).mockReset().mockResolvedValue([summary]);
   vi.mocked(getEditorQuiz).mockReset().mockResolvedValue({ id: 'quiz', title: 'Prázdný kvíz', description: '', revision: 1, slideCount: 0, roundCount: 0, questionCount: 0, slides: [] });
   vi.mocked(lockEventQuiz).mockReset().mockResolvedValue({ eventId: record().id, revision: 3, lifecycleStatus: 'ready', registrationStatus: 'closed' });
+  vi.mocked(updateEvent).mockReset();
   vi.mocked(setEventPublication).mockReset();
+  eventActions.mockClear();
   HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   HTMLDialogElement.prototype.close = function () { this.open = false; };
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 async function render() {
-  const router = createMemoryRouter([{ path: '/admin/events/:eventId', element: <AdminEventDetailPage /> }], { initialEntries: ['/admin/events/' + record().id] });
+  const router = createMemoryRouter([
+    { path: '/admin/events', element: <h1>Akce</h1> },
+    { path: '/admin/events/:eventId', element: <AdminEventDetailPage /> },
+  ], { initialEntries: ['/admin/events/' + record().id] });
   await act(async () => root.render(<RouterProvider router={router} />)); return router;
 }
 it.each([false, true])('updates registration summary and sharing immediately after opening, full=%s', async full => {
@@ -139,6 +145,39 @@ it('ignores an earlier event response after the route changes', async () => {
   const router = await render(); await act(async () => router.navigate('/admin/events/other'));
   await act(async () => resolve(record()));
   expect(host.textContent).toContain('Jiná dokončená akce'); expect(listQuizzes).not.toHaveBeenCalled();
+});
+it('keeps loading the new event when an earlier event save finishes', async () => {
+  let resolveNewEvent!: (event: EventRecord) => void;
+  const newEvent = record({ id: 'other', title: 'Jiná akce', lifecycleStatus: 'completed' });
+  vi.mocked(getEvent).mockResolvedValueOnce(record())
+    .mockImplementationOnce(() => new Promise(done => { resolveNewEvent = done; }));
+  let resolveSave!: (result: Awaited<ReturnType<typeof updateEvent>>) => void;
+  vi.mocked(updateEvent).mockImplementationOnce(() => new Promise(done => { resolveSave = done; }));
+
+  const router = await render();
+  await act(async () => {
+    host.querySelector('form.event-form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+  });
+  expect(updateEvent).toHaveBeenCalledWith(record().id, record().revision, expect.anything());
+  await act(async () => router.navigate('/admin/events/other'));
+  expect(host.textContent).toContain('Načítám detail akce');
+  await act(async () => resolveSave({ eventId: record().id, revision: 3, lifecycleStatus: 'draft', registrationStatus: 'closed' }));
+  await act(async () => resolveNewEvent(newEvent));
+
+  expect(host.textContent).toContain(newEvent.title);
+  expect(host.textContent).not.toContain('Změny akce byly uloženy.');
+  expect(vi.mocked(getEvent).mock.calls).toEqual([[record().id], [newEvent.id]]);
+});
+it('does not navigate away from a new event when deletion of the old event finishes', async () => {
+  const newEvent = record({ id: 'other', title: 'Jiná akce', lifecycleStatus: 'completed' });
+  vi.mocked(getEvent).mockResolvedValueOnce(record()).mockResolvedValueOnce(newEvent);
+  const router = await render();
+  const [{ onChanged }] = eventActions.mock.lastCall!;
+  await act(async () => router.navigate('/admin/events/other'));
+  await act(async () => onChanged('Akce byla smazána.', true));
+
+  expect(router.state.location.pathname).toBe('/admin/events/other');
+  expect(host.textContent).toContain(newEvent.title);
 });
 it('ignores the optional library response after navigating to an immutable event', async () => {
   let resolve!: (quizzes: readonly QuizSummary[]) => void;

@@ -4,7 +4,7 @@ import { teamEmailEnabled } from '../../features/events/teamEmailCapability';
 import { EventLiveButton } from '../../features/leaderboard/EventLiveButton';
 import { RefereeAccessPanel } from '../../features/referee/RefereeAccessPanel';
 import { runQuizPreflight, type EditorQuiz, type PreflightResult } from '@filmovy-kviz/quiz-domain';
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { useAuth } from '../../auth/AuthProvider';
@@ -58,9 +58,13 @@ function formValues(event: EventRecord): EventFormValues {
 }
 
 export function AdminEventDetailPage() {
+  const { eventId } = useParams<{ eventId: string }>();
+  return <EventDetail key={eventId} eventId={eventId} />;
+}
+
+function EventDetail({ eventId }: { eventId: string | undefined }) {
   const navigate = useNavigate();
   const { hash } = useLocation();
-  const { eventId } = useParams<{ eventId: string }>();
   const { can, currentUser, membership } = useAuth();
   const canChooseQuiz = can('event.manage') && can('quiz.read') && can('quiz.export') && can('quiz.answers.read') && can('quiz.notes.read');
   const [event, setEvent] = useState<EventRecord | null>(null);
@@ -88,11 +92,17 @@ export function AdminEventDetailPage() {
   const [libraryComparisonError, setLibraryComparisonError] = useState(false);
   const loadVersion = useRef(0);
   const actionBusy = useRef(false);
+  const active = useRef(false);
   const quizEditable = !loading && event?.id === eventId && event !== null && canChooseQuiz
     && eventOperational(event) && !event.liveSessionId && !event.scoring.started;
 
+  useLayoutEffect(() => {
+    active.current = true;
+    return () => { active.current = false; loadVersion.current++; };
+  }, []);
+
   const load = useCallback(async () => {
-    if (!eventId) return;
+    if (!eventId || !active.current) return;
     const version = ++loadVersion.current;
     setLoading(true);
     setCheckingLibrary(false);
@@ -114,13 +124,7 @@ export function AdminEventDetailPage() {
   }, [eventId]);
 
   useEffect(() => {
-    setEvent(null);
-    setSelectedQuizId('');
-    setLibraryComparison(null);
-    setCheckingLibrary(false);
-    setLibraryComparisonError(false);
     void load();
-    return () => { loadVersion.current++; };
   }, [load]);
   useEffect(() => {
     if (!loading && hash === '#event-quiz') document.getElementById('event-quiz')?.scrollIntoView({ block: 'start' });
@@ -163,14 +167,16 @@ export function AdminEventDetailPage() {
     setNotice(null);
     try {
       await action();
+      if (!active.current) return;
       setNotice(success);
       await load();
     } catch (actionError) {
+      if (!active.current) return;
       setError(eventActionError(actionError));
       if (actionError && typeof actionError === 'object' && 'code' in actionError && actionError.code === 'functions/aborted') setConflict(true);
     } finally {
       actionBusy.current = false;
-      setPending(false);
+      if (active.current) setPending(false);
     }
   };
 
@@ -213,6 +219,7 @@ export function AdminEventDetailPage() {
         <div><h1>{admin ? 'Upravit akci' : 'Detail akce'}</h1><p className="lead">{event.title} · {event.venue.name}</p></div>
         <span className={`quiz-status status-${event.lifecycleStatus}`}>{lifecycleLabels[event.lifecycleStatus]}</span>
         <EventActions event={event} onChanged={async (message, deleted, updated) => {
+          if (!active.current) return;
           if (deleted) { await navigate('/admin/events'); return; }
           if (updated) { setEvent(updated); setValues(formValues(updated)); }
           setNotice(message);
@@ -278,7 +285,12 @@ export function AdminEventDetailPage() {
       </div>}
       {admin && can('event.contacts') && EventTeamMessagePanel && <Suspense fallback={null}><EventTeamMessagePanel key={event.id + ':' + currentUser?.uid} eventId={event.id} actorId={currentUser!.uid} canCreate={['draft', 'scheduled', 'ready', 'live'].includes(event.lifecycleStatus)} /></Suspense>}
       {!hidden && <RegistrationSharePanel event={event} now={now} />}
-      {admin && addingTeam && <ManualTeamDialog event={event} onClose={() => setAddingTeam(false)} onSaved={async (id, name) => { setAddedTeam({ id, name }); setEvent(await getEvent(event.id)); }} />}
+      {admin && addingTeam && <ManualTeamDialog event={event} onClose={() => setAddingTeam(false)} onSaved={async (id, name) => {
+        if (!active.current) return;
+        setAddedTeam({ id, name });
+        const updated = await getEvent(event.id);
+        if (active.current) setEvent(updated);
+      }} />}
 
       <section className="event-section" id="event-edit">
         {admin ? <EventForm values={values} live={Boolean(event.liveSessionId)} pending={pending || conflict} submitLabel="Uložit změny" onChange={setValues} onSubmit={() => void runAction(() => updateEvent(event.id, event.revision, values), 'Změny akce byly uloženy.')} /> : (
