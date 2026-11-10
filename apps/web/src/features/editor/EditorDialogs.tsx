@@ -29,7 +29,7 @@ export function UnsavedChangesDialog({
     };
   }, [opener]);
   return (
-    <dialog ref={dialogRef} className="editor-dialog" aria-labelledby="unsaved-dialog-title" onCancel={(event) => { event.preventDefault(); onCancel(); }}>
+    <dialog ref={dialogRef} className="editor-dialog" aria-labelledby="unsaved-dialog-title" onCancel={(event) => { event.preventDefault(); if (!busy) onCancel(); }}>
       <h2 id="unsaved-dialog-title">Máte neuložené změny.</h2>
       <p>Než budete pokračovat, zvolte, co se má s rozepsanými změnami stát.</p>
       <div className="editor-dialog-actions">
