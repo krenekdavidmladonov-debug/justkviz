@@ -116,7 +116,7 @@ function TimingRepair({ slide, disabled, startText, endText, onStartText, onEndT
         <button type="button" className="secondary-button" disabled={disabled || !loaded} onClick={() => capture('start')}>Použít aktuální čas jako START</button>
         <button type="button" className="secondary-button" disabled={disabled || !loaded} onClick={() => capture('end')}>Použít aktuální čas jako END</button>
         <button type="button" className="primary-button" disabled={disabled} onClick={() => run('play')}>Přehrát ukázku</button>
-        <button type="button" className="secondary-button" disabled={disabled} onClick={() => run('stop')}>STOP</button>
+        <button type="button" className="secondary-button" disabled={disabled || !loaded} onClick={() => run('stop')}>STOP</button>
         <button type="button" className="secondary-button" disabled={disabled} onClick={() => run('replay')}>PUSTIT ZNOVU</button>
       </div>
     </div>

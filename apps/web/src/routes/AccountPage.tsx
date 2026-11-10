@@ -55,6 +55,7 @@ export function AccountPage() {
     {!user ? <section className="account-card">
       <div className="account-actions"><button className="quiet-button" onClick={() => setMode('login')} aria-pressed={mode === 'login'}>Přihlásit se</button><button className="quiet-button" onClick={() => setMode('signup')} aria-pressed={mode === 'signup'}>Vytvořit osobní účet</button></div>
       <form onSubmit={submitLogin} className="account-form">
+        <p><Link to="/privacy">Ochrana osobních údajů</Link> při přihlášení a vytvoření účtu.</p>
         {mode === 'signup' && <label>Zobrazované jméno<input required maxLength={80} autoComplete="name" value={name} onChange={e => setName(e.target.value)} /></label>}
         <label>E-mail<input required type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)} /></label>
         <label>Heslo<input required type="password" minLength={mode === 'signup' ? 12 : undefined} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} /></label>
