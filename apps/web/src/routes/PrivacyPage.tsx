@@ -12,7 +12,10 @@ export function PrivacyPage() {
     <p>Přihlášení obsluhy používá Firebase Authentication. Aplikace pracuje s e-mailem, zobrazovaným jménem, identifikátorem účtu, členstvím, oprávněními a bezpečnostními záznamy operací. Heslo při přihlášení a obnově zpracovává Firebase Authentication. Přístup k údajům závisí na aktuálním oprávnění pro konkrétní akci.</p>
     <h2>Poskytovatelé a uložení</h2>
     <p>Firebase a Google Cloud zajišťují přihlášení, serverové zpracování a uložení. Při zapnutém odesílání se registrační zprávy předávají poskytovateli e-mailu. Volitelné propojení Google Drive a Gmailu se týká obsluhy; účastník svůj Google účet nepřipojuje.</p>
-    <p>Požadavky mohou zahrnovat také provozní údaje, například IP adresu a čas. Přesný rozsah služeb, umístění, příjemce, případná předání mimo EHP a související záruky musí provozovatel potvrdit podle skutečného nastavení.</p>
+    <p>Požadavky mohou zahrnovat také provozní údaje, například IP adresu a čas. Google uvádí, že Firebase Authentication zpracovává údaje v USA. Konkrétní příjemce, místa uložení ostatních služeb a záruky pro předávání mimo EHP musí správce potvrdit podle svého nastavení a smluv.</p>
+    <h2>Údaje v prohlížeči</h2>
+    <p>Prohlížeč může uchovávat stav přihlášení a rozepsaných úloh. Při použití offline režimu se do prohlížeče uloží aplikace a data potřebná k odehrání kvízu. Na sdíleném notebooku chraňte přístup k profilu prohlížeče i staženému balíčku.</p>
+    <p>Při načtení vloženého videa YouTube se prohlížeč připojí ke službě YouTube. To se týká obrazovek, které takové video zobrazují. <a href="https://policies.google.com/privacy" rel="noreferrer">Informace o zpracování údajů společností Google</a></p>
     <h2>Co ještě doplnit</h2>
     <dl>
       <dt>Správce a kontakt pro žádosti</dt><dd>Fyzická osoba. Jméno a veřejný kontakt: ČEKÁ NA DOPLNĚNÍ VLASTNÍKEM (WAITING_FOR_OWNER).</dd>
