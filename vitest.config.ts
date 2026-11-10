@@ -9,7 +9,7 @@ export default defineConfig({
       'tests/privacyNotice.test.tsx', 'tests/registrationAbuse.test.ts',
       'tests/manageRegistrationPage.test.tsx', 'tests/refereeRouteScope.test.tsx', 'tests/publicEventRouteScope.test.tsx',
       'tests/adminEventRegistrationsPage.test.tsx', 'tests/adminEventCreatePage.test.tsx',
-      'tests/editorPreviewMedia.test.tsx',
+      'tests/editorPreviewMedia.test.tsx', 'tests/mediaUploadField.test.tsx',
       'tests/registrationInput.test.tsx',
       'tests/driveLocal*.test.ts', 'tests/driveCompanionUi*.test.*',
       'tests/driveFiles.test.ts', 'tests/driveImageByteCache.test.ts', 'tests/drivePicker.test.ts', 'tests/driveImportUi.test.tsx', 'tests/driveImages.test.ts', 'tests/driveImportCallables.test.ts',

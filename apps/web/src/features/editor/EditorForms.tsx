@@ -276,6 +276,7 @@ function TimeField({ label, field, value, disabled, issues, showIssue, touch, on
 
 function MediaTimingFields(props: QuestionFormFieldProps) {
   const { slide, disabled, issues, showIssues, touch, onChange } = props;
+  const mediaKind = semanticQuestionType(slide) === 'audio' ? 'audio' : 'video';
   const [command, setCommand] = useState<MediaPlaybackCommand>('idle');
   const [generation, setGeneration] = useState(0);
   const [currentTimeRequest, setCurrentTimeRequest] = useState(0);
@@ -298,7 +299,7 @@ function MediaTimingFields(props: QuestionFormFieldProps) {
   return (
     <fieldset className="editor-fieldset media-timing-editor">
       <legend>Ukázka</legend>
-      <div data-preflight-field="mediaSource"><MediaUploadField key={slide.id + ':source'} kind={semanticQuestionType(slide) === 'audio' ? 'audio' : 'video'} label="Zdroj ukázky" value={slide.mediaSource} disabled={disabled} onReady={value => {
+      <div data-preflight-field="mediaSource"><MediaUploadField key={slide.id + ':source:' + mediaKind} kind={mediaKind} label="Zdroj ukázky" value={slide.mediaSource} disabled={disabled} onReady={value => {
         setCurrentTimeRequest(0); setCommand('stop'); setGeneration(g => g + 1); setMediaStatus(value ? 'Zdroj rozpoznán. Načtěte přehrávač a zkontrolujte nové časování.' : 'Zdroj odebrán.');
         onChange({ ...slide, mediaSource: value, clipStartSeconds: null, clipEndSeconds: null });
       }} /><FieldIssues field="mediaSource" issues={issues} visible={showIssues('mediaSource')} /></div>
