@@ -32,6 +32,10 @@ function LazyProjectorRoute() {
   return <Suspense fallback={<section className="projector-stage projector-message"><h1>Načítám projektor…</h1></section>}><ProjectorPage /></Suspense>;
 }
 
+function isCurrentEventCreateEntry(entryKey: string): boolean {
+  return router.state.location.key === entryKey && router.state.navigation.state === 'idle';
+}
+
 export const router = createBrowserRouter([
   { path: 'admin/settings/drive/callback', element: <DriveConnectionCallback />, errorElement: <RouteErrorPage /> },
   { path: 'referee/:eventId', element: <RefereePage />, errorElement: <RouteErrorPage /> },
@@ -57,7 +61,10 @@ export const router = createBrowserRouter([
           { path: 'quizzes/:quizId/readiness', lazy: lazyAdminRoute(() => import('../routes/admin/QuizPreflightPage').then(module => module.QuizPreflightPage), ['quiz.read', 'quiz.answers.read']) },
           { path: 'quizzes/:quizId/readiness/repair', lazy: lazyAdminRoute(() => import('../routes/admin/QuizRepairPage').then(module => module.QuizRepairPage), ['quiz.edit', 'quiz.answers.edit']) },
           { path: 'events', lazy: lazyAdminRoute(() => import('../routes/admin/AdminEventsPage').then(module => module.AdminEventsPage), ['event.read']) },
-          { path: 'events/new', lazy: lazyAdminRoute(() => import('../routes/admin/AdminEventCreatePage').then(module => module.AdminEventCreatePage), ['event.create']) },
+          { path: 'events/new', lazy: lazyAdminRoute(async () => {
+            const { AdminEventCreatePage } = await import('../routes/admin/AdminEventCreatePage');
+            return function EventCreateRoute() { return <AdminEventCreatePage isCurrentEntry={isCurrentEventCreateEntry} />; };
+          }, ['event.create']) },
           { path: 'events/:eventId/scoring', lazy: lazyAdminRoute(() => import('../routes/admin/AdminEventScoringPage').then(module => module.AdminEventScoringPage), ['event.read']) },
           { path: 'events/:eventId/results', lazy: lazyAdminRoute(() => import('../routes/admin/AdminEventResultsPage').then(module => module.AdminEventResultsPage), ['event.read']) },
           { path: 'events/:eventId', lazy: lazyAdminRoute(() => import('../routes/admin/AdminEventDetailPage').then(module => module.AdminEventDetailPage), ['event.read']) },
