@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { calculateOfflineResults, canHideInfoSlide, offlineResultsPageSize, type OfflineCommand, type OfflineSyncPreview, type OfflineSyncResolution } from '@filmovy-kviz/quiz-domain';
 import { OfflineMediaContext } from '../media/OfflineMediaContext';
 import { SlideRenderer } from '../presentation/SlideRenderer';
@@ -120,6 +120,7 @@ function OfflineHome({ importEventId }: { readonly importEventId: string | undef
   const [installPrompt, setInstallPrompt] = useState<ChromeInstallPrompt | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
   const mounted = useRef(false);
+  const taskLifetime = useRef({ active: false, pending: false });
   const activeRuntime = useRef<OfflineRuntime | null>(null);
   const unlocking = useRef<AbortController | null>(null);
   const refresh = useCallback(async () => setSessions(await listOfflineSessions()), []);
@@ -148,11 +149,18 @@ function OfflineHome({ importEventId }: { readonly importEventId: string | undef
       activeRuntime.current?.close();
     };
   }, [refresh]);
+  useLayoutEffect(() => {
+    const lifetime = { active: true, pending: false };
+    taskLifetime.current = lifetime;
+    return () => { lifetime.active = false; };
+  }, []);
   const task = async (work: () => Promise<void>) => {
-    if (busy) return;
+    const lifetime = taskLifetime.current;
+    if (!lifetime.active || lifetime.pending) return;
+    lifetime.pending = true;
     setBusy(true); setError(''); setMessage('');
-    try { await work(); } catch (caught) { setError(errorText(caught)); }
-    finally { setBusy(false); }
+    try { await work(); } catch (caught) { if (lifetime.active) setError(errorText(caught)); }
+    finally { lifetime.pending = false; if (lifetime.active) setBusy(false); }
   };
   const unlock = async (sessionId: string, verifiedArchiveId?: string) => {
     if (!mounted.current) return undefined;
