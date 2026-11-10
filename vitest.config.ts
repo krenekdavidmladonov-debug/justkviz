@@ -20,7 +20,7 @@ export default defineConfig({
       'tests/showAudio.test.ts', 'tests/showAudioSecurity.test.ts', 'tests/showAudioPanel.test.tsx',
       'tests/slideDesignSecurity.test.ts',
       'tests/editorWorkingCopy.test.ts', 'tests/outlineMoves.test.ts',
-      'tests/adminNavigation.test.tsx', 'tests/routeError.test.tsx', 'tests/eventDetailLoading.test.tsx', 'tests/eventActions.test.tsx',
+      'tests/adminNavigation.test.tsx', 'tests/routeError.test.tsx', 'tests/lazyRouteLoading.test.tsx', 'tests/eventDetailLoading.test.tsx', 'tests/eventActions.test.tsx',
       'tests/accessDeploymentManifest.test.ts', 'tests/accessPermissions.test.ts', 'tests/darkTheme.test.ts', 'tests/branding.test.tsx', 'tests/adminDashboard.test.tsx',
       'tests/quizModel.test.ts', 'tests/mediaAuthoring.test.ts', 'tests/mediaStorage.test.ts', 'tests/ownedMediaComponents.test.tsx', 'tests/mediaPublicReuse.test.tsx',
       'tests/quizTrash.test.ts',

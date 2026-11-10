@@ -1,6 +1,5 @@
 import { PrivacyPage } from '../routes/PrivacyPage';
 import { lazyAdminRoute } from './lazyAdminRoute';
-import { PermissionGate } from '../features/access/PermissionGate';
 import { RefereePage } from '../routes/referee/RefereePage';
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter } from 'react-router-dom';
@@ -17,9 +16,7 @@ import { NotFoundPage } from '../routes/NotFoundPage';
 import { AdminShell } from './AdminShell';
 import { AppLayout } from './AppLayout';
 import { RouteErrorPage } from './RouteErrorPage';
-import { AccountPage } from '../routes/AccountPage';
-import { UsersAccessPage } from '../routes/admin/UsersAccessPage';
-import { AdminSettingsPage } from '../routes/admin/AdminSettingsPage';
+import { QuizLoading } from '../features/quizzes/QuizLoading';
 import { DriveConnectionCallback } from '../features/drive/DriveConnectionCallback';
 import '../styles/access.css';
 
@@ -31,6 +28,15 @@ const ProjectorPage = lazy(async () => {
 function LazyProjectorRoute() {
   return <Suspense fallback={<section className="projector-stage projector-message"><h1>Načítám projektor…</h1></section>}><ProjectorPage /></Suspense>;
 }
+
+function PublicRouteLoading() {
+  return <QuizLoading label="Načítám stránku…" />;
+}
+
+const lazyAccountRoute = async () => {
+  const { AccountPage } = await import('../routes/AccountPage');
+  return { Component: AccountPage };
+};
 
 function isCurrentEventCreateEntry(entryKey: string): boolean {
   return router.state.location.key === entryKey && router.state.navigation.state === 'idle';
@@ -53,8 +59,8 @@ export const router = createBrowserRouter([
         element: <AdminShell />,
         children: [
           { index: true, element: <AdminPage /> },
-          { path: 'settings', element: <AdminSettingsPage /> },
-          { path: 'users', element: <PermissionGate requires={['users.manage']}><UsersAccessPage /></PermissionGate> },
+          { path: 'settings', lazy: async () => ({ Component: (await import('../routes/admin/AdminSettingsPage')).AdminSettingsPage }) },
+          { path: 'users', lazy: lazyAdminRoute(() => import('../routes/admin/UsersAccessPage').then(module => module.UsersAccessPage), ['users.manage']) },
           { path: 'quizzes', lazy: lazyAdminRoute(() => import('../routes/admin/QuizLibraryPage').then(module => module.QuizLibraryPage), ['quiz.read']) },
           { path: 'quizzes/new', lazy: lazyAdminRoute(() => import('../routes/admin/QuizCreatePage').then(module => module.QuizCreatePage), ['quiz.create']) },
           { path: 'quizzes/:quizId', lazy: lazyAdminRoute(() => import('../routes/admin/QuizDetailPage').then(module => module.QuizDetailPage), ['quiz.read']) },
@@ -82,8 +88,8 @@ export const router = createBrowserRouter([
       { index: true, element: <EventsPage /> },
       { path: 'admin/login', element: <AdminLoginPage /> },
       { path: 'admin/no-access', element: <AdminNoAccessPage /> },
-      { path: 'account', element: <AccountPage /> },
-      { path: 'invite/:inviteId', element: <AccountPage /> },
+      { path: 'account', lazy: lazyAccountRoute, HydrateFallback: PublicRouteLoading },
+      { path: 'invite/:inviteId', lazy: lazyAccountRoute, HydrateFallback: PublicRouteLoading },
       { path: 'privacy', element: <PrivacyPage /> },
       { path: 'events', element: <EventsPage /> },
       { path: 'events/:eventId', element: <PublicEventPage /> },
