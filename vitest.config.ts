@@ -31,7 +31,7 @@ export default defineConfig({
       'tests/localEventMediaBackupFile.test.ts',
       'tests/localEventMediaManifestGuard.test.ts',
       'tests/localImageBackup*.test.ts',
-      'tests/liveModeratorView.test.tsx',
+      'tests/liveModeratorView.test.tsx', 'tests/liveControlPage.test.tsx',
       'tests/eventNightFlow.test.ts', 'tests/eventNightControls.test.tsx', 'tests/demoFinalePreview.test.tsx', 'tests/interimCurrent.test.ts',
       'tests/liveMutationQueue.test.ts',
       'tests/snapshotClips.test.ts', 'tests/snapshotClipAccess.test.ts', 'tests/originalImages.test.ts',

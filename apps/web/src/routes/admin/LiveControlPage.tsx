@@ -1,7 +1,7 @@
 import { EventNightControls, type EventNightNavigation } from '../../features/live/EventNightControls';
 import { visibleSlidePosition } from '@filmovy-kviz/quiz-domain';
 import { FirebaseError } from 'firebase/app';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { doc, runTransaction } from 'firebase/firestore';
 import { Link, useLocation, useParams } from 'react-router-dom';
 
@@ -92,7 +92,11 @@ function loadingError(area: 'session' | 'slides'): HumanErrorValue {
 
 export function LiveControlPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
-  const routeSearch=useLocation().search;
+  const routeSearch = useLocation().search;
+  return <LiveSessionControl key={sessionId} sessionId={sessionId} routeSearch={routeSearch} />;
+}
+
+function LiveSessionControl({ sessionId, routeSearch }: { readonly sessionId: string | undefined; readonly routeSearch: string }) {
   const measure = latencyEnabled(routeSearch);
   const [latencyTrace, setLatencyTrace] = useState<LatencyTrace>();
   const latency = useMemo(() => new LiveLatencyCapture(setLatencyTrace), [sessionId]);
@@ -120,6 +124,8 @@ export function LiveControlPage() {
   const remoteMediaActive = useRef(false);
   const automaticAudioPreparedAt = useRef(0);
   const sessionRef = useRef<LiveControlState | null>(null);
+  const mounted = useRef(false);
+  const navigationInFlight = useRef(false);
   const channelRef = useRef<ProjectorChannel | undefined>(undefined);
   const operationIdRef = useRef(0);
   const confirmedRevisionRef = useRef(-1);
@@ -128,6 +134,16 @@ export function LiveControlPage() {
   const slideSource = session ? JSON.stringify([session.sessionId, session.quizId, session.snapshotId ?? null]) : null;
   const slidesReady = slideSource !== null && loadedSlideSource === slideSource;
 
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  function isCurrentSession(generation = accessGenerationRef.current) {
+    return sessionId !== undefined && mounted.current && generation === accessGenerationRef.current
+      && sessionRef.current?.sessionId === sessionId;
+  }
+
   useEffect(() => {
     const generation = ++accessGenerationRef.current;
     const invalidate = () => {
@@ -135,6 +151,8 @@ export function LiveControlPage() {
       suppressedAudioGeneration.current = null; questionAudioPending.current = false;
       accessGenerationRef.current++; operationIdRef.current++; sessionRef.current = null;
       confirmedRevisionRef.current = -1; mutationQueueRef.current = new LiveMutationQueue();
+      navigationInFlight.current = false;
+      setQueueCount(0);
       setPublicState(null);
       setMediaObservations([]);
       setActiveMediaObservations([]);
@@ -317,16 +335,17 @@ export function LiveControlPage() {
     action: (current: LiveControlState) => Promise<T>,
   ): Promise<T> {
     const generation = accessGenerationRef.current;
+    if (!isCurrentSession(generation)) return Promise.reject(new Error('Přístup se změnil.'));
     setQueueCount(count => count + 1);
     const execute = mutationQueueRef.current.enqueueCommand(async () => {
-      if (generation !== accessGenerationRef.current) throw new Error('Přístup se změnil.');
+      if (!isCurrentSession(generation)) throw new Error('Přístup se změnil.');
       const current = sessionRef.current;
       if (!current) throw new Error('Session není dostupná.');
       const result = await action(current);
-      if (result && generation === accessGenerationRef.current) confirmedRevisionRef.current = Math.max(confirmedRevisionRef.current, result.revision);
+      if (result && isCurrentSession(generation)) confirmedRevisionRef.current = Math.max(confirmedRevisionRef.current, result.revision);
       return result;
     });
-    return execute.finally(() => setQueueCount(count => Math.max(0, count - 1)));
+    return execute.finally(() => { if (isCurrentSession(generation)) setQueueCount(count => Math.max(0, count - 1)); });
   }
 
   function enqueuePlaybackReport(mediaGeneration: number, playbackState: 'ready' | 'playing' | 'error' | 'finished') {
@@ -334,11 +353,11 @@ export function LiveControlPage() {
     const sessionId = sessionRef.current?.sessionId;
     return mutationQueueRef.current.enqueueReport(`${sessionId}:${mediaGeneration}`, async () => {
       const latest = sessionRef.current;
-      if (accessGeneration !== accessGenerationRef.current || !latest || latest.sessionId !== sessionId
+      if (!isCurrentSession(accessGeneration) || !latest || latest.sessionId !== sessionId
         || latest.status !== 'active' || latest.mediaGeneration !== mediaGeneration
         || !['play', 'replay'].includes(latest.mediaCommand) || latest.mediaPlaybackState === playbackState) return undefined;
       const result = await reportMediaPlayback(latest.sessionId, mediaGeneration, playbackState);
-      if (accessGeneration === accessGenerationRef.current) confirmedRevisionRef.current = Math.max(confirmedRevisionRef.current, result.revision);
+      if (isCurrentSession(accessGeneration)) confirmedRevisionRef.current = Math.max(confirmedRevisionRef.current, result.revision);
       return result;
     });
   }
@@ -348,8 +367,8 @@ export function LiveControlPage() {
     actionName: LivePendingAction,
     acceptedAt?: number,
   ) {
-    const current = sessionRef.current;
-    if (!sessionId || !current) return;
+    const generation = accessGenerationRef.current;
+    if (!sessionId || !isCurrentSession(generation)) return;
     const measuredActions: readonly LivePendingAction[] = ['next', 'previous', 'jump', 'recap', 'play', 'replay'];
     const traceId = measure && measuredActions.includes(actionName) ? latency.begin(actionName as LatencyAction, acceptedAt) : undefined;
     stopShowAudio();
@@ -363,14 +382,14 @@ export function LiveControlPage() {
     try {
       const result = await enqueueMutation((latest) => {
         if (traceId !== undefined) latency.dispatch(traceId);
-        return action(sessionId, Math.max(latest.revision, confirmedRevisionRef.current));
+        return action(latest.sessionId, Math.max(latest.revision, confirmedRevisionRef.current));
       });
       if (traceId !== undefined) latency.settle(traceId, result);
     } catch (actionError) {
       if (traceId !== undefined) latency.settle(traceId);
-      if (operationIdRef.current === operationId) setError(operationError(actionError));
+      if (isCurrentSession(generation) && operationIdRef.current === operationId) setError(operationError(actionError));
     } finally {
-      if (operationIdRef.current === operationId) { questionAudioPending.current = false; setPendingAction(null); }
+      if (isCurrentSession(generation) && operationIdRef.current === operationId) { questionAudioPending.current = false; setPendingAction(null); }
     }
   }
 
@@ -404,15 +423,25 @@ export function LiveControlPage() {
   }
 
   async function navigate(direction: 1 | -1) {
-    if (!slidesReady || pendingAction || queueCount > 0) return;
+    const generation = accessGenerationRef.current;
+    if (!isCurrentSession(generation) || !slidesReady || pendingAction || queueCount > 0 || navigationInFlight.current) return;
     const acceptedAt = measure ? latencyNow() : undefined;
+    // A click and a shortcut can both arrive before pendingAction renders.
+    navigationInFlight.current = true;
+    const operationId = ++operationIdRef.current;
     setPendingAction(direction === 1 ? 'next' : 'previous');
     try {
-      if (!await eventNavigation.current?.navigate(direction)) {
+      const handled = await eventNavigation.current?.navigate(direction);
+      if (!handled && isCurrentSession(generation) && operationIdRef.current === operationId) {
         if (direction === 1 && session?.eventId && visibleSlidePosition(slides, session.currentSlidePosition, 1) === undefined) await run(endLiveSession, 'end');
         else await run(direction === 1 ? nextSlide : previousSlide, direction === 1 ? 'next' : 'previous', acceptedAt);
       }
-    } finally { setPendingAction(null); }
+    } finally {
+      if (isCurrentSession(generation)) {
+        navigationInFlight.current = false;
+        if (operationIdRef.current === operationId) setPendingAction(null);
+      }
+    }
   }
 
   if (loading) return (
