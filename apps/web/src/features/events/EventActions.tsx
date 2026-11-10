@@ -60,8 +60,14 @@ function ActionDialog({ event: initial, action, onClose, onChanged }: { event: E
     try {
       if (action === 'delete') {
         if (!currentUser?.email) throw new Error('Přihlaste se znovu.');
+        const modal = dialog.current;
+        const { auth } = getFirebaseServices();
+        const stillConfirmed = () => modal?.open === true && dialog.current === modal && auth.currentUser === currentUser;
+        if (!stillConfirmed()) return;
         await reauthenticateWithCredential(currentUser, EmailAuthProvider.credential(currentUser.email, password));
+        if (!stillConfirmed()) return;
         await currentUser.getIdToken(true);
+        if (!stillConfirmed()) return;
         setPassword('');
       }
       const name = action === 'complete' ? 'completeEvent' : action === 'delete' ? 'deleteEvent' : action === 'cancel' ? 'cancelEvent' : action === 'archive' ? 'archiveEvent' : action === 'trash' ? 'trashEvent' : 'restoreEvent';

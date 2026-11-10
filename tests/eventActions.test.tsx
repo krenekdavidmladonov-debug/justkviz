@@ -7,17 +7,22 @@ import { EventActions } from '../apps/web/src/features/events/EventActions';
 import { eventFormRecord } from './browser/events-form-ux.data';
 import type { EventRecord } from '../apps/web/src/features/events/types';
 
-const mocks = vi.hoisted(() => ({ allowed: true, denied: [] as string[], invoke: vi.fn<(name: string, data: unknown) => Promise<{ data: unknown }>>(), inventory: vi.fn(), reauthenticate: vi.fn() }));
-vi.mock('../apps/web/src/auth/AuthProvider', () => ({ useAuth: () => ({ can: (permission: string) => mocks.allowed && !mocks.denied.includes(permission), currentUser: { email: 'test@example.invalid' } }) }));
-vi.mock('../apps/web/src/services/firebase/client', () => ({ getFirebaseServices: () => ({ functions: {} }) }));
+const mocks = vi.hoisted(() => {
+  const user = { uid: 'owner', email: 'test@example.invalid', getIdToken: vi.fn() };
+  return { user, auth: { currentUser: user }, allowed: true, denied: [] as string[], invoke: vi.fn<(name: string, data: unknown) => Promise<{ data: unknown }>>(), inventory: vi.fn(), reauthenticate: vi.fn() };
+});
+vi.mock('../apps/web/src/auth/AuthProvider', () => ({ useAuth: () => ({ can: (permission: string) => mocks.allowed && !mocks.denied.includes(permission), currentUser: mocks.user }) }));
+vi.mock('../apps/web/src/services/firebase/client', () => ({ getFirebaseServices: () => ({ auth: mocks.auth, functions: {} }) }));
 vi.mock('../apps/web/src/features/access/api', () => ({ privateRead: mocks.inventory }));
-vi.mock('../apps/web/src/features/events/eventRepository', () => ({ getEvent: vi.fn() }));
+vi.mock('../apps/web/src/features/events/eventRepository', () => ({ getEvent: vi.fn(async () => null) }));
 vi.mock('../apps/web/src/features/events/eventApi', () => ({ eventActionError: () => 'Změnu se nepodařilo uložit. Zkuste to znovu.' }));
 vi.mock('firebase/functions', () => ({ httpsCallable: (_functions: unknown, name: string) => (data: unknown) => mocks.invoke(name, data) }));
 vi.mock('firebase/auth', () => ({ EmailAuthProvider: { credential: vi.fn() }, reauthenticateWithCredential: mocks.reauthenticate }));
 let host: HTMLDivElement, root: Root;
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); mocks.allowed = true; mocks.denied = []; mocks.invoke.mockReset(); mocks.inventory.mockReset(); mocks.reauthenticate.mockReset();
+  mocks.auth.currentUser = mocks.user;
+  mocks.user.getIdToken.mockReset().mockResolvedValue('mock-token');
   mocks.invoke.mockResolvedValue({ data: { revision: 2, lifecycleStatus: 'scheduled', disposition: 'trash', registrationStatus: 'closed' } });
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
@@ -28,6 +33,73 @@ async function render(patch: Partial<EventRecord> = {}) {
   await act(async () => root.render(<MemoryRouter><EventActions event={{ ...eventFormRecord(), title: 'Filmový večer', ...patch }} onChanged={changed} /></MemoryRouter>));
   return changed;
 }
+async function openPermanentDeletion() {
+  mocks.inventory.mockResolvedValue({ counts: {}, sessions: 0, ownedSnapshots: 0 });
+  const changed = await render({ id: 'a', disposition: 'trash' });
+  await act(async () => button('Trvale smazat').click());
+  const inputs = host.querySelectorAll<HTMLInputElement>('dialog input');
+  await act(async () => {
+    for (const [input, value] of [[inputs[0]!, 'Filmový večer'], [inputs[1]!, 'synthetic-password']] as const) {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  });
+  const submit = host.querySelector<HTMLButtonElement>('dialog .danger-button')!;
+  expect(submit.disabled).toBe(false);
+  return { changed, submit };
+}
+
+it.each(['reauthentication', 'token refresh'] as const)('does not start irreversible deletion when the dialog unmounts during %s', async (stage) => {
+  let resume!: () => void;
+  const paused = new Promise<void>(resolve => { resume = resolve; });
+  if (stage === 'reauthentication') mocks.reauthenticate.mockReturnValueOnce(paused);
+  else mocks.user.getIdToken.mockReturnValueOnce(paused);
+  const { changed, submit } = await openPermanentDeletion();
+  await act(async () => submit.click());
+  expect(mocks.reauthenticate).toHaveBeenCalledTimes(1);
+  expect(mocks.user.getIdToken).toHaveBeenCalledTimes(stage === 'reauthentication' ? 0 : 1);
+  expect(mocks.invoke).not.toHaveBeenCalled();
+  await act(async () => root.render(<p>Jiná akce</p>));
+  await act(async () => resume());
+  expect(mocks.invoke).not.toHaveBeenCalled();
+  expect(changed).not.toHaveBeenCalled();
+});
+
+it('does not start irreversible deletion after Firebase changes accounts before the auth provider updates', async () => {
+  let resume!: () => void;
+  mocks.user.getIdToken.mockReturnValueOnce(new Promise<void>(resolve => { resume = resolve; }));
+  const { submit } = await openPermanentDeletion();
+  await act(async () => submit.click());
+  expect(mocks.user.getIdToken).toHaveBeenCalledTimes(1);
+  mocks.auth.currentUser = { ...mocks.user, uid: 'another-owner' };
+  await act(async () => resume());
+  expect(mocks.invoke).not.toHaveBeenCalled();
+});
+
+it('permits a retry in the same deletion dialog after reauthentication is rejected', async () => {
+  mocks.reauthenticate.mockRejectedValueOnce(new Error('Synthetic authentication error'));
+  mocks.invoke.mockResolvedValueOnce({ data: { state: 'complete' } });
+  const { changed, submit } = await openPermanentDeletion();
+  await act(async () => submit.click());
+  expect(mocks.invoke).not.toHaveBeenCalled();
+  expect(host.querySelector('dialog [role="alert"]')).not.toBeNull();
+  expect(submit.disabled).toBe(false);
+  await act(async () => submit.click());
+  expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('deleteEvent', expect.objectContaining({ eventId: 'a', confirmTitle: 'Filmový večer' }));
+  expect(changed).toHaveBeenCalledWith(expect.stringContaining('trvale smazána'), true, undefined);
+});
+
+it('handles the result of a deletion already sent before the dialog unmounts', async () => {
+  let complete!: (result: { data: unknown }) => void;
+  mocks.invoke.mockReturnValueOnce(new Promise(resolve => { complete = resolve; }));
+  const { changed, submit } = await openPermanentDeletion();
+  await act(async () => submit.click());
+  expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('deleteEvent', expect.objectContaining({ eventId: 'a' }));
+  await act(async () => root.render(<p>Jiná akce</p>));
+  await act(async () => complete({ data: { state: 'complete' } }));
+  expect(mocks.invoke).toHaveBeenCalledTimes(1);
+  expect(changed).toHaveBeenCalledWith(expect.stringContaining('trvale smazána'), true, undefined);
+});
 it('opens a single soft-delete dialog with real title, no inventory wait or typed confirmation; cancel makes no request', async () => {
   const changed = await render(); await act(async () => button('Smazat').click());
   expect(host.querySelectorAll('dialog')).toHaveLength(1); expect(host.querySelector('dialog')?.textContent).toContain('Filmový večer');
