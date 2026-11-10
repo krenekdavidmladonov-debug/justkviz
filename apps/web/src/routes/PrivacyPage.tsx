@@ -14,7 +14,7 @@ export function PrivacyPage() {
     <p>JustKvíz provozuje a osobní údaje spravuje {name}, IČO {ico}, se sídlem {seat}, zapsaný v živnostenském rejstříku. Pro dotazy a žádosti pište na <a href={`mailto:${email}`}>{email}</a>.</p>
 
     <h2>Registrace a výsledky</h2>
-    <p>Pro přihlášení potřebujeme název týmu, počet členů a kontaktní e-mail. Tyto údaje používáme k rezervaci místa, správě přihlášky a komunikaci o akci. Právním základem je zajištění účasti a kroky před uzavřením smlouvy na vaši žádost podle čl. 6 odst. 1 písm. b) GDPR. Bez těchto údajů nelze přihlášku odeslat. Pokud kontakt poskytl jiný člen týmu, oprávněným zájmem podle písm. f) je vyřídit přihlášku a předat týmu informace o akci.</p>
+    <p>Pro online přihlášení potřebujeme název týmu, počet členů a kontaktní e-mail. Tyto údaje používáme k rezervaci místa, správě přihlášky a komunikaci o akci. Právním základem je zajištění účasti a kroky před uzavřením smlouvy na vaši žádost podle čl. 6 odst. 1 písm. b) GDPR. Bez těchto údajů nelze online přihlášku odeslat. Pokud e-mail poskytl jiný člen týmu nebo ho zadala obsluha při ruční registraci, oprávněným zájmem podle písm. f) je vyřídit přihlášku a předat týmu informace o akci.</p>
     <p>Ke kontaktům mají přístup oprávněné osoby zajišťující akci. Název týmu, body a pořadí se mohou zobrazit při vyhlášení. Oprávněným zájmem je sdělit účastníkům výsledky a doložit pořadí. Do názvu týmu proto nevkládejte soukromé údaje. Soukromým odkazem lze přihlášku upravit nebo zrušit. Zrušení uvolní místo a záznam přihlášky zůstane evidovaný.</p>
 
     <h2>Účty a bezpečnost</h2>
@@ -22,8 +22,14 @@ export function PrivacyPage() {
     <p>Aplikace kontroluje kapacitu a omezuje opakované pokusy. Pokud formulář přihlášku odmítne a domníváte se, že jde o chybu, napište správci a požádejte o prověření.</p>
 
     <h2>Uchování údajů</h2>
-    <p>Kontaktní údaje a podklady k organizačním zprávám potřebujeme do ukončení akce a vyřízení souvisejících změn, zrušení a dotazů. Názvy a body ponecháváme v potřebném rozsahu k doložení výsledků. Údaje účtu jsou potřebné po dobu jeho používání, pozvánky do vyřízení přístupu a bezpečnostní záznamy do uzavření související kontroly nebo incidentu. Pokud vznikne spor nebo zákonná povinnost, uchováme potřebné údaje po dobu vyřízení nebo po dobu stanovenou zákonem.</p>
-    <p>Denní zálohy databáze mají retenci 7 dní, týdenní 28 dní. Historie pro obnovu databáze je nastavena až na 7 dní. Záznamy ve schránkách příjemců a kopie na zařízeních mají vlastní dobu uchování.</p>
+    <ul>
+      <li><strong>Kontakty týmů a související e-mailové podklady</strong> mají lhůtu 90 dní po skončení akce. U zrušené akce se lhůta počítá ode dne jejího zrušení.</li>
+      <li><strong>Identifikovatelné výsledky</strong> mají lhůtu 12 měsíců po skončení akce. Po uplynutí lhůty jsou určeny k výmazu nebo anonymizaci, po níž už osoby nelze určit.</li>
+      <li><strong>Běžné aplikační a technické logy</strong> se v Cloud Logging uchovávají 30 dní od vzniku. Vybrané povinné systémové a auditní záznamy Google Cloud mají pevnou lhůtu 400 dní. Potřebné záznamy o bezpečnostním incidentu lze uchovat do uzavření šetření a splnění souvisejících povinností.</li>
+      <li><strong>Účetní a další zákonem vyžadované doklady</strong> se uchovávají po dobu stanovenou příslušnými předpisy.</li>
+    </ul>
+    <p>Lhůty u kontaktů a výsledků se kontrolují ručně. Aplikace po jejich uplynutí sama výmaz ani anonymizaci neprovede. Údaje účtu jsou potřebné po dobu jeho používání a údaje pozvánek do vyřízení přístupu.</p>
+    <p>Pro denní zálohy databáze je nastaveno uchování 7 dní a pro týdenní 28 dní. Historie pro obnovu databáze je nastavena až na 7 dní. Záznamy ve schránkách příjemců a kopie na zařízeních mají vlastní dobu uchování.</p>
 
     <h2>Příjemci a předávání údajů</h2>
     <p>Web, přihlášení, server a úložiště zajišťují Firebase a Google Cloud. Pokud pořadatel používá propojení s Gmailem, Google dostává adresu příjemce a obsah odesílané zprávy. Propojení Google Disku slouží obsluze k práci s médii.</p>

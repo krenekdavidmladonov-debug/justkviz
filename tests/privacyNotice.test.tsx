@@ -23,6 +23,15 @@ test('shows the approved controller details and an actionable rights contact', a
   expect(host.querySelector('a[href="mailto:privacy@example.test"]')).not.toBeNull();
   expect(host.querySelector('a[href^="https://uoou.gov.cz/"]')).not.toBeNull();
   expect(host.textContent).not.toMatch(/WAITING_FOR_OWNER|Návrh k doplnění/u);
+  const retention = [...host.querySelectorAll('h2')].find(heading => heading.textContent === 'Uchování údajů');
+  const items = [...retention!.nextElementSibling!.querySelectorAll('li')].map(item => item.textContent);
+  expect(items).toEqual(expect.arrayContaining([
+    expect.stringMatching(/Kontakty týmů.*90 dní po skončení akce/u),
+    expect.stringMatching(/Identifikovatelné výsledky.*12 měsíců.*výmazu nebo anonymizaci/u),
+    expect.stringMatching(/Běžné aplikační a technické logy.*30 dní.*400 dní.*incidentu/u),
+    expect.stringMatching(/Účetní.*stanovenou příslušnými předpisy/u),
+  ]));
+  expect(retention!.nextElementSibling!.nextElementSibling!.textContent).toMatch(/ručně.*sama výmaz ani anonymizaci neprovede/u);
   await act(async () => root.unmount());
 });
 test('registration links privacy before submit and keeps the existing payload without invented consent', async () => {
