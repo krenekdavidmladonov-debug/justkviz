@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
-import React, { act } from 'react';
+import React, { act, useLayoutEffect } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { createMemoryRouter, RouterProvider, useParams } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { PrintTemplate } from '../packages/quiz-domain/src/index';
 import { AdminPrintCenterPage } from '../apps/web/src/routes/admin/AdminPrintCenterPage';
@@ -36,8 +36,14 @@ const download = () => host.querySelector<HTMLAnchorElement>('.print-actions a')
 async function changeSelect(label: string, value: string) {
   await act(async () => { const field = select(label); field.value = value; field.dispatchEvent(new Event('change', { bubbles: true })); });
 }
-async function render() {
-  const router = createMemoryRouter([{ path: '/admin/events/:eventId/print', element: <AdminPrintCenterPage /> }], { initialEntries: ['/admin/events/synthetic-event/print'] });
+function ObservePrintCommit({ onCommit }: { onCommit: () => void }) {
+  const { eventId } = useParams();
+  useLayoutEffect(() => { onCommit(); }, [eventId, onCommit]);
+  return <React.Profiler id="print-center" onRender={onCommit}><AdminPrintCenterPage /></React.Profiler>;
+}
+async function render(onCommit?: () => void) {
+  const element = onCommit ? <ObservePrintCommit onCommit={onCommit} /> : <AdminPrintCenterPage />;
+  const router = createMemoryRouter([{ path: '/admin/events/:eventId/print', element }], { initialEntries: ['/admin/events/synthetic-event/print'] });
   await act(async () => root.render(<RouterProvider router={router} />));
   return router;
 }
@@ -166,6 +172,61 @@ it.each(['uid', 'version'] as const)('clears organizer consent when the authenti
   expect(frame()).toBeNull(); expect(download().getAttribute('href')).toBeNull();
   expect(urls.revoke).toHaveBeenCalledWith(privateUrl);
   expect(button('Otevřít dokument se správnými odpověďmi')).toBeDefined();
+});
+
+it.each(['event', 'uid', 'version'] as const)('never commits the previous event title or team names after changing %s', async scope => {
+  const previousTitle = 'Původní testovací akce';
+  const previousTeam = 'Původní testovací tým';
+  vi.mocked(getEvent).mockResolvedValueOnce({ ...record(), title: previousTitle });
+  vi.mocked(privateRead).mockResolvedValueOnce([{ id: 'previous', data: { status: 'accepted', teamName: previousTeam } }]);
+  const commits: string[] = [];
+  const router = await render(() => commits.push(host.textContent ?? ''));
+  const oneTeam = host.querySelector<HTMLInputElement>('input[value="single"]')!;
+  await act(async () => oneTeam.click());
+  expect(host.textContent).toContain(previousTitle);
+  expect(select('Tým').textContent).toContain(previousTeam);
+
+  let resolveEvent!: (event: EventRecord) => void;
+  vi.mocked(getEvent).mockImplementationOnce(() => new Promise(done => { resolveEvent = done; }));
+  commits.length = 0;
+  if (scope === 'event') {
+    await act(async () => router.navigate('/admin/events/other/print'));
+  } else {
+    if (scope === 'uid') access.uid = 'other-staff'; else access.version++;
+    await changeSelect('Barevnost', 'grayscale');
+  }
+
+  expect(commits.length).toBeGreaterThan(0);
+  for (const content of commits) {
+    expect(content).not.toContain(previousTitle);
+    expect(content).not.toContain(previousTeam);
+  }
+  expect(host.textContent).toContain('Načítám tisk a materiály');
+
+  const nextTitle = 'Nová testovací akce';
+  await act(async () => resolveEvent({ ...record(scope === 'event' ? 'other' : undefined), title: nextTitle }));
+  expect(host.textContent).toContain(nextTitle);
+  expect(frame()).not.toBeNull();
+});
+
+it('keeps the selected team and print settings when refreshing the same scope', async () => {
+  await render();
+  await act(async () => host.querySelector<HTMLInputElement>('input[value="single"]')!.click());
+  await changeSelect('Tým', 'team-1');
+  await changeSelect('Barevnost', 'grayscale');
+  await changeSelect('Šablona', 'compact');
+  const previousUrl = download().getAttribute('href');
+
+  vi.mocked(privateRead).mockResolvedValueOnce([...roster(2), { id: 'team-2', data: { status: 'accepted', teamName: 'Nový testovací tým' } }]);
+  await act(async () => button('Aktualizovat týmy a náhled').click());
+
+  expect(select('Tým').textContent).toContain('Nový testovací tým');
+  expect(generatePrintArtifact).toHaveBeenLastCalledWith('synthetic-event', {
+    artifactType: 'team-sheets', disposition: 'inline', mode: 'single', teamId: 'team-1', colorMode: 'grayscale', layout: 'compact',
+  }, expect.any(AbortSignal));
+  expect(urls.revoke).toHaveBeenCalledWith(previousUrl);
+  expect(download().getAttribute('href')).not.toBe(previousUrl);
+  expect(frame()).not.toBeNull();
 });
 
 it('waits for the new event source after navigation and ignores a late PDF from the previous event', async () => {

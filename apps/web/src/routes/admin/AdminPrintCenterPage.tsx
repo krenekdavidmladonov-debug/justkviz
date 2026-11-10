@@ -17,17 +17,18 @@ const ARTIFACTS = [
   { type: 'answer-key', title: 'Klíč správných odpovědí', description: 'Samostatný přehled pro obsluhu.', private: true },
 ] as const;
 interface Preview { readonly url: string; readonly filename: string; readonly key: string }
+type PrintSource = { readonly scope: string } & (
+  | { readonly event: EventRecord | null; readonly registrations: readonly Pick<RegistrationRecord, 'id' | 'teamName'>[] }
+  | { readonly error: string }
+);
 
 export function AdminPrintCenterPage() {
   const { eventId } = useParams<{ eventId: string }>();
   const { can, currentUser, membership } = useAuth();
-  const identityKey = `${currentUser?.uid ?? ''}:${membership?.version ?? ''}`;
+  const scope = JSON.stringify([currentUser?.uid, membership?.version, eventId]);
   const loadGeneration = useRef(0);
-  const loadedEvent = useRef('');
-  const [event, setEvent] = useState<EventRecord | null>(null);
-  const [registrations, setRegistrations] = useState<readonly Pick<RegistrationRecord, 'id' | 'teamName'>[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const lastLoadedScope = useRef('');
+  const [loadResult, setLoadResult] = useState<PrintSource | null>(null);
   const [artifactType, setArtifactType] = useState<PrintArtifactType>('team-sheets');
   const [teamMode, setTeamMode] = useState<TeamSheetMode>('all');
   const [teamId, setTeamId] = useState('');
@@ -41,30 +42,34 @@ export function AdminPrintCenterPage() {
   const canExport = can('event.export');
   const canReadAnswers = can('event.answers.read') && can('event.answers.export');
 
+  // Route and identity changes render before the next load effect runs.
+  const source = loadResult?.scope === scope ? loadResult : null;
+  const data = source && 'event' in source ? source : null;
+  const event = data?.event ?? null;
+  const registrations = data?.registrations ?? [];
+
   const load = useCallback(async () => {
     if (!eventId) return;
     const generation = ++loadGeneration.current;
-    setLoading(true);
-    setLoadError(null);
+    setLoadResult(null);
     try {
       const [nextEvent, roster] = await Promise.all([getEvent(eventId), privateRead<PrivateDocument[]>('roster', { eventId })]);
       if (generation !== loadGeneration.current) return;
       const accepted = roster.filter(item => item.data.status === 'accepted').map(item => ({
         id: item.id, teamName: typeof item.data.teamName === 'string' ? item.data.teamName : '',
       }));
-      setEvent(nextEvent);
-      setRegistrations(accepted);
       setTeamId(current => accepted.some(team => team.id === current) ? current : accepted[0]?.id ?? '');
-      const targetKey = `${identityKey}:${eventId}`;
-      const firstLoad = loadedEvent.current !== targetKey;
-      loadedEvent.current = targetKey;
+      const firstLoad = lastLoadedScope.current !== scope;
+      lastLoadedScope.current = scope;
       setTeamMode(current => accepted.length === 0 || accepted.length > 30 ? 'generic' : firstLoad ? 'all' : current);
       if (firstLoad) {
         setLayout('inherit'); setColorMode('color');
       }
-    } catch { if (generation === loadGeneration.current) setLoadError('Tisk a materiály se nepodařilo načíst. Zkuste to znovu.'); }
-    finally { if (generation === loadGeneration.current) setLoading(false); }
-  }, [eventId, identityKey]);
+      setLoadResult({ scope, event: nextEvent, registrations: accepted });
+    } catch {
+      if (generation === loadGeneration.current) setLoadResult({ scope, error: 'Tisk a materiály se nepodařilo načíst. Zkuste to znovu.' });
+    }
+  }, [eventId, scope]);
   useEffect(() => { void load(); return () => { loadGeneration.current++; }; }, [load]);
 
   const options = useMemo<PrintOptions>(() => {
@@ -82,13 +87,13 @@ export function AdminPrintCenterPage() {
     || (artifactType === 'team-sheets' && teamMode === 'all' && (teamCount === 0 || teamCount > 30));
   const privateArtifact = artifactType === 'answer-key' || artifactType === 'organizer-sheets';
   const permitted = canExport && (!privateArtifact || canReadAnswers);
-  const consentKey = JSON.stringify([identityKey, eventId, event?.quizAssignment?.snapshotId, artifactType, canExport, canReadAnswers]);
+  const consentKey = JSON.stringify([scope, event?.quizAssignment?.snapshotId, artifactType, canExport, canReadAnswers]);
   const confirmed = !privateArtifact || privateConsent === consentKey;
-  const requestKey = JSON.stringify([identityKey, eventId, event?.quizAssignment?.snapshotId, registrations, options, retry]);
-  const sourceReady = !loading && !loadError && event?.id === eventId && loadedEvent.current === `${identityKey}:${eventId}`;
+  const requestKey = JSON.stringify([scope, event?.quizAssignment?.snapshotId, registrations, options, retry]);
+  const sourceReady = event !== null && event.id === eventId;
   const readyPreview = sourceReady && permitted && confirmed && preview?.key === requestKey ? preview : null;
 
-  useEffect(() => { setPrivateConsent(null); }, [artifactType, identityKey, canReadAnswers, canExport, eventId]);
+  useEffect(() => { setPrivateConsent(null); }, [artifactType, scope, canReadAnswers, canExport]);
 
   // Every preview is the actual server PDF. Abort obsolete requests and never
   // expose an old document after a selection, identity or permission change.
@@ -110,8 +115,8 @@ export function AdminPrintCenterPage() {
     return () => { active = false; controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [sourceReady, eventId, event?.quizAssignment?.snapshotId, formInvalid, permitted, confirmed, options, requestKey]);
 
-  if (loading) return <QuizLoading label="Načítám tisk a materiály…" />;
-  if (loadError) return <QuizErrorState message={loadError} onRetry={() => void load()} />;
+  if (!source) return <QuizLoading label="Načítám tisk a materiály…" />;
+  if ('error' in source) return <QuizErrorState message={source.error} onRetry={() => void load()} />;
   if (!event) return <section className="quiz-state-card"><div><h2>Akce neexistuje</h2><p>Požadovaný záznam nebyl nalezen.</p></div><Link className="secondary-link" to="/admin/events">Zpět na akce</Link></section>;
   const assignment = event.quizAssignment;
   return (
