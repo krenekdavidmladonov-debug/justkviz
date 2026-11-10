@@ -15,7 +15,11 @@ import { readFirebaseConfig } from '../../services/firebase/config';
 
 const localDateTime = pragueDateTime;
 export function AdminEventRegistrationsPage() {
-  const { eventId } = useParams<{ eventId: string }>();
+  const { eventId = '' } = useParams<{ eventId: string }>();
+  return <AdminEventRegistrationsEvent key={eventId} eventId={eventId} />;
+}
+
+function AdminEventRegistrationsEvent({ eventId }: { readonly eventId: string }) {
   const { can } = useAuth();
   const [event, setEvent] = useState<EventRecord | null>(null);
   const [registrations, setRegistrations] = useState<readonly RegistrationRecord[]>([]);
@@ -31,7 +35,9 @@ export function AdminEventRegistrationsPage() {
   const [selectedId, setSelectedId] = useState(search.get('team') ?? '');
   const [teamDialog, setTeamDialog] = useState<RegistrationRecord | 'new' | null>(null);
   const load = useCallback(async () => {
-    if (!eventId) return; setLoading(true);
+    if (!eventId) return;
+    setLoading(true);
+    setError(null);
     try {
       const [nextEvent, nextRegistrations] = await Promise.all([getEvent(eventId), listEventRegistrations(eventId)]);
       setEvent(nextEvent); setRegistrations(nextRegistrations);

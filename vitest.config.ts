@@ -8,6 +8,7 @@ export default defineConfig({
       'tests/usersAccessPage.test.tsx', 'tests/accessApi.test.ts',
       'tests/privacyNotice.test.tsx', 'tests/registrationAbuse.test.ts',
       'tests/manageRegistrationPage.test.tsx', 'tests/refereeRouteScope.test.tsx', 'tests/publicEventRouteScope.test.tsx',
+      'tests/adminEventRegistrationsPage.test.tsx',
       'tests/editorPreviewMedia.test.tsx',
       'tests/registrationInput.test.tsx',
       'tests/driveLocal*.test.ts', 'tests/driveCompanionUi*.test.*',
