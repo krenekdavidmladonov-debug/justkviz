@@ -7,8 +7,12 @@ import { useAuth } from '../../auth/AuthProvider';
 import '../../features/scoring/scoring.css';
 
 export function AdminEventScoringPage() {
-  const { can } = useAuth();
   const { eventId = '' } = useParams();
+  return <AdminEventScoringEvent key={eventId} eventId={eventId} />;
+}
+
+function AdminEventScoringEvent({ eventId }: { readonly eventId: string }) {
+  const { can } = useAuth();
   const [snapshotId, setSnapshotId] = useState<string | null>(null);
   const [liveSnapshotId, setLiveSnapshotId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
