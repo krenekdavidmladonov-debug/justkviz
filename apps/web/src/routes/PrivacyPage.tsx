@@ -1,30 +1,39 @@
-/** Draft for local owner review; operator details must be approved before release. */
 export function PrivacyPage() {
-  return <article className="panel stack" aria-labelledby="privacy-title">
+  const name = import.meta.env.VITE_PRIVACY_CONTROLLER_NAME;
+  const ico = import.meta.env.VITE_PRIVACY_CONTROLLER_ICO;
+  const seat = import.meta.env.VITE_PRIVACY_CONTROLLER_SEAT;
+  const email = import.meta.env.VITE_PRIVACY_CONTROLLER_EMAIL;
+  if (!name || !ico || !seat || !email) {
+    return <article className="panel stack privacy-page" aria-labelledby="privacy-title">
+      <h1 id="privacy-title">Ochrana osobních údajů</h1>
+      <p>Informace se v tomto sestavení nepodařilo načíst.</p>
+    </article>;
+  }
+  return <article className="panel stack privacy-page" aria-labelledby="privacy-title">
     <h1 id="privacy-title">Ochrana osobních údajů</h1>
-    <p role="status"><strong>Návrh k doplnění před veřejným spuštěním.</strong> Provozovatelem a zamýšleným správcem bude fyzická osoba. Její jméno, kontakt, právní důvody a doby uchování čekají na doplnění a potvrzení. Tento text zatím není úplnou informací o zpracování.</p>
-    <h2>Registrace týmu</h2>
-    <p>Formulář požaduje název týmu, počet členů a kontaktní e-mail. Aplikace je používá pro evidenci účasti, kapacitu, správu přihlášky a registrační komunikaci, pokud je odesílání zapnuté. Pro přihlášení týmu není potřeba účet.</p>
-    <p>Kontaktní e-mail není veřejný. Vidí jej oprávnění pořadatelé. Název týmu a jeho výsledky mohou být zveřejněny při vyhlášení. Do názvu proto nevkládejte soukromé údaje.</p>
-    <p>Soukromý odkaz umožňuje zobrazit, upravit nebo zrušit konkrétní přihlášku. Uchovávejte jej jako přístupový údaj. Zrušení uvolní místo, ale samo nevymaže uložený záznam. Ani konec akce automaticky nemaže kontakty.</p>
-    <p>Ochrana opakovaných přihlášek používá neveřejný otisk e-mailu pro danou akci. Jde o pseudonymní údaj, nikoliv anonymizaci. Nejde o ověření vlastnictví adresy.</p>
-    <h2>Účty obsluhy</h2>
-    <p>Přihlášení obsluhy používá Firebase Authentication. Aplikace pracuje s e-mailem, zobrazovaným jménem, identifikátorem účtu, členstvím, oprávněními a bezpečnostními záznamy operací. Heslo při přihlášení a obnově zpracovává Firebase Authentication. Přístup k údajům závisí na aktuálním oprávnění pro konkrétní akci.</p>
-    <h2>Poskytovatelé a uložení</h2>
-    <p>Firebase a Google Cloud zajišťují přihlášení, serverové zpracování a uložení. Při zapnutém odesílání se registrační zprávy předávají poskytovateli e-mailu. Volitelné propojení Google Drive a Gmailu se týká obsluhy; účastník svůj Google účet nepřipojuje.</p>
-    <p>Požadavky mohou zahrnovat také provozní údaje, například IP adresu a čas. Google uvádí, že Firebase Authentication zpracovává údaje v USA. Konkrétní příjemce, místa uložení ostatních služeb a záruky pro předávání mimo EHP musí správce potvrdit podle svého nastavení a smluv.</p>
-    <h2>Údaje v prohlížeči</h2>
-    <p>Prohlížeč může uchovávat stav přihlášení a rozepsaných úloh. Při použití offline režimu se do prohlížeče uloží aplikace a data potřebná k odehrání kvízu. Na sdíleném notebooku chraňte přístup k profilu prohlížeče i staženému balíčku.</p>
-    <p>Při načtení vloženého videa YouTube se prohlížeč připojí ke službě YouTube. To se týká obrazovek, které takové video zobrazují. <a href="https://policies.google.com/privacy" rel="noreferrer">Informace o zpracování údajů společností Google</a></p>
-    <h2>Co ještě doplnit</h2>
-    <dl>
-      <dt>Správce a kontakt pro žádosti</dt><dd>Fyzická osoba. Jméno a veřejný kontakt: ČEKÁ NA DOPLNĚNÍ VLASTNÍKEM (WAITING_FOR_OWNER).</dd>
-      <dt>Navrhované právní důvody</dt><dd>Pro přihlášení a zajištění účasti navrhujeme plnění smlouvy nebo kroky před jejím uzavřením. Pro přiměřené zabezpečení a provoz navrhujeme oprávněný zájem. Použitelnost a rozsah musí správce potvrdit podle skutečného pořádání akcí (WAITING_FOR_OWNER).</dd>
-      <dt>Návrh doby uchování</dt><dd>Pro kontaktní e-maily navrhujeme 90 dnů po skončení akce. Jde o návrh, nikoliv schválenou právní lhůtu. Historii výsledků navrhujeme uchovávat odděleně od nepotřebných e-mailů. Doby pro účty obsluhy, bezpečnostní otisky, provozní záznamy a zálohy čekají na potvrzení (WAITING_FOR_OWNER). Tato verze aplikace automatický výmaz registrací nezajišťuje.</dd>
-      <dt>Žádost o opravu nebo výmaz</dt><dd>Před spuštěním zde bude schválený kontakt a postup ověření žadatele. Do žádosti neposílejte heslo ani soukromý odkaz pro správu registrace.</dd>
-    </dl>
+    <p>JustKvíz provozuje a osobní údaje spravuje {name}, IČO {ico}, se sídlem {seat}, zapsaný v živnostenském rejstříku. Pro dotazy a žádosti pište na <a href={`mailto:${email}`}>{email}</a>.</p>
+
+    <h2>Registrace a výsledky</h2>
+    <p>Pro přihlášení potřebujeme název týmu, počet členů a kontaktní e-mail. Tyto údaje používáme k rezervaci místa, správě přihlášky a komunikaci o akci. Právním základem je zajištění účasti a kroky před uzavřením smlouvy na vaši žádost podle čl. 6 odst. 1 písm. b) GDPR. Bez těchto údajů nelze přihlášku odeslat. Pokud kontakt poskytl jiný člen týmu, oprávněným zájmem podle písm. f) je vyřídit přihlášku a předat týmu informace o akci.</p>
+    <p>Ke kontaktům mají přístup oprávněné osoby zajišťující akci. Název týmu, body a pořadí se mohou zobrazit při vyhlášení. Oprávněným zájmem je sdělit účastníkům výsledky a doložit pořadí. Do názvu týmu proto nevkládejte soukromé údaje. Soukromým odkazem lze přihlášku upravit nebo zrušit. Zrušení uvolní místo a záznam přihlášky zůstane evidovaný.</p>
+
+    <h2>Účty a bezpečnost</h2>
+    <p>Pro vytvoření a správu účtu používáme e-mail, zobrazované jméno a identifikátor účtu podle čl. 6 odst. 1 písm. b) GDPR. Přihlášení, ověření e-mailu a obnovu hesla zajišťuje Firebase Authentication. U obsluhy evidujeme také pozvánky, oprávnění a bezpečnostní záznamy. K ochraně přístupu a omezení zneužití používáme provozní údaje a neveřejný otisk e-mailu pro konkrétní akci. Ochrana služby a obnovitelnost dat jsou naším oprávněným zájmem podle písm. f).</p>
+    <p>Aplikace kontroluje kapacitu a omezuje opakované pokusy. Pokud formulář přihlášku odmítne a domníváte se, že jde o chybu, napište správci a požádejte o prověření.</p>
+
+    <h2>Uchování údajů</h2>
+    <p>Kontaktní údaje a podklady k organizačním zprávám potřebujeme do ukončení akce a vyřízení souvisejících změn, zrušení a dotazů. Názvy a body ponecháváme v potřebném rozsahu k doložení výsledků. Údaje účtu jsou potřebné po dobu jeho používání, pozvánky do vyřízení přístupu a bezpečnostní záznamy do uzavření související kontroly nebo incidentu. Pokud vznikne spor nebo zákonná povinnost, uchováme potřebné údaje po dobu vyřízení nebo po dobu stanovenou zákonem.</p>
+    <p>Denní zálohy databáze mají retenci 7 dní, týdenní 28 dní. Historie pro obnovu databáze je nastavena až na 7 dní. Záznamy ve schránkách příjemců a kopie na zařízeních mají vlastní dobu uchování.</p>
+
+    <h2>Příjemci a předávání údajů</h2>
+    <p>Web, přihlášení, server a úložiště zajišťují Firebase a Google Cloud. Pokud pořadatel používá propojení s Gmailem, Google dostává adresu příjemce a obsah odesílané zprávy. Propojení Google Disku slouží obsluze k práci s médii.</p>
+    <p>Firebase Authentication zpracovává údaje v USA. Pro předání subjektům zapojeným do rámce EU–USA se použije rozhodnutí Evropské komise o odpovídající ochraně. Podmínky Googlu pro Firebase a Google Cloud stanoví pro další omezená předání podle okolností standardní smluvní doložky. Informace o konkrétním předání a kopii použitých záruk lze vyžádat u správce.</p>
+    <p><a href="https://firebase.google.com/support/privacy" rel="noreferrer">Soukromí ve Firebase</a> · <a href="https://cloud.google.com/terms/data-processing-addendum" rel="noreferrer">Podmínky Google Cloud</a> · <a href="https://commission.europa.eu/law/law-topic/data-protection/international-dimension-data-protection/eu-us-data-transfers_en" rel="noreferrer">Předávání mezi EU a USA</a></p>
+
+    <h2>Prohlížeč a externí média</h2>
+    <p>Prohlížeč může uložit stav přihlášení a některých úloh. Pokud obsluha použije offline režim, její zařízení uloží aplikaci a data potřebná k odehrání kvízu. Při zobrazení externího obrázku nebo načtení vloženého přehrávače YouTube se prohlížeč připojí ke službě, která médium poskytuje. Informace o těchto službách uvádějí jejich poskytovatelé. <a href="https://policies.google.com/privacy" rel="noreferrer">Zásady ochrany soukromí Google</a></p>
+
     <h2>Vaše práva</h2>
-    <p>Podle podmínek platných předpisů můžete požádat o přístup, opravu, výmaz, omezení zpracování či přenositelnost a vznést námitku. Je-li zpracování založeno na souhlasu, lze jej odvolat. Můžete podat stížnost u <a href="https://uoou.gov.cz/" rel="noreferrer">Úřadu pro ochranu osobních údajů</a>.</p>
-    <p>Údaje označené jako povinné jsou potřeba pro zpracování přihlášky; bez nich ji formulář neodešle.</p>
+    <p>U správce můžete požádat o přístup k údajům, jejich opravu, výmaz nebo omezení zpracování a za podmínek GDPR o přenositelnost. Proti zpracování na základě oprávněného zájmu můžete vznést námitku. Do žádosti neposílejte heslo ani soukromý odkaz k přihlášce. Stížnost můžete podat u <a href="https://uoou.gov.cz/kontakt/podatelna-a-elektronicka-podatelna" rel="noreferrer">Úřadu pro ochranu osobních údajů</a>.</p>
   </article>;
 }

@@ -17,7 +17,7 @@ export function AppLayout() {
       <main className="page-shell">
         <Outlet />
       </main>
-      <footer className="site-credit"><small>David Křenek</small><NavLink to="/privacy">Ochrana osobních údajů</NavLink></footer>
+      <footer className="site-credit"><small>David Křenek <span aria-hidden="true">·</span> <NavLink to="/privacy">Ochrana osobních údajů</NavLink></small></footer>
     </div>
   );
 }
