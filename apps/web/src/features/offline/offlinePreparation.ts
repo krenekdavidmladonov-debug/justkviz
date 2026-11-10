@@ -1,4 +1,4 @@
-import { offlineEventLimits, type OfflineIssue, type OfflineTrust } from '@filmovy-kviz/quiz-domain';
+import { countOfflineMedia, offlineEventLimits, type OfflineIssue, type OfflineMediaCounts, type OfflineTrust } from '@filmovy-kviz/quiz-domain';
 import { canonicalOfflineJson } from '@filmovy-kviz/quiz-domain';
 import { decodeBase64, decryptOfflineValue, deriveOfflineKey, offlineDigest, verifyOfflineGrant } from './offlineCrypto';
 import { createOfflineArchive, readOfflineArchiveHeader, unlockOfflineMetadata, writeOfflineArchive, type OfflineArchiveHeader, type OfflineArchiveMetadata, type OfflineRecordReader } from './offlineFile';
@@ -25,11 +25,12 @@ export class OfflinePreparationIssues extends Error {
     constructor(readonly issues: readonly OfflineIssue[]) { super('Kvíz vyžaduje opravu před přípravou.'); }
 }
 export class OfflinePreparationBlocked extends Error {
-    constructor(readonly reason: 'played' | 'stale' | 'expired') { super(reason); }
+    constructor(readonly reason: 'played' | 'stale' | 'snapshot-changed' | 'expired') { super(reason); }
 }
 export interface PreparedOfflineEvent {
     readonly session: StoredOfflineSession;
     readonly expiresAtMs: number;
+    readonly mediaCounts: OfflineMediaCounts;
     readonly recordDigests: readonly string[];
     revalidate(): Promise<void>;
 }
@@ -44,7 +45,8 @@ async function assertEventNotPlayed(eventId: string): Promise<void> {
 function preparedEvent(session: StoredOfflineSession, { manifest, grant }: OfflineArchiveMetadata, recordDigests: readonly string[]): PreparedOfflineEvent {
     const { exportId, expiresAtMs, actorId } = manifest;
     const event = { ...manifest.event }, payload = grant.payload;
-    return { session, expiresAtMs, recordDigests, async revalidate() {
+    const mediaCounts = countOfflineMedia(manifest.assets.map(asset => asset.kind));
+    return { session, expiresAtMs, mediaCounts, recordDigests, async revalidate() {
         if (Date.now() >= expiresAtMs) throw new OfflinePreparationBlocked('expired');
         const current = await readStoredOfflineSession(session.sessionId);
         if (!current?.complete || current.archiveId !== session.archiveId || current.sequence !== session.sequence) throw new OfflinePreparationBlocked('stale');
@@ -67,9 +69,10 @@ export async function reusePreparedOfflineEvent(session: StoredOfflineSession, s
         await assertEventNotPlayed(session.eventId);
         const read = (index: number) => readStoredOfflineRecord(session.archiveId ?? session.sessionId, index);
         const { metadata } = await unlockOfflineMetadata(session.header, read, password, await readOfflineTrusts());
-        if (metadata.manifest.snapshot.id !== snapshotId || metadata.manifest.sessionId !== session.sessionId || metadata.operations.length !== 0) {
+        if (metadata.manifest.sessionId !== session.sessionId || metadata.operations.length !== 0) {
             throw new OfflinePreparationBlocked('stale');
         }
+        if (metadata.manifest.snapshot.id !== snapshotId) throw new OfflinePreparationBlocked('snapshot-changed');
         const online = await import('./offlineOnline');
         if (Date.now() >= metadata.manifest.expiresAtMs) throw new OfflinePreparationBlocked('expired');
         await online.authorizePreparedOfflineEvent(metadata.manifest, metadata.grant);

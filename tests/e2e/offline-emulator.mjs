@@ -56,13 +56,15 @@ try {
   assert.equal(preflightResponse.status, 200);
   assert.match(preflightResponse.headers.get('cache-control') ?? '', /no-store/u);
   const preflight = (await preflightResponse.json()).result;
-  assert.deepEqual(Object.keys(preflight).sort(), ['expiresAtMs', 'issues', 'mediaBytes', 'mediaCount', 'snapshotId', 'teamCount']);
+  assert.deepEqual(Object.keys(preflight).sort(), ['expiresAtMs', 'issues', 'mediaBytes', 'mediaCount', 'mediaCounts', 'snapshotId', 'teamCount']);
   assert.equal(preflight.snapshotId, f.snapshotId);
   assert.equal(preflight.teamCount, 10);
   assert.equal(preflight.mediaCount, 0);
+  assert.deepEqual(preflight.mediaCounts, { image: 0, audio: 0, video: 0 });
   assert.deepEqual(preflight.issues, []);
   assert.equal((await f.raw('readOfflineTrust', preflightInput, { anonymous: true })).status, 401);
-  await denied(f.call('prepareOfflineEvent', { eventId: f.eventId, requestId: randomUUID(), expectedSnapshotId: 'wrong-snapshot' }), 'aborted');
+  await assert.rejects(f.call('prepareOfflineEvent', { eventId: f.eventId, requestId: randomUUID(), expectedSnapshotId: 'wrong-snapshot' }),
+    error => error.code === 'functions/aborted' && error.details?.offlineCheck === 'snapshot-changed');
   await denied(f.call('prepareOfflineEvent', { eventId: f.eventId, requestId: randomUUID(), expectedActorId: 'wrong-actor' }), 'unauthenticated');
   assert.deepEqual(await eventFingerprint(f), beforePreflight);
   scenarios.push('OFF-WIZARD-authorized-read-only-preflight-no-export-no-secrets-snapshot-and-actor-bound');

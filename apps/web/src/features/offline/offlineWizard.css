@@ -39,7 +39,7 @@
   font-size: .84rem;
   line-height: 1.25;
 }
-.offline-wizard-steps li > span {
+.offline-wizard-step-number {
   flex: 0 0 auto;
   display: grid;
   place-items: center;
@@ -50,8 +50,9 @@
   background: var(--color-surface-elevated);
 }
 .offline-wizard-steps li[aria-current] { border-color: var(--accent); color: var(--color-text); }
-.offline-wizard-steps li[aria-current] > span { background: var(--accent); color: var(--color-on-accent); }
-.offline-wizard-steps li[data-done="true"] > span { color: var(--color-success); background: var(--color-success-surface); }
+.offline-wizard-steps li[aria-current] > .offline-wizard-step-number { background: var(--accent); color: var(--color-on-accent); }
+.offline-wizard-steps li[data-done="true"] > .offline-wizard-step-number { color: var(--color-success); background: var(--color-success-surface); }
+.offline-wizard-step-short { display: none; }
 .offline-wizard-app .offline-wizard-card, .offline-wizard-app .offline-wizard > .offline-notebook-step {
   margin: 0;
   padding: clamp(1.1rem, 4vw, 2rem);
@@ -77,9 +78,13 @@
 .offline-wizard-success { border-inline-start: .25rem solid var(--color-success); }
 .offline-wizard-problem { border-inline-start: .25rem solid var(--color-error); }
 .offline-wizard-success > p, .offline-wizard-problem > p { margin: .2rem 0 0; color: var(--color-text-muted); }
-.offline-wizard-success dl { display: flex; flex-wrap: wrap; gap: .8rem 1.6rem; margin: .9rem 0 0; }
-.offline-wizard-success dt { color: var(--color-text-muted); font-size: .8rem; }
-.offline-wizard-success dd { margin: 0; font-weight: 750; }
+.offline-wizard-check-metrics, .offline-wizard-metrics { display: flex; flex-wrap: wrap; gap: .6rem 1.6rem; }
+.offline-wizard-check-metrics { margin-top: .9rem; }
+.offline-wizard-metrics { margin: 0; }
+.offline-wizard-metrics dt { color: var(--color-text-muted); font-size: .8rem; }
+.offline-wizard-metrics dd { margin: 0; font-weight: 750; }
+.offline-wizard-success > .offline-wizard-validity, .offline-wizard-validity { margin: .75rem 0 0; color: var(--color-text-muted); font-size: .875rem; line-height: 1.5; }
+.offline-wizard-validity time { color: var(--color-text); font-weight: 750; }
 .offline-wizard-issues { margin: .35rem 0 0; padding-inline-start: 1.2rem; }
 .offline-wizard-issues li + li { margin-top: .5rem; }
 .offline-wizard-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem 1rem; margin-top: 1.15rem; }
@@ -127,9 +132,17 @@
 .offline-wizard-details { color: var(--color-text-muted); font-size: .87rem; line-height: 1.5; padding-inline: .2rem; }
 .offline-wizard-details summary { cursor: pointer; padding-block: .4rem; width: fit-content; }
 @media (max-width: 520px) {
+  .offline-wizard-intro h1 { font-size: clamp(1.9rem, 7.8vw, 2.45rem); line-height: 1.15; letter-spacing: -.035em; text-wrap: balance; }
+  .offline-wizard-intro > p:last-child { text-wrap: pretty; }
   .offline-wizard-steps { gap: .35rem; }
-  .offline-wizard-steps li { flex-direction: column; align-items: flex-start; gap: .35rem; padding: .55rem .4rem; font-size: .73rem; }
-  .offline-wizard-steps li > span { inline-size: 1.55rem; block-size: 1.55rem; }
+  .offline-wizard-steps li { flex-direction: column; justify-content: center; gap: .3rem; padding: .45rem .25rem; font-size: .78rem; text-align: center; }
+  .offline-wizard-step-number { inline-size: 1.45rem; block-size: 1.45rem; }
+  .offline-wizard-step-full { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .offline-wizard-step-short { display: inline; overflow-wrap: anywhere; }
+  .offline-wizard-card > h2 { line-height: 1.25; text-wrap: balance; }
+  .offline-wizard-check-metrics { display: grid; gap: .7rem; }
+  .offline-wizard-metrics { column-gap: 1rem; }
+  .offline-wizard-validity time { display: inline-block; max-inline-size: 100%; }
   .offline-wizard-actions > :is(button, a, label) { width: 100%; }
   .offline-wizard-actions > a:not(.offline-wizard-primary) { text-align: center; padding-block: .3rem; }
 }

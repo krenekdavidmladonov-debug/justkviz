@@ -1,7 +1,7 @@
 import { getFirestore, Timestamp, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { canonicalOfflineJson, offlineEventLimits as limits, parseOfflineManifest, parseQuizAsset, readLocalImageDimensions, validOwnedMedia,
-  type OfflineMediaAsset, type OfflineIssue, type OfflineEventPreflight, type PrepareOfflineEventResponse } from '@filmovy-kviz/quiz-domain';
+import { canonicalOfflineJson, countOfflineMedia, offlineEventLimits as limits, parseOfflineManifest, parseQuizAsset, readLocalImageDimensions, validOwnedMedia,
+  type OfflineMediaAsset, type OfflineMediaKind, type OfflineIssue, type OfflineEventPreflight, type PrepareOfflineEventResponse } from '@filmovy-kviz/quiz-domain';
 import { freshIdentity, authorize } from '../access/authorization.js';
 import { assertEventOperational } from '../events/guards.js';
 import { assetPath, mediaSignature } from '../media/model.js';
@@ -100,15 +100,19 @@ async function checkOfflineEvent(eventId: string, auth: Parameters<typeof readOf
     return { source, ...await readPreparationMedia(tx, source) };
   });
   const expiresAtMs = grantExpiry(source, Date.now());
+  const verifiedKinds: OfflineMediaKind[] = [];
   if (expiresAtMs <= Date.now()) issues.push({ slidePosition: 0, field: 'expiry', message: 'Platnost offline oprávnění už vypršela. Zkontrolujte datum a čas konání akce.' });
   if (media.length <= limits.assets && total <= limits.payloadBytes && expiresAtMs > Date.now()) {
     // Probe the exact object versions without fetching private media bytes or issuing an export.
     for (let offset = 0; offset < media.length; offset += 8) {
       const results = await Promise.all(media.slice(offset, offset + 8).map(async item => {
-        try { await locateMedia(item); return null; }
-        catch { return { slidePosition: item.position, field: item.field, message: 'Vlastní soubor chybí nebo ho nelze ověřit. Zkuste kontrolu znovu, případně soubor nahraďte.' }; }
+        try { return { kind: (await locateMedia(item)).kind }; }
+        catch { return { issue: { slidePosition: item.position, field: item.field, message: 'Vlastní soubor chybí nebo ho nelze ověřit. Zkuste kontrolu znovu, případně soubor nahraďte.' } }; }
       }));
-      for (const issue of results) if (issue) issues.push(issue);
+      for (const result of results) {
+        if (result.issue) issues.push(result.issue);
+        else verifiedKinds.push(result.kind);
+      }
     }
   }
   await freshIdentity(auth);
@@ -118,7 +122,8 @@ async function checkOfflineEvent(eventId: string, auth: Parameters<typeof readOf
     assertEventOperational(event);
     if (current.version !== source.member.version || event.revision !== source.event.revision) throw new HttpsError('aborted', 'Akce se změnila. Spusťte kontrolu znovu.');
   });
-  return { snapshotId: source.snapshotId, teamCount: source.teams.length, mediaCount: media.length, mediaBytes: total, expiresAtMs, issues };
+  return { snapshotId: source.snapshotId, teamCount: source.teams.length, mediaCount: media.length,
+    mediaCounts: countOfflineMedia(verifiedKinds), mediaBytes: total, expiresAtMs, issues };
 }
 
 export const prepareOfflineEvent = onCall(issuanceOptions, async (request): Promise<PrepareOfflineEventResponse> => {
@@ -133,7 +138,9 @@ export const prepareOfflineEvent = onCall(issuanceOptions, async (request): Prom
   const exportRef = db.doc('events/' + eventId + '/offlineExports/' + exportId);
   const initial = await db.runTransaction(async tx => {
     const source = await readOfflineSource(tx, eventId, request.auth);
-    if (expectedSnapshotId !== undefined && source.snapshotId !== expectedSnapshotId) throw new HttpsError('aborted', 'Uzamčený kvíz se změnil. Spusťte kontrolu znovu.');
+    if (expectedSnapshotId !== undefined && source.snapshotId !== expectedSnapshotId) {
+      throw new HttpsError('aborted', 'Uzamčený kvíz se změnil. Spusťte kontrolu znovu.', { offlineCheck: 'snapshot-changed' });
+    }
     const previous = (await tx.get(exportRef)).data();
     if (previous) assertOfflineExportContext(previous, scope, eventId);
     return { source, previous, ...await readPreparationMedia(tx, source) };

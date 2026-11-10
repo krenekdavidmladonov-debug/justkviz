@@ -1,24 +1,30 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
-import { offlineEventLimits, type OfflineEventPreflight, type OfflineIssue } from '@filmovy-kviz/quiz-domain';
+import { offlineEventLimits, type OfflineEventPreflight, type OfflineIssue, type OfflineMediaCounts } from '@filmovy-kviz/quiz-domain';
 import { OfflineNotebookStep, offlineTransferHref, useOfflineInstallPrompt } from './OfflineNotebookStep';
 import { OfflinePreparationBlocked, OfflinePreparationIssues, prepareOfflineEvent, reusePreparedOfflineEvent,
   savePreparedOfflineEvent, verifySavedOfflineEvent, type PreparedOfflineEvent } from './offlinePreparation';
 import { listOfflineSessions, type StoredOfflineSession } from './offlineStore';
 import './offlineWizard.css';
 
-const steps = ['Zkontrolovat kvíz', 'Vytvořit offline balíček', 'Připravit notebook'];
+const steps = [
+  { title: 'Zkontrolovat kvíz', short: 'Kontrola' },
+  { title: 'Vytvořit offline balíček', short: 'Balíček' },
+  { title: 'Připravit notebook', short: 'Notebook' },
+];
 const date = new Intl.DateTimeFormat('cs', { dateStyle: 'medium', timeStyle: 'short' });
 const storageMargin = 32 * 1024 * 1024 + offlineEventLimits.manifestBytes;
 const mebibytes = (bytes: number) => Math.ceil(bytes / (1024 * 1024)).toLocaleString('cs');
 
 type Step = 1 | 2 | 3;
-type Problem = { text: string; action?: 'teams' | 'event' | 'login' | 'resume' | 'recheck' | 'replace' | 'install'; code?: string };
+type Problem = { title?: string; text: string; action?: 'teams' | 'event' | 'login' | 'resume' | 'recheck' | 'replace' | 'new-version' | 'install'; code?: string };
 
 function preparationProblem(error: unknown, operation: 'check' | 'build' | 'reuse' | 'save' | 'verify'): Problem {
   if (error instanceof OfflinePreparationBlocked) {
     if (error.reason === 'played') return { text: 'Na tomto zařízení je už uložený průběh této akce. Pokračujte v uloženém kvízu nebo synchronizujte výsledky.', action: 'resume' };
     if (error.reason === 'expired') return { text: 'Platnost offline oprávnění vypršela. Zkontrolujte kvíz a připravte nový soubor.', action: operation === 'reuse' ? 'replace' : 'recheck' };
-    return { text: 'Uložený balíček je zastaralý. Zkontrolujte uzamčený kvíz a připravte nový soubor.', action: operation === 'reuse' ? 'replace' : 'recheck' };
+    if (error.reason === 'snapshot-changed') return { title: 'Offline balíček je zastaralý',
+      text: 'Soubor patří k předchozí uzamčené verzi kvízu. Připravte nový balíček pro aktuální verzi.', action: operation === 'reuse' ? 'new-version' : 'recheck' };
+    return { text: 'Místní balíček se změnil nebo chybí. Zkontrolujte kvíz a ověřte uložené soubory.', action: operation === 'reuse' ? 'replace' : 'recheck' };
   }
   const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
   const details = error && typeof error === 'object' && 'details' in error ? error.details : undefined;
@@ -26,6 +32,8 @@ function preparationProblem(error: unknown, operation: 'check' | 'build' | 'reus
   const message = error instanceof Error ? error.message : '';
   if (check === 'teams') return { text: 'Kvíz potřebuje alespoň jeden potvrzený tým. Přidejte nebo potvrďte tým v administraci.', action: 'teams' };
   if (check === 'snapshot') return { text: 'Přiřaďte kvíz k akci a uzamkněte jeho připravenou verzi.', action: 'event' };
+  if (code === 'functions/aborted' && check === 'snapshot-changed') return { title: 'Uzamčený kvíz se změnil',
+    text: 'Od poslední kontroly je k akci uzamčená jiná verze. Zkontrolujte ji a pak vytvořte balíček.', action: 'recheck' };
   if (code === 'functions/permission-denied') return { text: 'Váš účet už nemá oprávnění připravit tuto akci. Obraťte se na správce.', action: 'event', code };
   if (code === 'functions/unauthenticated' || message === 'Nejprve se online přihlaste do administrace JustKvízu.') return { text: 'Přihlaste se do administrace účtem, který může tuto akci moderovat a vyexportovat.', action: 'login' };
   if (code === 'functions/aborted' || code === 'functions/already-exists' || code === 'functions/failed-precondition') {
@@ -53,6 +61,26 @@ function Issues({ issues }: { issues: readonly OfflineIssue[] }) {
   return <ul className="offline-wizard-issues">{issues.map((issue, index) => <li key={index}>
     {issue.slidePosition > 0 && <strong>Snímek {issue.slidePosition}. </strong>}{issue.message}
   </li>)}</ul>;
+}
+
+function MediaCounts({ counts, label }: { counts: OfflineMediaCounts; label: string }) {
+  return <dl className="offline-wizard-metrics" aria-label={label}>
+    <div><dt>Obrázky</dt><dd>{counts.image}</dd></div>
+    <div><dt>Zvuky</dt><dd>{counts.audio}</dd></div>
+    <div><dt>Videa</dt><dd>{counts.video}</dd></div>
+  </dl>;
+}
+
+function PlayUntil({ expiresAtMs }: { expiresAtMs: number }) {
+  return <time dateTime={new Date(expiresAtMs).toISOString()}>{date.format(expiresAtMs)}</time>;
+}
+
+function BundleSummary({ bundle }: { bundle: PreparedOfflineEvent }) {
+  return <div className="offline-wizard-bundle-summary">
+    <MediaCounts counts={bundle.mediaCounts} label="Média v balíčku" />
+    <p className="offline-wizard-validity">Oprávnění pro tento balíček končí <PlayUntil expiresAtMs={bundle.expiresAtMs} />.
+      {' '}Potom se hra bez internetu nedá zahájit ani v ní pokračovat. Uložené výsledky lze po připojení synchronizovat.</p>
+  </div>;
 }
 
 export function OfflinePreparationWizard({ eventId, transferTarget }: { eventId: string; transferTarget: boolean }) {
@@ -198,6 +226,12 @@ export function OfflinePreparationWizard({ eventId, transferTarget }: { eventId:
     void inspect();
   };
 
+  const prepareNew = () => {
+    setCandidate(undefined); request.current = null;
+    setPassword(''); setConfirmation(''); setVisible(false); setProblem(null); setFormError('');
+    window.requestAnimationFrame(() => passwordInput.current?.focus());
+  };
+
   const installPrompt = problem?.action === 'install' ? installation.prompt : null;
   const offerChromeInstall = () => {
     if (!installPrompt) return;
@@ -272,7 +306,7 @@ export function OfflinePreparationWizard({ eventId, transferTarget }: { eventId:
   };
 
   const showProblem = problem && <div className="offline-wizard-problem" role="alert">
-    <strong>{problem.action === 'resume' ? 'Tento kvíz už je rozehraný' : 'Je potřeba něco opravit'}</strong><p>{problem.text}</p>
+    <strong>{problem.title ?? (problem.action === 'resume' ? 'Tento kvíz už je rozehraný' : 'Je potřeba něco opravit')}</strong><p>{problem.text}</p>
   </div>;
   const problemLink = problem?.action === 'teams' ? { href: eventLink + '/registrations', title: 'Spravovat týmy' }
     : problem?.action === 'event' ? { href: eventLink, title: 'Otevřít detail akce' }
@@ -287,13 +321,14 @@ export function OfflinePreparationWizard({ eventId, transferTarget }: { eventId:
     </div>
     {transferTarget ? <OfflineNotebookStep eventId={eventId} transferTarget installation={installation} /> : <>
       <ol className="offline-wizard-steps" aria-label="Postup přípravy">
-        {steps.map((title, index) => <li key={title} aria-current={index + 1 === step ? 'step' : undefined} data-done={index + 1 < step || (index === 2 && deviceReady && authorityCurrent)}>
-          <span aria-hidden="true">{index + 1 < step || (index === 2 && deviceReady && authorityCurrent) ? '✓' : index + 1}</span><b>{title}</b>
+        {steps.map(({ title, short }, index) => <li key={title} aria-current={index + 1 === step ? 'step' : undefined} data-done={index + 1 < step || (index === 2 && deviceReady && authorityCurrent)}>
+          <span className="offline-wizard-step-number" aria-hidden="true">{index + 1 < step || (index === 2 && deviceReady && authorityCurrent) ? '✓' : index + 1}</span>
+          <b className="offline-wizard-step-full">{title}</b><b className="offline-wizard-step-short" aria-hidden="true">{short}</b>
         </li>)}
       </ol>
       <section className="offline-wizard-card" aria-labelledby="offline-wizard-step" data-offline-wizard-step={step} aria-busy={busy}>
         <p className="offline-wizard-kicker">Krok {step} ze 3</p>
-        <h2 id="offline-wizard-step" ref={heading} tabIndex={-1}>{steps[step - 1]}</h2>
+        <h2 id="offline-wizard-step" ref={heading} tabIndex={-1}>{steps[step - 1]?.title}</h2>
         {progress && <p className="offline-wizard-progress" role="status">{progress}{media && <> Hotovo {media.done} z {media.total} médií.</>}</p>}
         {showProblem}
         {issues.length > 0 && <div className="offline-wizard-problem" role="alert"><strong>Je potřeba něco opravit</strong><Issues issues={issues} /></div>}
@@ -301,7 +336,12 @@ export function OfflinePreparationWizard({ eventId, transferTarget }: { eventId:
           {!busy && check && !problem && issues.length === 0 && <div className="offline-wizard-success" role="status">
             <strong>Kvíz lze připravit</strong>
             <p>Uzamčený kvíz, oprávnění, týmy, dostupnost médií a místo v prohlížeči jsou ověřené.</p>
-            <dl><div><dt>Potvrzené týmy</dt><dd>{check.teamCount}</dd></div><div><dt>Obrázky a ukázky</dt><dd>{check.mediaCount}</dd></div><div><dt>Předběžná platnost do</dt><dd>{date.format(check.expiresAtMs)}</dd></div></dl>
+            <div className="offline-wizard-check-metrics">
+              <dl className="offline-wizard-metrics"><div><dt>Potvrzené týmy</dt><dd>{check.teamCount}</dd></div></dl>
+              <MediaCounts counts={check.mediaCounts} label="Média ke stažení" />
+            </div>
+            <p className="offline-wizard-validity">Předběžně lze hrát bez internetu do <PlayUntil expiresAtMs={check.expiresAtMs} />.
+              {' '}Přesný čas se potvrdí při vytvoření balíčku.</p>
           </div>}
           <div className="offline-wizard-actions">
             {!busy && (problemLink ? <a className="offline-wizard-primary" href={problemLink.href}>{problemLink.title}</a>
@@ -312,7 +352,10 @@ export function OfflinePreparationWizard({ eventId, transferTarget }: { eventId:
             {!busy && <a href={offlineTransferHref(eventId)}>Už mám soubor z jiného počítače</a>}
           </div>
         </>}
-        {step === 2 && (!prepared ? <>
+        {step === 2 && !prepared && (problem?.action === 'new-version' ? <div className="offline-wizard-actions">
+          <button className="offline-wizard-primary" onClick={prepareNew}>Připravit nový balíček</button>
+          <button className="offline-wizard-secondary" onClick={reset}>Zpět ke kontrole</button>
+        </div> : <>
           <p>{candidate ? 'Můžete ověřit dříve připravený soubor a uložit jeho novou kopii.' : 'Nastavte heslo k šifrovanému souboru. Bez něj kvíz neotevřete.'}</p>
           <form onSubmit={build} noValidate>
             <div className="offline-wizard-password">
@@ -334,15 +377,15 @@ export function OfflinePreparationWizard({ eventId, transferTarget }: { eventId:
                 : problem?.action === 'recheck' ? <button type="button" className="offline-wizard-primary" onClick={reset}>Zkontrolovat kvíz znovu</button>
                 : problemLink && problem?.action !== 'event' ? <a className="offline-wizard-primary" href={problemLink.href}>{problemLink.title}</a>
                 : <button className="offline-wizard-primary" disabled={busy}>{candidate ? 'Ověřit uložený balíček' : 'Vytvořit offline balíček'}</button>}
-              {candidate && problem?.action === 'replace' && <button type="button" className="offline-wizard-secondary" disabled={busy} onClick={() => {
-                setCandidate(undefined); request.current = null; setPassword(''); setProblem(null); setFormError(''); passwordInput.current?.focus();
-              }}>Nastavit nové heslo a vytvořit nový soubor</button>}
+              {candidate && problem?.action === 'replace' && <button type="button" className="offline-wizard-secondary" disabled={busy} onClick={prepareNew}>Nastavit nové heslo a vytvořit nový soubor</button>}
               {problemLink && problem?.action === 'event' && <a href={problemLink.href}>{problemLink.title}</a>}
               <button type="button" className="offline-wizard-secondary" disabled={busy} onClick={reset}>Zpět ke kontrole</button>
             </div>
           </form>
-        </> : <>
+        </>)}
+        {step === 2 && prepared && <>
           <p><strong>{downloaded ? 'Stažení bylo zahájeno' : 'Balíček je vytvořený'}</strong></p>
+          <BundleSummary bundle={prepared} />
           <p>{downloaded ? 'Vyberte stažený soubor. Ověříme, že se uložil celý a že jde o tento kvíz.' : 'Uložte soubor do složky, kde jej před akcí najdete. JustKvíz uloženou kopii znovu přečte a ověří.'}</p>
           <div className="offline-wizard-actions">
             {problem?.action === 'recheck' ? <button className="offline-wizard-primary" onClick={reset}>Zkontrolovat kvíz znovu</button>
@@ -355,9 +398,10 @@ export function OfflinePreparationWizard({ eventId, transferTarget }: { eventId:
             {problem?.action !== 'recheck' && !problemLink && (downloaded || problem) &&
               <button className="offline-wizard-secondary" disabled={busy} onClick={() => save(true)}>{downloaded ? 'Stáhnout znovu' : 'Stáhnout soubor'}</button>}
           </div>
-        </>)}
+        </>}
         {step === 3 && <>
           {saved && <p className="offline-wizard-file-saved"><span aria-hidden="true">✓</span> Offline soubor je uložený a ověřený.</p>}
+          {prepared && <BundleSummary bundle={prepared} />}
           {validating && <p role="status">Ověřuji, zda je balíček stále platný…</p>}
           {prepared && authorityCurrent && !validating && <OfflineNotebookStep eventId={eventId} packageVerified={saved}
             installation={installation} onReady={setDeviceReady} onOpen={openPrepared} opening={busy} />}
@@ -370,7 +414,6 @@ export function OfflinePreparationWizard({ eventId, transferTarget }: { eventId:
       <details className="offline-wizard-details"><summary>Technické podrobnosti</summary>
         <p>Formát souboru: .justkvizoffline. Balíček obsahuje šifrované odpovědi a poznámky. Uchovávejte heslo odděleně od souboru.</p>
         {check && <p>Velikost médií: {mebibytes(check.mediaBytes)} MiB. Volné místo je odhad pro toto úložiště prohlížeče.</p>}
-        {prepared && <p>Platnost offline oprávnění do {date.format(prepared.expiresAtMs)}.</p>}
         {problem?.code && <p>Stav ověření: {problem.code}.</p>}
       </details>
     </>}

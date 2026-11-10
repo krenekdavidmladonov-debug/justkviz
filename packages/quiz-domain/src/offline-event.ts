@@ -9,6 +9,14 @@ export const offlineEventLimits = {
 } as const;
 export const offlineResultsPageSize = 6;
 export type OfflineMediaKind = 'image' | 'audio' | 'video';
+export type OfflineMediaCounts = Readonly<Record<OfflineMediaKind, number>>;
+
+export function countOfflineMedia(kinds: Iterable<OfflineMediaKind>): OfflineMediaCounts {
+    const counts = { image: 0, audio: 0, video: 0 };
+    for (const kind of kinds) counts[kind]++;
+    return counts;
+}
+
 export interface OfflineMediaAsset {
     readonly reference: string;
     readonly generation: string;
@@ -102,6 +110,7 @@ export interface OfflineEventPreflight {
     readonly snapshotId: string;
     readonly teamCount: number;
     readonly mediaCount: number;
+    readonly mediaCounts: OfflineMediaCounts;
     readonly mediaBytes: number;
     readonly expiresAtMs: number;
     readonly issues: readonly OfflineIssue[];
