@@ -75,6 +75,7 @@ export interface OfflineRuntime {
     readonly pendingSynchronization: PendingOfflineSynchronization | undefined;
     readonly playBlock: string | null;
     append(command: OfflineCommand): Promise<void>;
+    reportMediaFinished(generation: number): Promise<void>;
     asset(reference: string): Promise<Blob>;
     close(): void;
     markSynced(receipt: unknown): Promise<void>;
@@ -105,6 +106,8 @@ export async function openOfflineRuntime(sessionId: string, password: string, on
             throw new Error('Uložený průběh byl poškozen. Obnovte nouzový soubor.');
         }
         let maxSeenMs = Math.max(value.maxSeenMs, Date.now()), busy = false, syncedReceipt = value.syncedReceipt;
+        let appendSettled: Promise<void> | null = null;
+        let pendingFinish: { generation: number; promise: Promise<void> } | null = null;
         let pendingSynchronization: PendingOfflineSynchronization | undefined;
         if (value.pendingSynchronization !== undefined) {
             const marker = value.pendingSynchronization;
@@ -171,7 +174,11 @@ export async function openOfflineRuntime(sessionId: string, password: string, on
                 }
             }
         }
-        return {
+        const canFinish = (generation: number) => !closed && !pendingSynchronization && !syncedReceipt
+            && state.status === 'active' && state.mediaGeneration === generation
+            && (state.mediaCommand === 'play' || state.mediaCommand === 'replay')
+            && !(readinessFailure ?? clockBlock(Date.now()));
+        const runtime: OfflineRuntime = {
             manifest: metadata.manifest, metadata,
             get state() {
                 return state;
@@ -202,6 +209,8 @@ export async function openOfflineRuntime(sessionId: string, password: string, on
                 const playBlock = readinessFailure ?? clockBlock(now);
                 if (playBlock) throw new Error(playBlock);
                 busy = true;
+                let settle!: () => void;
+                appendSettled = new Promise<void>(resolve => { settle = resolve; });
                 try {
                     if (operations.length >= offlineEventLimits.operations) {
                         throw new Error('Byl dosažen limit historie offline kvízu.');
@@ -220,10 +229,24 @@ export async function openOfflineRuntime(sessionId: string, password: string, on
                 }
                 finally {
                     busy = false;
+                    appendSettled = null;
+                    settle();
                     if (closed) {
                         release();
                     }
                 }
+            },
+            reportMediaFinished(generation) {
+                if (pendingFinish?.generation === generation) return pendingFinish.promise;
+                if (!canFinish(generation) || (busy && !appendSettled)) return Promise.resolve();
+                const report = { generation, promise: Promise.resolve() };
+                pendingFinish = report;
+                report.promise = (async () => {
+                    while (appendSettled && pendingFinish === report) await appendSettled;
+                    if (pendingFinish !== report || busy || !canFinish(generation)) return;
+                    await runtime.append({ type: 'media', payload: { command: 'finished' } });
+                })().finally(() => { if (pendingFinish === report) pendingFinish = null; });
+                return report.promise;
             },
             async asset(reference) {
                 if (closed) {
@@ -241,6 +264,7 @@ export async function openOfflineRuntime(sessionId: string, password: string, on
                 }
             },
             close() {
+                pendingFinish = null;
                 if (!closed) {
                     closed = true;
                     if (!busy) {
@@ -252,6 +276,7 @@ export async function openOfflineRuntime(sessionId: string, password: string, on
                 if (closed || busy || pendingSynchronization) {
                     throw new Error('Počkejte na dokončení ukládání.');
                 }
+                pendingFinish = null;
                 busy = true;
                 try {
                     await persistReceipt(receipt);
@@ -272,6 +297,7 @@ export async function openOfflineRuntime(sessionId: string, password: string, on
                     throw new Error('Nejprve opakujte přesně uložený požadavek synchronizace.');
                 }
                 const firstAttempt = pendingSynchronization === undefined;
+                pendingFinish = null;
                 busy = true;
                 try {
                     if (!pendingSynchronization) await persistSynchronization(marker);
@@ -292,6 +318,7 @@ export async function openOfflineRuntime(sessionId: string, password: string, on
                 }
             },
         };
+        return runtime;
     }
     catch (error) {
         closed = true;

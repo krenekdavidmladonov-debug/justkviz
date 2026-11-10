@@ -37,6 +37,21 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const persistedProgress = () => decryptOfflineValue(archiveKey, persisted.encrypted, `offline-state:${persisted.sessionId}:${persisted.sequence}:${persisted.headHash}`);
+const scoreCommand: OfflineCommand = { type: 'round-scores', payload: { roundId: 'round-1', changes: [
+  { teamId: 'team-1', expectedRevision: 0, halfPoints: 2, reason: '' },
+] } };
+const supersedingCommands: readonly OfflineCommand[] = [
+  { type: 'media', payload: { command: 'stop' } },
+  { type: 'media', payload: { command: 'replay' } },
+  { type: 'navigate', payload: { position: 2 } },
+  { type: 'end', payload: {} },
+];
+async function playing(changed = vi.fn()) {
+  const runtime = await open(changed);
+  await runtime.append({ type: 'start', payload: {} });
+  await runtime.append({ type: 'media', payload: { command: 'play' } });
+  return runtime;
+}
 
 beforeAll(async () => {
   fixture = await signedOfflineFixture();
@@ -56,6 +71,153 @@ beforeEach(() => {
 afterEach(() => { for (const runtime of runtimes.splice(0)) runtime.close(); vi.restoreAllMocks(); });
 
 describe('offline runtime commit boundary (storage adapter isolated; real browser durability tested separately)', () => {
+  it('records media completion received while a score write is still committing', async () => {
+    const runtime = await open();
+    await runtime.append({ type: 'start', payload: {} });
+    await runtime.append({ type: 'media', payload: { command: 'play' } });
+    const scoreSaved = deferred<void>();
+    storage.commit.mockImplementationOnce(async (value: StoredOfflineSession) => { await scoreSaved.promise; persisted = value; });
+    const score = runtime.append({ type: 'round-scores', payload: { roundId: 'round-1', changes: [
+      { teamId: 'team-1', expectedRevision: 0, halfPoints: 2, reason: '' },
+    ] } });
+    const finished = runtime.reportMediaFinished(runtime.state.mediaGeneration);
+    const duplicate = runtime.reportMediaFinished(runtime.state.mediaGeneration);
+    expect(duplicate).toBe(finished);
+    await expect(runtime.append({ type: 'navigate', payload: { position: 2 } })).rejects.toThrow();
+    scoreSaved.resolve(); await score; await finished;
+    expect(runtime.state.mediaCommand).toBe('finished');
+    expect(runtime.operations.filter(operation => operation.type === 'media' && operation.payload.command === 'finished')).toHaveLength(1);
+    expect(await persistedProgress()).toMatchObject({ state: { mediaCommand: 'finished' } });
+  });
+
+  it('reports a completion storage failure without rejecting the successful score write', async () => {
+    const runtime = await playing(), saved = deferred<void>();
+    storage.commit.mockImplementationOnce(async (value: StoredOfflineSession) => { await saved.promise; persisted = value; })
+      .mockRejectedValueOnce(new Error('Completion disk failure'));
+    const score = runtime.append(scoreCommand);
+    const finished = runtime.reportMediaFinished(runtime.state.mediaGeneration);
+    const finishOutcome = expect(finished).rejects.toThrow('Completion disk failure');
+    saved.resolve();
+    await expect(score).resolves.toBeUndefined();
+    await finishOutcome;
+    expect(runtime.state.mediaCommand).toBe('play');
+    expect(runtime.state.scores.find(item => item.teamId === 'team-1' && item.roundId === 'round-1')?.halfPoints).toBe(2);
+    expect(await persistedProgress()).toMatchObject({ state: { mediaCommand: 'play' } });
+    await runtime.reportMediaFinished(runtime.state.mediaGeneration);
+    expect(runtime.state.mediaCommand).toBe('finished');
+  });
+
+  it('finishes the still-current generation after the overlapping score write fails', async () => {
+    const runtime = await playing(), saved = deferred<void>();
+    storage.commit.mockImplementationOnce(async () => { await saved.promise; throw new Error('Score disk failure'); });
+    const score = runtime.append(scoreCommand);
+    const scoreOutcome = expect(score).rejects.toThrow('Score disk failure');
+    const finished = runtime.reportMediaFinished(runtime.state.mediaGeneration);
+    saved.resolve(); await scoreOutcome; await finished;
+    expect(runtime.state.mediaCommand).toBe('finished');
+    expect(runtime.state.scores.find(item => item.teamId === 'team-1' && item.roundId === 'round-1')?.halfPoints).toBeNull();
+    expect(runtime.operations.map(item => item.type)).toEqual(['start', 'media', 'media']);
+  });
+
+  it.each(supersedingCommands)('drops the old generation after an overlapping $type $payload write', async command => {
+    const runtime = await playing(), saved = deferred<void>();
+    const generation = runtime.state.mediaGeneration;
+    storage.commit.mockImplementationOnce(async (value: StoredOfflineSession) => { await saved.promise; persisted = value; });
+    const change = runtime.append(command), finished = runtime.reportMediaFinished(generation);
+    saved.resolve(); await change; await finished;
+    expect(runtime.operations).toHaveLength(3);
+    expect(runtime.state.mediaGeneration).toBeGreaterThan(generation);
+    expect(runtime.state.mediaCommand).not.toBe('finished');
+  });
+
+  it.each([
+    ['synchronize', false], ['synchronize', true], ['markSynced', false], ['markSynced', true],
+  ] as const)('invalidates a waiting finish as %s takes ownership, with disk failure=%s', async (method, fail) => {
+    const admitted = deferred<void>(), primarySaved = deferred<void>(), confirmationSaved = deferred<void>();
+    let confirmation: Promise<unknown> = Promise.resolve();
+    let confirmationStarted = false;
+    const changed = vi.fn(() => {
+      if (runtime.operations.length !== 3 || confirmationStarted) return;
+      confirmationStarted = true;
+      queueMicrotask(() => {
+        const receipt = receiptFor(runtime);
+        confirmation = method === 'synchronize'
+          ? runtime.synchronize(syncRequest, () => Promise.resolve(receipt)) : runtime.markSynced(receipt);
+        admitted.resolve();
+      });
+    });
+    const runtime = await open(changed);
+    await runtime.append({ type: 'start', payload: {} });
+    await runtime.append({ type: 'media', payload: { command: 'play' } });
+    storage.commit.mockImplementationOnce(async (value: StoredOfflineSession) => { await primarySaved.promise; persisted = value; })
+      .mockImplementationOnce(async (value: StoredOfflineSession) => {
+        await confirmationSaved.promise;
+        if (fail) throw new Error('Confirmation disk failure');
+        persisted = value;
+      });
+    const score = runtime.append(scoreCommand);
+    const generation = runtime.state.mediaGeneration;
+    const finished = runtime.reportMediaFinished(generation);
+    primarySaved.resolve(); await score; await admitted.promise;
+    const outcome = confirmation.catch((error: unknown) => error);
+    await finished;
+    await runtime.reportMediaFinished(generation);
+    expect(runtime.pendingSynchronization).toBeUndefined();
+    expect(runtime.operations).toHaveLength(3);
+    confirmationSaved.resolve();
+    const result = await outcome;
+    if (fail) expect(result).toBeInstanceOf(Error);
+    expect(runtime.operations).toHaveLength(3);
+    expect(runtime.state.mediaCommand).toBe('play');
+  });
+
+  it('drops a waiting finish on close while allowing the admitted score to settle', async () => {
+    const runtime = await playing(), saved = deferred<void>();
+    storage.commit.mockImplementationOnce(async (value: StoredOfflineSession) => { await saved.promise; persisted = value; });
+    const score = runtime.append(scoreCommand), finished = runtime.reportMediaFinished(runtime.state.mediaGeneration);
+    runtime.close(); saved.resolve(); await score; await finished;
+    expect(runtime.operations).toHaveLength(3);
+    expect(runtime.state.mediaCommand).toBe('play');
+  });
+
+  it.each(['clock', 'media readiness'] as const)('rechecks %s after the awaited score settles', async reason => {
+    const runtime = await playing(), saved = deferred<void>();
+    storage.commit.mockImplementationOnce(async (value: StoredOfflineSession) => { await saved.promise; persisted = value; });
+    const score = runtime.append(scoreCommand), finished = runtime.reportMediaFinished(runtime.state.mediaGeneration);
+    if (reason === 'clock') vi.spyOn(Date, 'now').mockReturnValue(fixture.manifest.expiresAtMs + 1);
+    else await expect(runtime.asset('quiz-asset:synthetic-offline-quiz/' + 'a'.repeat(64))).rejects.toThrow();
+    expect(runtime.reportMediaFinished(runtime.state.mediaGeneration)).toBe(finished);
+    saved.resolve(); await score; await finished;
+    expect(runtime.operations).toHaveLength(3);
+    expect(runtime.state.mediaCommand).toBe('play');
+  });
+
+  it.each(['closed', 'pending synchronization', 'receipt', 'clock', 'readiness', 'stale generation', 'idle'] as const)(
+    'ignores completion reports for %s without durable writes', async reason => {
+      let runtime = await playing();
+      let generation = runtime.state.mediaGeneration;
+      if (reason === 'closed') runtime.close();
+      if (reason === 'pending synchronization') {
+        await expect(runtime.synchronize(syncRequest, vi.fn().mockRejectedValue(new Error('Lost response')))).rejects.toThrow();
+      }
+      if (reason === 'receipt') await runtime.markSynced(receiptFor(runtime));
+      if (reason === 'clock') vi.spyOn(Date, 'now').mockReturnValue(fixture.manifest.expiresAtMs + 1);
+      if (reason === 'readiness') {
+        runtime.close();
+        runtime = await openOfflineRuntime(fixture.manifest.sessionId, password, vi.fn(), {
+          signal: new AbortController().signal, progress: vi.fn(), verifyEnvironment: () => Promise.reject(new Error('Environment failed')),
+        });
+        runtimes.push(runtime);
+      }
+      if (reason === 'stale generation') generation--;
+      if (reason === 'idle') await runtime.append({ type: 'navigate', payload: { position: 2 } });
+      const writes = storage.commit.mock.calls.length;
+      await runtime.reportMediaFinished(generation);
+      expect(storage.commit).toHaveBeenCalledTimes(writes);
+      expect(runtime.state.mediaCommand).not.toBe('finished');
+    },
+  );
+
   it('fences journal mutations from dispatch until the server receipt is saved', async () => {
     const runtime = await open(); await runtime.append({ type: 'start', payload: {} });
     const receipt = receiptFor(runtime);

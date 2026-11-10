@@ -7,7 +7,7 @@ export interface OfflineProjectorConnection {
     publish(state: PublicLiveState): void;
     close(): void;
 }
-export function openOfflineProjector(runtime: OfflineRuntime, current: () => PublicLiveState): OfflineProjectorConnection {
+export function openOfflineProjector(runtime: OfflineRuntime, current: () => PublicLiveState, completionFailed?: (generation: number) => void): OfflineProjectorConnection {
     if (runtime.playBlock) throw new Error(runtime.playBlock);
     const popup = window.open(`/offline.html#/projector/${encodeURIComponent(runtime.manifest.sessionId)}`, `justkviz-offline-${runtime.manifest.sessionId}`, 'popup=yes');
     if (!popup) {
@@ -37,7 +37,10 @@ export function openOfflineProjector(runtime: OfflineRuntime, current: () => Pub
             if (message.type === 'finished') {
                 const latest = current();
                 if (latest.status === 'active' && latest.mediaGeneration === message.mediaGeneration && ['play', 'replay'].includes(latest.mediaCommand)) {
-                    void runtime.append({ type: 'media', payload: { command: 'finished' } }).catch(() => {
+                    const activePort = port;
+                    const generation = latest.mediaGeneration;
+                    void runtime.reportMediaFinished(generation).catch(() => {
+                        if (!closed && port === activePort && current().mediaGeneration === generation && !runtime.playBlock && !runtime.syncedReceipt && !runtime.pendingSynchronization) completionFailed?.(generation);
                     });
                 }
                 return;

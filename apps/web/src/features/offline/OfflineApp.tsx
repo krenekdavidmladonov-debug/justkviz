@@ -264,6 +264,9 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
   const [completeRecovery, setCompleteRecovery] = useState(false);
   const [previewRecovery, setPreviewRecovery] = useState(false);
   const [recapPosition, setRecapPosition] = useState('');
+  const [mediaCompletionError, setMediaCompletionError] = useState('');
+  const completionBlocked = Boolean(runtime.syncedReceipt || runtime.pendingSynchronization || runtime.playBlock);
+  useEffect(() => { setMediaCompletionError(''); }, [runtime, state.mediaGeneration, completionBlocked]);
   const [lastPlayBlock, setLastPlayBlock] = useState(() => runtime.playBlock);
   const playBlock = runtime.playBlock ?? lastPlayBlock;
   useEffect(() => {
@@ -294,6 +297,14 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
     return blob;
   } }), [runtime, manifest.sessionId, state.mediaGeneration]);
   const command = (value: OfflineCommand) => void task(async () => { await runtime.append(value); setPreview(null); progress('Změna je odolně uložená na tomto počítači.'); });
+  const completionFailed = (generation: number) => {
+    if (runtime.state.mediaGeneration === generation && !runtime.playBlock && !runtime.pendingSynchronization && !runtime.syncedReceipt) {
+      setMediaCompletionError('Dokončení ukázky se nepodařilo uložit. Zkontrolujte místní úložiště a ukázku znovu zastavte.');
+    }
+  };
+  const reportCompletion = (generation: number) => {
+    void runtime.reportMediaFinished(generation).catch(() => completionFailed(generation));
+  };
   const compare = async (choices: readonly OfflineSyncResolution[] | undefined, recovery: boolean) => {
     const head = runtime.state.headHash;
     const online = await import('./offlineOnline');
@@ -327,7 +338,8 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
     <p data-offline-runtime-state>{runtime.syncedReceipt ? 'Výsledky bezpečně synchronizovány' : state.status === 'ended' ? 'Výsledky čekají na synchronizaci' : playBlock ? 'Uložený průběh je otevřený pro obnovu' : state.status === 'active' ? 'Offline režim aktivní' : 'Offline kvíz připraven'} · {state.sequence} potvrzených kroků</p>
     <p>Platnost hraní do {new Date(manifest.expiresAtMs).toLocaleString('cs-CZ')}.</p>
     {playBlock && <p role="alert" data-offline-readiness-error>{playBlock} Potvrzený průběh zůstává uložený pro obnovu nebo synchronizaci.</p>}
-    <div className="offline-actions"><button disabled={busy || Boolean(playBlock)} onClick={() => void task(() => { popup.current?.close(); popup.current = openOfflineProjector(runtime, () => latest.current); return Promise.resolve(); })}>Otevřít offline projektor</button><button disabled={busy} onClick={lock}>Zamknout soukromá data</button></div>
+    <div className="offline-actions"><button disabled={busy || Boolean(playBlock)} onClick={() => void task(() => { popup.current?.close(); popup.current = openOfflineProjector(runtime, () => latest.current, completionFailed); return Promise.resolve(); })}>Otevřít offline projektor</button><button disabled={busy} onClick={lock}>Zamknout soukromá data</button></div>
+    {mediaCompletionError && !completionBlocked && <p role="alert" data-offline-media-completion-error>{mediaCompletionError}</p>}
     <section aria-label="Offline moderování"><h2>Moderování</h2>
       <div className="offline-actions">
         {state.status === 'waiting' && <button disabled={disabled} onClick={() => command({ type: 'start', payload: {} })}>Zahájit offline kvíz</button>}
@@ -343,7 +355,7 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
         <div className="offline-preview"><PublicPresentation state={projection} mediaEnabled={false} /></div>
         {privateAudio && <div className="offline-private"><p>Zvuková ukázka hraje na počítači moderátora.</p><MediaPlayer source={privateAudio} command={state.mediaCommand} generation={state.mediaGeneration} startSeconds={current?.clipStartSeconds ?? 0}
           {...(current?.clipEndSeconds != null && current.clipEndSeconds > (current.clipStartSeconds ?? 0) ? { endSeconds: current.clipEndSeconds } : {})}
-          onFinished={() => command({ type: 'media', payload: { command: 'finished' } })} onError={() => progress('Ukázku nelze přehrát. Zkontrolujte výstup zvuku.')} /></div>}
+          onFinished={reportCompletion} onError={() => progress('Ukázku nelze přehrát. Zkontrolujte výstup zvuku.')} /></div>}
       </OfflineMediaContext.Provider>}
       <div className="offline-actions">{(['play', 'replay', 'stop'] as const).map((mediaCommand, mediaIndex) => <button key={mediaCommand} disabled={disabled || state.status !== 'active'} onClick={() => command({ type: 'media', payload: { command: mediaCommand } })}>{['Přehrát ukázku', 'Přehrát znovu', 'Zastavit ukázku'][mediaIndex]}</button>)}</div>
     </section>

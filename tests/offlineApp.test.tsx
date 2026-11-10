@@ -10,6 +10,8 @@ import { commitOfflineSynchronization } from '../apps/web/src/features/offline/o
 import { initialOfflineState } from '../packages/quiz-domain/src/offline-event';
 import { offlineManifest } from './offline-fixture';
 
+const playback = vi.hoisted(() => ({ finishedGeneration: undefined as number | undefined }));
+
 vi.mock('../apps/web/src/features/offline/offlineShell', () => ({
   checkOfflineShell: vi.fn(), installOfflineShell: vi.fn(), testOfflineShellBoot: vi.fn(), proveOfflineShellBoot: vi.fn(),
 }));
@@ -18,6 +20,9 @@ vi.mock('../apps/web/src/features/offline/offlinePreparation', () => ({ exportOf
 vi.mock('../apps/web/src/features/offline/offlineRuntime', () => ({ openOfflineRuntime: vi.fn() }));
 vi.mock('../apps/web/src/features/offline/OfflinePreparationWizard', () => ({ OfflinePreparationWizard: () => null }));
 vi.mock('../apps/web/src/features/offline/offlineOnline', () => ({ commitOfflineSynchronization: vi.fn() }));
+vi.mock('../apps/web/src/features/presentation/MediaPlayer', () => ({ MediaPlayer: ({ generation, onFinished }: { generation: number; onFinished: (generation: number) => void }) =>
+  <button onClick={() => onFinished(playback.finishedGeneration ?? generation)}>Dokončit syntetickou ukázku</button>,
+}));
 
 const proof = { type: 'offline-shell-proof' as const, version: 'synthetic', ready: true };
 const installLabel = 'Uložit aplikaci pro offline spuštění';
@@ -43,6 +48,7 @@ beforeEach(() => {
   vi.mocked(listOfflineSessions).mockReset().mockResolvedValue([]);
   vi.mocked(openOfflineRuntime).mockReset();
   vi.mocked(commitOfflineSynchronization).mockReset();
+  playback.finishedGeneration = undefined;
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
@@ -137,4 +143,47 @@ it('retries the persisted synchronization from the actual reopened operator with
   expect(synchronize).toHaveBeenCalledTimes(1);
   expect(commitOfflineSynchronization).toHaveBeenCalledWith(manifest.event.id, manifest.exportId, [], intent.previewDigest, intent.resolutions, true);
   expect(host.querySelector('[data-offline-error]')).toBeNull();
+});
+
+it.each(['saved', 'failed', 'stale'] as const)('forwards local audio completion while the real score-save task is busy (%s completion)', async outcome => {
+  const source = offlineManifest();
+  const manifest = { ...source, slides: source.slides.map(slide => slide.position === 2 ? { ...slide, kind: 'audio' as const, mediaSource: 'quiz-asset:synthetic-offline-quiz/' + 'a'.repeat(64) } : slide) };
+  const state = { ...initialOfflineState(manifest), status: 'active' as const, slidePosition: 2, mediaGeneration: 7, mediaCommand: 'play' as const };
+  const saving = deferred<void>();
+  const append = vi.fn<OfflineRuntime['append']>().mockReturnValue(saving.promise);
+  const reportMediaFinished = vi.fn<(generation: number) => Promise<void>>().mockResolvedValue(undefined);
+  const runtime = { manifest, state, operations: [], playBlock: null, append, reportMediaFinished, close: vi.fn() } as unknown as OfflineRuntime;
+  let refreshRuntime!: () => void;
+  vi.mocked(listOfflineSessions).mockResolvedValue([{ sessionId: manifest.sessionId, title: manifest.event.title, sequence: 0 } as Awaited<ReturnType<typeof listOfflineSessions>>[number]]);
+  vi.mocked(openOfflineRuntime).mockImplementation((_session, _password, changed) => { refreshRuntime = changed; return Promise.resolve(runtime); });
+  await render();
+  const password = host.querySelector<HTMLInputElement>('input[type=password]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(password, 'synthetic-offline-password');
+    password.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => button('Odemknout a pokračovat').click());
+  const score = host.querySelector<HTMLInputElement>('input[aria-label="Body — QA01"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(score, '2');
+    score.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => button('Uložit body kola').click());
+  expect(append).toHaveBeenCalledTimes(1);
+  expect(button('Uložit body kola').disabled).toBe(true);
+  if (outcome === 'failed') reportMediaFinished.mockRejectedValueOnce(new Error('Synthetic completion disk failure'));
+  if (outcome === 'stale') playback.finishedGeneration = 6;
+  await act(async () => button('Dokončit syntetickou ukázku').click());
+  expect(reportMediaFinished).toHaveBeenCalledExactlyOnceWith(outcome === 'stale' ? 6 : 7);
+  expect(append).toHaveBeenCalledTimes(1);
+  expect(Boolean(host.querySelector('[data-offline-media-completion-error]'))).toBe(outcome === 'failed');
+  expect(button('Uložit body kola').disabled).toBe(true);
+  await act(async () => saving.resolve());
+  expect(host.querySelector('[data-offline-error]')).toBeNull();
+  if (outcome === 'failed') {
+    Object.defineProperty(runtime, 'syncedReceipt', { value: { receiptId: 'synthetic-receipt' } });
+    await act(async () => refreshRuntime());
+    expect(host.querySelector('[data-offline-media-completion-error]')).toBeNull();
+    expect(host.querySelector('[data-offline-sync-receipt]')).not.toBeNull();
+  }
 });

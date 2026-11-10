@@ -31,6 +31,8 @@ Příprava vyžaduje platné členství a oprávnění `event.read`, `event.expo
 
 Při opětovném otevření aplikace ověří aktuální schopnost startu bez sítě, trvalé uložení a postupně všechna místní média. Pokud něco chybí, otevře ověřený průběh pro obnovu nebo synchronizaci a zakáže pokračování v hraní i projekci. Stejný nebo starší balíček sám uložený průběh nepřepíše; pro práci s existujícím večerem použijte **Odemknout a pokračovat**. Nouzový export celého večera potřebuje čitelné kopie všech médií.
 
+Dokončení zvuku nebo videa se neztratí při souběžném ukládání bodů: potvrdí se odolným zápisem po dokončení tohoto ukládání. Opakovaná oznámení stejné ukázky se sloučí. Přechod na jiný snímek, nové přehrání, zastavení, zamčení nebo zahájení synchronizace staré oznámení zneplatní. Nepodaří-li se dokončení uložit, moderování zobrazí samostatnou chybu; již potvrzené body tím neztrácejí platnost.
+
 Oprávnění běhu je omezené nejvýše na 72 hodin a konec povoleného období akce. Změnu oprávnění na serveru nelze při úplném odpojení okamžitě zjistit. Po expiraci se nové místní příkazy odmítnou; čtení a nouzový export dosavadních dat zůstávají dostupné. Kontrola nejvyššího viděného času chrání před neúmyslným vrácením hodin. Není ochranou proti vlastníku operačního systému, který úmyslně mění čas nebo obnovuje staré úložiště.
 
 ## Návrat online
