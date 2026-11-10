@@ -9,7 +9,7 @@ import {
   type Transaction,
 } from 'firebase-admin/firestore';
 import { HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
-import { accessActor, securedOnCall, runAccessTransaction, grantCreatedResource, currentMembership } from '../access/authorization.js';
+import { accessActor, authorize, securedOnCall, runAccessTransaction, grantCreatedResource, currentMembership } from '../access/authorization.js';
 import { preserveHiddenFields, protectPrivateMedia, protectSlideFields } from '../access/editor-fields.js';
 
 import { QuizEditorError } from './errors.js';
@@ -316,6 +316,7 @@ export const createQuiz = securedOnCall('createQuiz', callableOptions, async (re
         if (quiz.createdBy !== actor.uid || quiz.creationFingerprint !== identity.fingerprint) {
           throw new QuizEditorError('already-exists', 'requestId was already used for another quiz creation.');
         }
+        await authorize(request.auth, ['quiz.read', 'quiz.create'], { kind: 'quiz', id: identity.quizId }, transaction);
         return {
           quizId: identity.quizId,
           revision: quizRevision(quiz),

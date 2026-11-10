@@ -16,6 +16,7 @@ import {
   connectFirestoreEmulator,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   getFirestore,
   orderBy,
@@ -335,6 +336,25 @@ async function run() {
   assert.deepEqual(createdQuizLateRetry, {
     quizId: createdQuizId, revision: 4, slideCount: 2, questionCount: 1, roundCount: 1,
   });
+
+  // The original request key must not expose current private counters after the
+  // creator's selected quiz grant is removed while global create stays allowed.
+  const memberRef = adminDb.doc('memberships/' + auth.currentUser.uid);
+  const membershipBeforeReplayTest = (await memberRef.get()).data();
+  const createdPrivateRef = adminDb.doc('quizzes/' + createdQuizId);
+  const rootBeforeRevokedRetry = (await createdPrivateRef.get()).data();
+  const grantCountBefore = (await adminDb.collection('accessAudit').where('resourceId', '==', createdQuizId).get()).size;
+  try {
+    await memberRef.update({ quizzes: { mode: 'selected', ids: [] }, version: membershipBeforeReplayTest.version + 1 });
+    await assert.rejects(getDocFromServer(createdQuizRef), error => error.code === 'permission-denied');
+    await expectFunctionError(() => invoke('createQuiz', { title: 'Nový syntetický kvíz', requestId: createRequestId }), 'functions/permission-denied');
+    assert.deepEqual((await createdPrivateRef.get()).data(), rootBeforeRevokedRetry);
+    assert.deepEqual((await memberRef.get()).data().quizzes, { mode: 'selected', ids: [] });
+    assert.equal((await adminDb.collection('accessAudit').where('resourceId', '==', createdQuizId).get()).size, grantCountBefore);
+  } finally {
+    await memberRef.set({ ...membershipBeforeReplayTest, version: membershipBeforeReplayTest.version + 2 });
+  }
+  assert.deepEqual(await invoke('createQuiz', { title: 'Nový syntetický kvíz', requestId: createRequestId }), createdQuizLateRetry);
 
   const originalSlide = (await getDoc(slideRef('slide-002'))).data();
   const originalLegacy = JSON.parse(JSON.stringify(originalSlide.legacy));
