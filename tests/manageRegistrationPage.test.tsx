@@ -43,6 +43,43 @@ async function submit() { await act(async () => { host.querySelector('form')!.di
 async function cancel() { await act(async () => host.querySelector<HTMLButtonElement>('.danger-button')!.click()); }
 const saveButton = () => host.querySelector<HTMLButtonElement>('button[type=submit]')!;
 const email = () => host.querySelector<HTMLInputElement>('input[type=email]')?.value;
+const retryButton = () => [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Načíst znovu');
+
+it.each(['get', 'event'] as const)('retries a failed initial %s read without changing the link or writing registration data', async source => {
+  api[source].mockRejectedValueOnce(Object.assign(new Error('private transport details'), { code: 'functions/unavailable' }));
+  await render();
+  expect(host.querySelector('[role=alert]')?.textContent).toContain('Registraci se nepodařilo načíst');
+  expect(host.textContent).not.toContain('private transport details');
+  expect(host.querySelector('form')).toBeNull();
+  await act(async () => retryButton()!.click());
+  expect(router.state.location.hash).toBe('#registration=a&token=token-a');
+  expect(api.get.mock.calls).toEqual([['event', 'a', 'token-a'], ['event', 'a', 'token-a']]);
+  expect(api.event.mock.calls).toEqual([['event'], ['event']]);
+  expect(email()).toBe('a@example.test');
+  expect(host.querySelector('[role=alert]')).toBeNull();
+  expect(api.update).not.toHaveBeenCalled();
+  expect(api.cancel).not.toHaveBeenCalled();
+});
+
+it.each(['functions/not-found', 'functions/permission-denied'])('does not offer retry for an invalid or revoked link (%s)', async code => {
+  api.get.mockRejectedValueOnce(Object.assign(new Error('private callable details'), { code }));
+  await render();
+  expect(host.querySelector('[role=alert]')?.textContent).toBe('Bezpečný odkaz není platný.');
+  expect(retryButton()).toBeUndefined();
+  expect(host.querySelector('form')).toBeNull();
+});
+
+it('ignores a retry response from an earlier link', async () => {
+  const retry = deferred<RegistrationMutationResponse>();
+  api.get.mockRejectedValueOnce(new Error('transient failure')).mockReturnValueOnce(retry.promise);
+  await render();
+  await act(async () => retryButton()!.click());
+  expect(host.textContent).toContain('Ověřuji odkaz');
+  await navigate(url('b'));
+  await act(async () => retry.resolve(registration('a')));
+  expect(email()).toBe('b@example.test');
+  expect(host.textContent).not.toContain('Team a');
+});
 
 it.each(['/events/event/registration/manage', '/events/event/registration/manage#registration=a', '/events/event/registration/manage#token=token-a'])('clears previously loaded PII immediately for incomplete link %s without remounting the router', async invalid => {
   await render();
