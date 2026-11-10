@@ -1,7 +1,7 @@
 import { getFirestore, Timestamp, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { canHideInfoSlide, canonicalOfflineJson, offlineEventLimits as limits, normalizeResultTemplates, normalizeShowPreferences, parseQuizAsset, resolveSlideDesign,
-  resolveLegacySlideAppearance, type OfflineEventManifest, type OfflineIssue, type OfflineMediaAsset,
+  resolveLegacySlideAppearance, youtubeVideoId, type OfflineEventManifest, type OfflineIssue, type OfflineMediaAsset,
   type OfflineRound, type OfflineScore, type OfflineTeam, type Permission } from '@filmovy-kviz/quiz-domain';
 import { authorize, type AuthIdentity } from '../access/authorization.js';
 import { slideView } from '../access/slide-view.js';
@@ -75,13 +75,15 @@ export async function readOfflineSource(tx: Transaction, eventId: string, auth: 
   const db = getFirestore(), eventRef = db.doc('events/' + eventId), event = (await tx.get(eventRef)).data();
   if (!event) throw offlineUnavailable();
   if (operational) assertEventOperational(event);
-  const assignment = offlineRecord(event.quizAssignment), snapshotId = offlineId(assignment.snapshotId), quizId = offlineId(assignment.quizId);
+  const assignment = offlineRecord(event.quizAssignment);
+  if (!assignment.snapshotId || !assignment.quizId) throw new HttpsError('failed-precondition', 'Přiřaďte kvíz a uzamkněte akci.', { offlineCheck: 'snapshot' });
+  const snapshotId = offlineId(assignment.snapshotId), quizId = offlineId(assignment.quizId);
   if (!Number.isSafeInteger(assignment.quizRevision) || !Number.isSafeInteger(event.revision) || !(event.startsAt instanceof Timestamp)
     || typeof event.title !== 'string' || !event.title.trim()) throw offlineUnavailable();
   if (offlineRecord(event.scoring).unitScale !== 2 || offlineRecord(event.scoring).rankingMode !== 'dense') throw offlineUnavailable();
   const snapshotRef = db.doc('quizSnapshots/' + snapshotId), snapshot = (await tx.get(snapshotRef)).data();
   if (!snapshot || snapshot.status !== 'ready' || snapshot.eventId !== eventId || snapshot.quizId !== quizId || snapshot.quizRevision !== assignment.quizRevision)
-    throw offlineUnavailable();
+    throw new HttpsError('failed-precondition', 'Uzamčená verze kvízu není připravená.', { offlineCheck: 'snapshot' });
   const [slides, rounds, roster, scores, sessions] = await Promise.all([
     tx.get(snapshotRef.collection('slides').orderBy('position').limit(limits.slides + 1)),
     tx.get(snapshotRef.collection('rounds').orderBy('position').limit(limits.rounds + 1)),
@@ -89,8 +91,9 @@ export async function readOfflineSource(tx: Transaction, eventId: string, auth: 
     tx.get(eventRef.collection('scores').limit(limits.scoreCells + 1)),
     tx.get(db.collection('sessions').where('eventId', '==', eventId).limit(201)),
   ]);
+  if (roster.empty) throw new HttpsError('resource-exhausted', 'Přidejte alespoň jeden potvrzený tým.', { offlineCheck: 'teams' });
   if (slides.size === 0 || slides.size > limits.slides || slides.size !== snapshot.slideCount || rounds.size === 0 || rounds.size > limits.rounds
-    || rounds.size !== snapshot.roundCount || roster.size === 0 || roster.size > limits.teams || scores.size > limits.scoreCells || sessions.size > 200
+    || rounds.size !== snapshot.roundCount || roster.size > limits.teams || scores.size > limits.scoreCells || sessions.size > 200
     || rounds.size * roster.size > limits.scoreCells) throw new HttpsError('resource-exhausted', 'Offline kvíz překračuje limit snímků, kol, týmů nebo 200 bodovacích buněk.');
   const normalizedRounds: OfflineRound[] = rounds.docs.map(row => {
     const data = row.data();
@@ -179,6 +182,11 @@ export function requiredOfflineMedia(source: OfflineSource) {
     if (value === '' || value === undefined || value === null) return;
     const parsed = parseQuizAsset(value);
     if (typeof value !== 'string' || !parsed || parsed.quizId !== source.quizId) {
+      if (typeof value === 'string' && kind !== 'image' && youtubeVideoId(value)) {
+        const replacement = kind === 'audio' ? 'zvukový soubor' : 'soubor MP4';
+        issues.push({ slidePosition: position, field, message: `Ukázku z YouTube nelze uložit offline. Nahrajte vlastní ${replacement}, k němuž máte práva.` });
+        return;
+      }
       issues.push({ slidePosition: position, field, message: 'Externí nebo neznámé médium nelze uložit offline. Nahraďte je vlastním oprávněným souborem.' }); return;
     }
     if (required.has(value) && required.get(value)!.kind !== kind) { issues.push({ slidePosition: position, field, message: 'Médium má neslučitelné použití.' }); return; }

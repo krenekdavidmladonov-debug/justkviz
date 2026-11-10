@@ -9,7 +9,8 @@ import type { SlideRenderInput } from '../presentation/types';
 import { parsePoints, pointsText } from '../scoring/model';
 import { buildOfflineProjection } from './offlineProjection';
 import { connectOfflineProjector, openOfflineProjector, type OfflineProjectorConnection } from './offlineProjector';
-import { exportOfflineRecovery, exportStoredOfflineEvent, importOfflineEvent, installOfflineEvent, prepareOfflineEvent } from './offlinePreparation';
+import { exportOfflineRecovery, exportStoredOfflineEvent, importOfflineEvent } from './offlinePreparation';
+import { OfflinePreparationWizard } from './OfflinePreparationWizard';
 import { openOfflineRuntime, type OfflineRuntime } from './offlineRuntime';
 import { checkOfflineShell, installOfflineShell, proveOfflineShellBoot, testOfflineShellBoot } from './offlineShell';
 import { listOfflineSessions, verifyStoredOfflineStorage, type StoredOfflineSession } from './offlineStore';
@@ -92,13 +93,22 @@ export function OfflineApp() {
   const selfTest = /^#\/self-test\/([A-Za-z0-9_-]{1,150})$/u.exec(hash);
   if (selfTest) return <OfflineShellSelfTest key={selfTest[1]} nonce={selfTest[1]!} />;
   if (projector) return <OfflineProjector key={projector[1]} sessionId={projector[1]!} />;
-  return <OfflineHome key={hash} hash={hash} />;
+  const params = new URLSearchParams(hash.split('?')[1] ?? '');
+  const eventId = params.get('eventId') ?? '';
+  if (/^#\/prepare(?:\?|$)/u.test(hash) && currentOfflineMode() !== 'recovery') {
+    return <div className="offline-app offline-wizard-app">
+      <header><a href="/offline.html" className="offline-wizard-brand">JustKvíz <span>Offline</span></a>
+        <a href={eventId ? '/admin/events/' + encodeURIComponent(eventId) : '/admin'}>Zpět do administrace</a></header>
+      <main><OfflinePreparationWizard key={hash} eventId={eventId} transferTarget={params.get('transfer') === '1'} /></main>
+    </div>;
+  }
+  const importEventId = /^#\/import(?:\?|$)/u.test(hash) ? eventId : undefined;
+  return <OfflineHome key={hash} importEventId={importEventId} />;
 }
 
-function OfflineHome({ hash }: { readonly hash: string }) {
+function OfflineHome({ importEventId }: { readonly importEventId: string | undefined }) {
   const [sessions, setSessions] = useState<StoredOfflineSession[]>([]);
   const [password, setPassword] = useState('');
-  const [confirmation, setConfirmation] = useState('');
   const [restore, setRestore] = useState(false);
   const [previousPassword, setPreviousPassword] = useState('');
   const [runtime, setRuntime] = useState<OfflineRuntime | null>(null);
@@ -169,34 +179,25 @@ function OfflineHome({ hash }: { readonly hash: string }) {
       }
       activeRuntime.current = opened;
       setRuntime(opened);
-      setPassword(''); setConfirmation(''); setMessage('');
+      setPassword(''); setMessage('');
       return opened;
     } finally {
       if (unlocking.current === controller) unlocking.current = null;
     }
   };
-  const preparation = hash.startsWith('#/prepare') && currentOfflineMode() !== 'recovery';
-  const eventId = preparation ? new URLSearchParams(hash.split('?')[1] ?? '').get('eventId') ?? '' : '';
+  const visibleSessions = importEventId === undefined ? sessions : sessions.filter(session => session.eventId === importEventId);
   return <div className="offline-app">
     <header><a href="/offline.html">JustKvíz · Offline</a><span data-offline-connectivity>{online ? 'Síť je dostupná' : 'Bez připojení'}</span><a href="/admin">Online administrace</a></header>
     <main>
       {runtime ? <OfflineOperator key={runtime.manifest.sessionId} runtime={runtime} revision={revision} task={task} busy={busy} progress={setMessage}
         lock={() => { runtime.close(); activeRuntime.current = null; setRuntime(null); void refresh(); }} /> : <>
-        <h1>{preparation ? 'Připravit offline kvíz' : 'Spustit offline kvíz'}</h1>
+        <h1>{importEventId === undefined ? 'Spustit offline kvíz' : 'Otevřít offline kvíz této akce'}</h1>
         <p>Večer běží na tomto počítači. Soubor obsahuje také správné odpovědi a poznámky; chraňte jej i heslo.</p>
         <section>
           <h2>Aplikace pro hraní bez internetu</h2>
           <p data-offline-shell-status>{installed ? 'Aplikace je uložená pro spuštění bez internetu.' : 'Nejprve uložte offline aplikaci na tento počítač.'}</p>
           <button disabled={busy} onClick={() => void task(async () => { const proof = await installOfflineShell(); await testOfflineShellBoot(); setInstalled(proof.ready); setMessage('Aplikace se úspěšně spustila s blokovanými síťovými spojeními.'); })}>Uložit aplikaci pro offline spuštění</button>
           <button disabled={busy || !installed} onClick={() => void task(async () => { await testOfflineShellBoot(); setMessage('Předakcová zkouška: celá aplikace se spustila bez síťových spojení.'); })}>Ověřit spuštění bez internetu</button>
-          {eventId && <>
-            <p>Máte již hotový soubor z jiného počítače? Připravte tento notebook online ještě před odjezdem. Ověříme aplikaci a podpisový klíč akce; kvíz ani média se znovu nestahují. Potom můžete bez internetu načíst přenesený soubor.</p>
-            <button disabled={busy} onClick={() => void task(async () => {
-              await installOfflineEvent(eventId, setMessage);
-              setInstalled(true);
-              setMessage('Tento notebook má připravenou aplikaci, trvalé úložiště a ověřený klíč akce. Načtěte hotový přenosný soubor; média se při této přípravě nestahovala.');
-            })}>Připravit notebook pro přenesený kvíz</button>
-          </>}
           {installPrompt && <button disabled={busy} onClick={() => void task(async () => {
             setInstallPrompt(null);
             const { outcome } = await installPrompt.prompt();
@@ -207,19 +208,12 @@ function OfflineHome({ hash }: { readonly hash: string }) {
         <section>
           <h2>Odemčení soukromých dat</h2>
           <label>Heslo offline souboru<input type="password" autoComplete="off" value={password} onChange={event => setPassword(event.target.value)} minLength={10} maxLength={200} /></label>
-          {preparation && <label>Heslo znovu<input type="password" autoComplete="off" value={confirmation} onChange={event => setConfirmation(event.target.value)} /></label>}
           <label><input type="checkbox" checked={restore} onChange={event => setRestore(event.target.checked)} />Obnovit existující večer z novějšího nouzového souboru</label>
           {restore && <label>Heslo původních místních dat, pokud se liší<input type="password" autoComplete="off" value={previousPassword} onChange={event => setPreviousPassword(event.target.value)} /></label>}
-          {preparation && <button disabled={busy || !eventId || password.length < 10 || password !== confirmation} onClick={() => void task(async () => {
-            const stored = await prepareOfflineEvent(eventId, password, setMessage);
-            setInstalled(true); await refresh();
-            const opened = await unlock(stored.sessionId, stored.archiveId);
-            if (opened && !opened.playBlock) setMessage('Uložte přenosný soubor a proveďte offline zkoušku.');
-          })}>Připravit celý offline kvíz</button>}
-          <label className="offline-file-label">Načíst offline kvíz<input type="file" accept=".justkvizoffline" disabled={busy || password.length < 10} onChange={event => {
+          <label className="offline-file-label">Načíst offline kvíz<input type="file" accept=".justkvizoffline" disabled={busy || password.length < 10 || importEventId === ''} onChange={event => {
             const file = event.target.files?.[0]; event.target.value = '';
             if (file) void task(async () => {
-              const stored = await importOfflineEvent(file, password, setMessage, restore, previousPassword || password, preparation ? eventId : undefined);
+              const stored = await importOfflineEvent(file, password, setMessage, restore, previousPassword || password, importEventId);
               await refresh();
               const opened = await unlock(stored.sessionId, stored.archiveId);
               setPreviousPassword('');
@@ -229,8 +223,8 @@ function OfflineHome({ hash }: { readonly hash: string }) {
           <p>Na jiném počítači nejprve online připravte aplikaci u své akce, aby si ověřila důvěryhodný podpisový klíč. Importovaný soubor tento klíč nikdy nemění.</p>
         </section>
         <section><h2>Uložené večery na tomto počítači</h2>
-          {sessions.length === 0 && <p>Zatím zde není připravený offline kvíz.</p>}
-          <ul>{sessions.map(session => <li key={session.sessionId} data-offline-session={session.sessionId}><strong>{session.title}</strong> · {session.sequence} uložených kroků <button disabled={busy || password.length < 10} onClick={() => void task(async () => { await unlock(session.sessionId); })}>Odemknout a pokračovat</button><button disabled={busy} onClick={() => void task(() => exportStoredOfflineEvent(session))}>Uložit původní offline soubor</button><button disabled={busy} onClick={() => void task(() => exportStoredOfflineEvent(session, true))}>Stáhnout původní offline soubor</button></li>)}</ul>
+          {visibleSessions.length === 0 && <p>Zatím zde není připravený offline kvíz.</p>}
+          <ul>{visibleSessions.map(session => <li key={session.sessionId} data-offline-session={session.sessionId}><strong>{session.title}</strong> · {session.sequence} uložených kroků <button disabled={busy || password.length < 10} onClick={() => void task(async () => { await unlock(session.sessionId); })}>Odemknout a pokračovat</button><button disabled={busy} onClick={() => void task(() => exportStoredOfflineEvent(session))}>Uložit původní offline soubor</button><button disabled={busy} onClick={() => void task(() => exportStoredOfflineEvent(session, true))}>Stáhnout původní offline soubor</button></li>)}</ul>
         </section>
       </>}
       {busy && <p role="status">Probíhá ověřování nebo odolné ukládání…</p>}

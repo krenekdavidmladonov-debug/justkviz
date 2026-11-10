@@ -98,6 +98,14 @@ export interface OfflineIssue {
     readonly field: string;
     readonly message: string;
 }
+export interface OfflineEventPreflight {
+    readonly snapshotId: string;
+    readonly teamCount: number;
+    readonly mediaCount: number;
+    readonly mediaBytes: number;
+    readonly expiresAtMs: number;
+    readonly issues: readonly OfflineIssue[];
+}
 export type PrepareOfflineEventResponse = {
     readonly ok: true;
     readonly manifest: OfflineEventManifest;

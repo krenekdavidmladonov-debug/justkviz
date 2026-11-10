@@ -150,9 +150,9 @@ async function unlock(browser, sessionId, nativeProfile) {
   return coldNativeStorage;
 }
 
-async function importFile(browser, filename, nativeProfile, status) {
+async function importFile(browser, filename, eventId, nativeProfile, status) {
   const { page } = browser;
-  await page.goto(origin + '/offline.html');
+  await page.goto(`${origin}/offline.html#/import?eventId=${eventId}`);
   const coldNativeStorage = await assertColdNativeStorage(page, nativeRecord(nativeProfile));
   await assertNativeOffline(browser);
   await page.getByLabel('Heslo offline souboru', { exact: true }).fill(password);
@@ -174,22 +174,21 @@ async function prepare() {
     const assets = await createCapacityMedia(seeds, path.join(directory, 'capacity-media'), browser.page, overflow);
     fixture = await capacityEventFixture(assets);
     await login(browser, fixture.identity);
-    await browser.page.goto(`${origin}/offline.html#/prepare?eventId=${fixture.eventId}`);
+    const preparationUrl = `${origin}/offline.html#/prepare?eventId=${fixture.eventId}`;
+    await browser.page.goto(origin + '/offline.html');
     await button(browser.page, 'Uložit aplikaci pro offline spuštění').click();
     await expect(browser.page.locator('[data-offline-shell-status]')).toContainText('Aplikace je uložená');
     browser.page = (await installNativeOfflineApp({ context: browser.context, page: browser.page,
-      profile: path.join(profileRoot, 'p'), recordPath: nativeRecord('p'), startUrl: `${origin}/offline.html#/prepare?eventId=${fixture.eventId}` })).page;
+      profile: path.join(profileRoot, 'p'), recordPath: nativeRecord('p'), startUrl: preparationUrl })).page;
     observer = await observeCapacityMemory(browser.context.browser());
     observer.phase('before-prepare'); snapshots.push(await capacitySnapshot(browser.context, browser.page, 'before-prepare'));
-    await browser.page.getByLabel('Heslo offline souboru', { exact: true }).fill(password);
-    await browser.page.getByLabel('Heslo znovu', { exact: true }).fill(password);
-    observer.phase('manifest-fetch-download-hash-encrypt-IDB-and-native-decode');
-    const cryptoStart = await browser.page.evaluate(() => window.__capacityEncryptions.length);
-    const preparationStarted = performance.now();
-    await button(browser.page, 'Připravit celý offline kvíz').click();
     if (overflow) {
-      await expect(browser.page.locator('[data-offline-error]')).toContainText('512 MiB');
+      const check = browser.page.locator('[data-offline-wizard-step="1"]');
+      await expect(check.getByRole('alert')).toContainText('Média jsou pro offline soubor příliš velká.');
+      await expect(button(browser.page, 'Pokračovat k balíčku')).toHaveCount(0);
       await expect(browser.page.locator('[data-offline-runtime-state]')).toHaveCount(0);
+      await browser.page.goto(`${origin}/offline.html#/import?eventId=${fixture.eventId}`);
+      await expect(browser.page.getByLabel('Načíst offline kvíz', { exact: true })).toBeVisible();
       await expect(browser.page.locator('[data-offline-session]')).toHaveCount(0);
       await writeFile(path.join(directory, 'overflow-proof.json'), JSON.stringify({ status: 'PASS', actualPayloadBytes: capacityPayloadBytes + 1,
         allAssetsAtMost25MiB: true, actualOwnFiles: assets.length, noReady: true, noPrivateSession: true,
@@ -197,22 +196,33 @@ async function prepare() {
       observer = null;
       return;
     }
-    await assertPlayable(browser.page, 'Offline kvíz připraven');
+    await browser.page.evaluate(() => { Object.defineProperty(window, 'showSaveFilePicker', { configurable: true, value: undefined }); });
+    await button(browser.page, 'Pokračovat k balíčku').click();
+    await browser.page.getByLabel('Heslo offline souboru', { exact: true }).fill(password);
+    await browser.page.getByLabel('Heslo znovu', { exact: true }).fill(password);
+    observer.phase('manifest-fetch-download-hash-encrypt-IDB-and-native-decode');
+    const cryptoStart = await browser.page.evaluate(() => window.__capacityEncryptions.length);
+    const preparationStarted = performance.now();
+    await button(browser.page, 'Vytvořit offline balíček').click();
+    await expect(browser.page.getByText('Balíček je vytvořený', { exact: true })).toBeVisible();
     const preparationDurationMs = performance.now() - preparationStarted;
     const encrypted = await browser.page.evaluate(start => window.__capacityEncryptions.slice(start), cryptoStart);
     expect(encrypted.length).toBeGreaterThan(0); expect(encrypted.every(record => record.success)).toBe(true);
     snapshots.push(await capacitySnapshot(browser.context, browser.page, 'after-full-native-verification'));
-    await button(browser.page, 'Zamknout soukromá data').click();
-    const row = browser.page.locator('[data-offline-session]');
-    await expect(row).toHaveCount(1);
-    const sessionId = await row.getAttribute('data-offline-session');
     observer.phase('real-browser-download-512MiB');
     const exportStarted = performance.now();
-    const [download] = await Promise.all([browser.page.waitForEvent('download'), row.getByRole('button', { name: 'Stáhnout původní offline soubor', exact: true }).click()]);
+    const [download] = await Promise.all([browser.page.waitForEvent('download'), button(browser.page, 'Uložit offline soubor').click()]);
     await download.saveAs(bundlePath); expect(await download.failure()).toBeNull();
     const exportDurationMs = performance.now() - exportStarted;
+    observer.phase('wizard-disk-readback');
+    await expect(browser.page.locator('[data-offline-wizard-step]')).toHaveAttribute('data-offline-wizard-step', '2');
+    await browser.page.getByLabel('Ověřit stažený soubor', { exact: true }).setInputFiles(bundlePath);
+    await expect(browser.page.getByText('Offline soubor je uložený a ověřený.', { exact: false })).toBeVisible();
+    await expect(browser.page.locator('[data-offline-notebook-state]')).toHaveAttribute('data-offline-notebook-state', 'ready');
     observer.phase('after-download-streaming-independent-inspection');
     const inspected = await inspectCapacityArchive(bundlePath, password);
+    const sessionId = inspected.metadata.manifest.sessionId;
+    expect(await head(browser.page, sessionId)).toMatchObject({ complete: true, sequence: 0 });
     const trust = await fixture.call('readOfflineTrust', { eventId: fixture.eventId });
     verifyServerOfflineGrant({ ok: true, ...inspected.metadata }, trust);
     expect(inspected.checkedAssets).toHaveLength(256);
@@ -233,11 +243,12 @@ async function prepare() {
     for (const profile of ['t', 'r']) {
       browser = await launch(profile); await login(browser, fixture.identity);
       const requests = { trust: 0, prepare: 0, media: 0 };
-      await browser.page.goto(`${origin}/offline.html#/prepare?eventId=${fixture.eventId}`);
+      const transferUrl = preparationUrl + '&transfer=1';
+      await browser.page.goto(origin + '/offline.html');
       await button(browser.page, 'Uložit aplikaci pro offline spuštění').click();
       await expect(browser.page.locator('[data-offline-shell-status]')).toContainText('Aplikace je uložená');
       browser.page = (await installNativeOfflineApp({ context: browser.context, page: browser.page, profile: path.join(profileRoot, profile),
-        recordPath: nativeRecord(profile), startUrl: `${origin}/offline.html#/prepare?eventId=${fixture.eventId}` })).page;
+        recordPath: nativeRecord(profile), startUrl: transferUrl })).page;
       const functionsOrigin = `http://${environment.functionsEndpoint.host}:${environment.functionsEndpoint.port}`;
       const targetNetwork = await browser.context.newCDPSession(browser.page);
       targetNetwork.on('Network.requestWillBeSent', ({ request }) => {
@@ -249,9 +260,8 @@ async function prepare() {
       });
       try {
         await targetNetwork.send('Network.enable');
-        await button(browser.page, 'Připravit notebook pro přenesený kvíz').click();
-        await expect(browser.page.locator('[data-offline-shell-status]')).toContainText('Aplikace je uložená');
-        await expect(browser.page.locator('[data-offline-status]')).toContainText('ověřený klíč akce');
+        await button(browser.page, 'Připravit JustKvíz pro hraní bez internetu').click();
+        await expect(browser.page.locator('[data-offline-notebook-state]')).toHaveAttribute('data-offline-notebook-state', 'ready');
         await expect.poll(() => requests.trust).toBeGreaterThan(0);
       } finally { await targetNetwork.detach(); }
       expect(requests.prepare).toBe(0); expect(requests.media).toBe(0);
@@ -268,13 +278,18 @@ async function prepare() {
       }), `trust:${trust.environment}:${trust.keyId}`);
       expect(pinnedTrust).toEqual(trust);
       expect(await browser.page.evaluate(() => navigator.storage.persisted())).toBe(true);
+      const transfer = browser.page.getByRole('link', { name: 'Načíst přenesený kvíz', exact: true });
+      await expect(transfer).toHaveAttribute('href', `/offline.html#/import?eventId=${fixture.eventId}`);
+      await transfer.click();
+      await expect(browser.page.getByLabel('Načíst offline kvíz', { exact: true })).toBeVisible();
       await expect(browser.page.locator('[data-offline-session]')).toHaveCount(0);
+      expect(await head(browser.page, sessionId)).toBeNull();
       targets.push({ profile, requests, requestObserver: 'CDP Network on native launched target', pinnedTrustMatchesServer: true,
         snapshot: await capacitySnapshot(browser.context, browser.page, 'installer-only') });
       await browser.context.close();
     }
     const imageOracles = fixture.media.filter(asset => asset.expectedPixel).map(asset => ({ reference: asset.reference, pixel: asset.expectedPixel }));
-    await writeFile(privateFixture, JSON.stringify({ sessionId, trust, imageOracles }), { flag: 'wx', mode: 0o600 });
+    await writeFile(privateFixture, JSON.stringify({ sessionId, eventId: fixture.eventId, trust, imageOracles }), { flag: 'wx', mode: 0o600 });
     await writeFile(path.join(directory, 'prepare-proof.json'), JSON.stringify({ status: 'PASS', phase: 'prepare',
       elapsedMs: Math.round(performance.now() - started), assets: 256, actualPayloadBytes: capacityPayloadBytes,
       actualPaddedOwnVideos: 21, allReferencedBeforeLock: true, authoring: fixture.authoringProof, fileBytes: inspected.fileBytes,
@@ -336,7 +351,7 @@ async function offline() {
     observer = await observeCapacityMemory(browser.context.browser());
     snapshots.push(await capacitySnapshot(browser.context, browser.page, 'cold-before-import'));
     observer.phase('offline-disk-import-decrypt-hash-all-native-decode');
-    const coldImport = await importFile(browser, bundlePath, 't', 'Offline kvíz připraven');
+    const coldImport = await importFile(browser, bundlePath, credentials.eventId, 't', 'Offline kvíz připraven');
     expect((await head(browser.page, credentials.sessionId)).sequence).toBe(0);
     snapshots.push(await capacitySnapshot(browser.context, browser.page, 'after-offline-import'));
     const [projector] = await Promise.all([browser.page.waitForEvent('popup'), button(browser.page, 'Otevřít offline projektor').click()]);
@@ -428,7 +443,7 @@ async function offline() {
     await stoppedBackends();
     browser = await launch('r', true);
     observer = await observeCapacityMemory(browser.context.browser()); observer.phase('fresh-profile-recovery-file-import');
-    const coldRecoveryImport = await importFile(browser, recoveryPath, 'r', 'Offline režim aktivní');
+    const coldRecoveryImport = await importFile(browser, recoveryPath, credentials.eventId, 'r', 'Offline režim aktivní');
     expect(await head(browser.page, credentials.sessionId)).toEqual(finalHead);
     snapshots.push(await capacitySnapshot(browser.context, browser.page, 'fresh-recovery-profile-restored'));
     const recoveryMemory = await observer.finish(); observer = null;

@@ -32,6 +32,12 @@ Běžný build v režimu `staging` offline soubory neobsahuje. Build s výslovn�
 3. Nasaďte pouze Hosting na site `justkviz-v2` z ověřeného artefaktu. Zkontrolujte otisky, typ a čerstvost odpovědí offline souborů, CORS pro schválený původ, platný podpis, platný uzamčený snapshot a odpověď bez cache. Ověřte odmítnutí účtu bez potřebného rozsahu a odmítnutí použití téhož exportu pro jinou akci. Pro funkční zkoušku použijte výhradně předem schválenou izolovanou syntetickou akci.
 4. Zopakujte průchod z návodu na cílovém notebooku a projektoru, včetně odpojení, restartu a potvrzení synchronizace. Praktická generálka je samostatná akceptace.
 
+## Samostatné vydání průvodce přípravou
+
+Nový průvodce vyžaduje aktualizaci stávajících `readOfflineTrust` a `prepareOfflineEvent` a poté ověřený artefakt Hostingu se Service Workerem. Původní formát volání obou funkcí zůstává podporovaný. Po schválení nejdříve aktualizujte tyto dvě funkce se zachováním aktivace, identity, podpisového klíče a IAM. Ověřte původní volání a nový režim kontroly bez zápisu exportu. Potom publikujte Hosting. Při návratu vraťte nejdříve předchozí Hosting a ponechte kompatibilní backend pro dosud otevřená okna.
+
+Předběžná kontrola přidává čtení Firestore a metadat připnutých objektů v existujícím Storage. Stažení a plné ověření obsahu následuje až po výslovném vytvoření balíčku. Vydání průvodce nevyžaduje novou službu ani rozšíření IAM.
+
 ## Stažení funkce a náklady
 
 Při problému nastavte `JUSTKVIZ_OFFLINE_RECOVERY_ONLY=true` na aktivních revizích všech pěti offline Functions a gateway. Ponechte `JUSTKVIZ_OFFLINE_ENABLED=true` a původní rozsah akcí pro oba synchronizační endpointy. U běžného provozu ponechte obecný přepínač. U pilotu ponechte původní seznam. Ověřte, že staré revize nepřijímají provoz a rozpracované přípravy doběhly. Použijte obnovovací Hosting. Obsluha může otevřít uložený průběh a synchronizovat ho v profilu, který má dříve ověřený veřejný klíč. V obnovovacím režimu je příprava nového profilu vypnutá. Při kritické závadě synchronizace pozastavte zápisy, ponechte uložené soubory a připravte kompatibilní opravu.

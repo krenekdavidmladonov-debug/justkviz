@@ -1,6 +1,6 @@
 import { httpsCallable } from 'firebase/functions';
 import { canonicalOfflineJson } from '@filmovy-kviz/quiz-domain';
-import type { OfflineEventManifest, OfflineGrant, OfflineMediaAsset, OfflineOperation, OfflineSyncPreview, OfflineSyncReceipt, OfflineSyncResolution, OfflineTrust, PrepareOfflineEventResponse } from '@filmovy-kviz/quiz-domain';
+import type { OfflineEventManifest, OfflineEventPreflight, OfflineGrant, OfflineMediaAsset, OfflineOperation, OfflineSyncPreview, OfflineSyncReceipt, OfflineSyncResolution, OfflineTrust, PrepareOfflineEventResponse } from '@filmovy-kviz/quiz-domain';
 import { getFirebaseServices } from '../../services/firebase/client';
 import { getFirebaseAuth } from '../../services/firebase/auth';
 import { quizMediaEndpoint } from '../../services/firebase/mediaEndpoint';
@@ -20,15 +20,31 @@ async function identity(recovery: boolean, actorId?: string) {
     }
     return user;
 }
-async function call<T>(name: string, input: unknown, timeout = 30000, recovery = false): Promise<T> {
-    await identity(recovery);
-    return (await httpsCallable<unknown, T>(getFirebaseServices().functions, name, { timeout })(input)).data;
+async function call<T>(name: string, input: unknown, timeout = 30000, recovery = false, actorId?: string): Promise<T> {
+    await identity(recovery, actorId);
+    const { data } = await httpsCallable<unknown, T>(getFirebaseServices().functions, name, { timeout })(input);
+    if (actorId !== undefined) await identity(recovery, actorId);
+    return data;
 }
-export async function prepareOnlineOfflineEvent(eventId: string, requestId: string): Promise<PrepareOfflineEventResponse> {
-    return call('prepareOfflineEvent', { eventId, requestId }, 120000);
+export async function checkOnlineOfflineEvent(eventId: string): Promise<OfflineEventPreflight> {
+    return call('readOfflineTrust', { eventId, preflight: true }, 120000);
 }
-export async function fetchOfflineTrust(eventId: string): Promise<OfflineTrust> {
-    const trust = await call<OfflineTrust>('readOfflineTrust', { eventId });
+export function observeOfflineIdentity(change: () => void): () => void {
+    let previous: string | null | undefined;
+    return getFirebaseAuth().onAuthStateChanged(user => {
+        const uid = user?.uid ?? null;
+        if (previous !== undefined && previous !== uid) change();
+        previous = uid;
+    });
+}
+export async function currentOfflineActor(): Promise<string> {
+    return (await identity(false)).uid;
+}
+export async function prepareOnlineOfflineEvent(eventId: string, requestId: string, expectedSnapshotId: string, expectedActorId: string): Promise<PrepareOfflineEventResponse> {
+    return call('prepareOfflineEvent', { eventId, requestId, expectedSnapshotId, expectedActorId }, 120000, false, expectedActorId);
+}
+export async function fetchOfflineTrust(eventId: string, actorId?: string): Promise<OfflineTrust> {
+    const trust = await call<OfflineTrust>('readOfflineTrust', { eventId, ...(actorId === undefined ? {} : { expectedActorId: actorId }) }, 30000, false, actorId);
     const key = trust?.publicJwk;
     if (trust?.schemaVersion !== 1 || trust.environment !== currentOfflineEnvironment() || trust.audience !== offlineAudience
         || !key || key.kty !== 'EC' || key.crv !== 'P-256' || key.ext !== true
@@ -40,12 +56,12 @@ export async function fetchOfflineTrust(eventId: string): Promise<OfflineTrust> 
     await crypto.subtle.importKey('jwk', key, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
     return trust;
 }
-export async function authorizePreparedOfflineEvent(manifest: OfflineEventManifest, grant: OfflineGrant): Promise<void> {
+export async function authorizePreparedOfflineEvent(manifest: Pick<OfflineEventManifest, 'event' | 'exportId' | 'expiresAtMs' | 'actorId'>, grant: Pick<OfflineGrant, 'payload'>): Promise<void> {
     const result = await call<{
         exportId: string;
         manifestDigest: string;
         expiresAtMs: number;
-    }>('authorizeOfflineEvent', { eventId: manifest.event.id, exportId: manifest.exportId, manifestDigest: grant.payload.manifestDigest });
+    }>('authorizeOfflineEvent', { eventId: manifest.event.id, exportId: manifest.exportId, manifestDigest: grant.payload.manifestDigest }, 30000, false, manifest.actorId);
     if (result.exportId !== manifest.exportId || result.manifestDigest !== grant.payload.manifestDigest || result.expiresAtMs !== manifest.expiresAtMs) {
         throw new Error('Příprava nebo oprávnění se změnily. Připravte nový soubor.');
     }

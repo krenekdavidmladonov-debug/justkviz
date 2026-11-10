@@ -50,6 +50,22 @@ try {
   await f.call('configureEventShow', { eventId: f.eventId, expectedRevision: (await f.event()).revision,
     preferences: { ...showPreferences, audioEnabled: false } });
   scenarios.push('OFF-READINESS-real-owned-online-show-cue-blocks-READY-until-explicitly-disabled');
+  const preflightInput = { eventId: f.eventId, preflight: true };
+  const beforePreflight = await eventFingerprint(f);
+  const preflightResponse = await f.raw('readOfflineTrust', preflightInput);
+  assert.equal(preflightResponse.status, 200);
+  assert.match(preflightResponse.headers.get('cache-control') ?? '', /no-store/u);
+  const preflight = (await preflightResponse.json()).result;
+  assert.deepEqual(Object.keys(preflight).sort(), ['expiresAtMs', 'issues', 'mediaBytes', 'mediaCount', 'snapshotId', 'teamCount']);
+  assert.equal(preflight.snapshotId, f.snapshotId);
+  assert.equal(preflight.teamCount, 10);
+  assert.equal(preflight.mediaCount, 0);
+  assert.deepEqual(preflight.issues, []);
+  assert.equal((await f.raw('readOfflineTrust', preflightInput, { anonymous: true })).status, 401);
+  await denied(f.call('prepareOfflineEvent', { eventId: f.eventId, requestId: randomUUID(), expectedSnapshotId: 'wrong-snapshot' }), 'aborted');
+  await denied(f.call('prepareOfflineEvent', { eventId: f.eventId, requestId: randomUUID(), expectedActorId: 'wrong-actor' }), 'unauthenticated');
+  assert.deepEqual(await eventFingerprint(f), beforePreflight);
+  scenarios.push('OFF-WIZARD-authorized-read-only-preflight-no-export-no-secrets-snapshot-and-actor-bound');
   const response = await f.raw('prepareOfflineEvent', { eventId: f.eventId, requestId: randomUUID() });
   assert.equal(response.status, 200); assert.match(response.headers.get('cache-control') ?? '', /no-store/u);
   const prepared = (await response.json()).result;
@@ -79,6 +95,7 @@ try {
     for (const permission of ['event.export', 'event.answers.read', 'event.answers.export', 'event.notes.read', 'event.score']) {
       await f.memberRef.update({ permissions: member.permissions.filter(value => value !== permission) });
       await denied(f.prepare(), 'permission-denied');
+      await denied(f.call('readOfflineTrust', preflightInput), 'permission-denied');
     }
     await f.memberRef.update({ permissions: member.permissions, version: member.version + 1 });
     await denied(f.call('authorizeOfflineEvent', authorize), 'failed-precondition');

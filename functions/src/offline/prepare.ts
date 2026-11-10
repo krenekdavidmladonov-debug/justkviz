@@ -1,7 +1,7 @@
-import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { getFirestore, Timestamp, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { canonicalOfflineJson, offlineEventLimits as limits, parseOfflineManifest, parseQuizAsset, readLocalImageDimensions, validOwnedMedia,
-  type OfflineMediaAsset, type OfflineIssue, type PrepareOfflineEventResponse } from '@filmovy-kviz/quiz-domain';
+  type OfflineMediaAsset, type OfflineIssue, type OfflineEventPreflight, type PrepareOfflineEventResponse } from '@filmovy-kviz/quiz-domain';
 import { freshIdentity, authorize } from '../access/authorization.js';
 import { assertEventOperational } from '../events/guards.js';
 import { assetPath, mediaSignature } from '../media/model.js';
@@ -9,14 +9,17 @@ import { mediaBucket } from '../media/storage.js';
 import { offlineCors, requireOfflineRuntime } from './activation.js';
 import { cloudOfflineSigner, demoOfflineSigner, offlineDigest, offlineSigningSecrets, signOfflineGrant } from './signing.js';
 import { assertOfflineExportContext, offlineId, offlineInput, offlinePermissions, offlineRecord, offlineUnavailable, manifestFromSource,
-  readOfflineSource, requiredOfflineMedia, storedDigest } from './source.js';
+  readOfflineSource, requiredOfflineMedia, storedDigest, type OfflineSource } from './source.js';
 
 const options = { region: 'europe-west1', cors: offlineCors, maxInstances: 2, concurrency: 1, memory: '256MiB' as const, timeoutSeconds: 540 };
 const issuanceOptions = { ...options, secrets: offlineSigningSecrets };
 export const readOfflineTrust = onCall(issuanceOptions, async request => {
   request.rawRequest.res?.setHeader('Cache-Control', 'no-store');
-  const eventId = offlineId(offlineInput(request.data, ['eventId']).eventId);
+  const input = offlineInput(request.data, ['eventId', 'preflight', 'expectedActorId']), eventId = offlineId(input.eventId);
+  if ('preflight' in input && input.preflight !== true) throw new HttpsError('invalid-argument', 'Neplatný požadavek offline kvízu.');
   const scope = requireOfflineRuntime(eventId, request.rawRequest.get('origin'), 'issue');
+  assertExpectedActor(input, request.auth?.uid);
+  if (input.preflight === true) return checkOfflineEvent(eventId, request.auth);
   const cloudSigner = cloudOfflineSigner(scope);
   await freshIdentity(request.auth);
   await getFirestore().runTransaction(async tx => {
@@ -34,7 +37,7 @@ export function pinnedMedia(record: Record<string, unknown>) {
   return { quizId: record.quizId, assetId: record.assetId, kind: record.kind, contentType: record.contentType, size: record.size,
     generation: record.generation, status: record.status, storageBackend: record.storageBackend ?? 'storage', drive: record.drive ?? null };
 }
-async function readImageOrMedia(item: PreparedMediaRecord): Promise<OfflineMediaAsset> {
+async function locateMedia(item: PreparedMediaRecord) {
   const { record, reference } = item, parsed = parseQuizAsset(reference)!;
   if (!validOwnedMedia(record.kind, record.contentType, record.size) || record.status !== 'ready' || record.quizId !== parsed.quizId || record.assetId !== parsed.assetId
     || record.drive !== undefined || (record.storageBackend !== undefined && record.storageBackend !== 'storage')
@@ -45,6 +48,12 @@ async function readImageOrMedia(item: PreparedMediaRecord): Promise<OfflineMedia
   const [metadata] = await file.getMetadata();
   if (metadata.generation !== record.generation || metadata.contentType !== contentType || Number(metadata.size) !== size
     || (metadata.contentEncoding !== undefined && metadata.contentEncoding !== '')) throw offlineUnavailable();
+  return { file, size, contentType, generation: record.generation, kind: record.kind };
+}
+
+async function readImageOrMedia(item: PreparedMediaRecord): Promise<OfflineMediaAsset> {
+  const { reference } = item;
+  const { file, size, contentType, generation, kind } = await locateMedia(item);
   const bytes = Buffer.alloc(size), stream = file.createReadStream({ start: 0, end: size, decompress: false });
   let offset = 0;
   try {
@@ -54,39 +63,84 @@ async function readImageOrMedia(item: PreparedMediaRecord): Promise<OfflineMedia
     }
   } finally { stream.destroy(); }
   if (offset !== size || !mediaSignature(bytes, contentType)) throw offlineUnavailable();
-  const dimensions = record.kind === 'image' ? readLocalImageDimensions(bytes, contentType as 'image/png' | 'image/jpeg' | 'image/webp') : {};
-  return { reference, generation: record.generation, kind: record.kind, contentType, size,
-    sha256: offlineDigest(bytes), etag: '"' + offlineDigest(JSON.stringify([reference, record.generation, contentType, size])) + '"', ...dimensions };
+  const dimensions = kind === 'image' ? readLocalImageDimensions(bytes, contentType as 'image/png' | 'image/jpeg' | 'image/webp') : {};
+  return { reference, generation, kind, contentType, size,
+    sha256: offlineDigest(bytes), etag: '"' + offlineDigest(JSON.stringify([reference, generation, contentType, size])) + '"', ...dimensions };
+}
+
+async function readPreparationMedia(tx: Transaction, source: OfflineSource) {
+  const db = getFirestore(), inventory = requiredOfflineMedia(source);
+  if (source.activeOnline) inventory.issues.push({ slidePosition: 0, field: 'session', message: 'Nejprve ukončete online projekci. Potom připravte samostatný offline večer.' });
+  const media: PreparedMediaRecord[] = [];
+  if (inventory.required.size > limits.assets) return { media, total: 0, issues: inventory.issues };
+  for (const [reference, use] of inventory.required) {
+    const parsed = parseQuizAsset(reference)!;
+    const record = (await tx.get(db.doc('quizzes/' + parsed.quizId + '/mediaAssets/' + parsed.assetId))).data();
+    if (!record || record.kind !== use.kind) inventory.issues.push({ slidePosition: use.position, field: use.field, message: 'Vlastní médium chybí nebo má jiný typ. Nahrajte je znovu a uzamkněte opravený kvíz.' });
+    else media.push({ reference, position: use.position, field: use.field, record });
+  }
+  const total = media.reduce((sum, item) => sum + (typeof item.record.size === 'number' ? item.record.size : limits.payloadBytes + 1), 0);
+  if (total > limits.payloadBytes) inventory.issues.push({ slidePosition: 0, field: 'media', message: 'Média jsou pro offline soubor příliš velká. Nahraďte největší soubory menšími.' });
+  return { media, total, issues: inventory.issues };
+}
+
+function grantExpiry(source: OfflineSource, issuedAtMs: number): number {
+  return Math.min(issuedAtMs + limits.ttlMs, (source.event.startsAt as Timestamp).toMillis() + 12 * 60 * 60_000);
+}
+
+function assertExpectedActor(input: Record<string, unknown>, uid: string | undefined): void {
+  if ('expectedActorId' in input && (!uid || input.expectedActorId !== uid)) throw new HttpsError('unauthenticated', 'Přihlášený uživatel se změnil.');
+}
+
+async function checkOfflineEvent(eventId: string, auth: Parameters<typeof readOfflineSource>[2]): Promise<OfflineEventPreflight> {
+  await freshIdentity(auth);
+  const db = getFirestore();
+  const { source, media, total, issues } = await db.runTransaction(async tx => {
+    const source = await readOfflineSource(tx, eventId, auth);
+    return { source, ...await readPreparationMedia(tx, source) };
+  });
+  const expiresAtMs = grantExpiry(source, Date.now());
+  if (expiresAtMs <= Date.now()) issues.push({ slidePosition: 0, field: 'expiry', message: 'Platnost offline oprávnění už vypršela. Zkontrolujte datum a čas konání akce.' });
+  if (media.length <= limits.assets && total <= limits.payloadBytes && expiresAtMs > Date.now()) {
+    // Probe the exact object versions without fetching private media bytes or issuing an export.
+    for (let offset = 0; offset < media.length; offset += 8) {
+      const results = await Promise.all(media.slice(offset, offset + 8).map(async item => {
+        try { await locateMedia(item); return null; }
+        catch { return { slidePosition: item.position, field: item.field, message: 'Vlastní soubor chybí nebo ho nelze ověřit. Zkuste kontrolu znovu, případně soubor nahraďte.' }; }
+      }));
+      for (const issue of results) if (issue) issues.push(issue);
+    }
+  }
+  await freshIdentity(auth);
+  await db.runTransaction(async tx => {
+    const current = await authorize(auth, offlinePermissions, { kind: 'event', id: eventId }, tx);
+    const event = (await tx.get(source.eventRef)).data();
+    assertEventOperational(event);
+    if (current.version !== source.member.version || event.revision !== source.event.revision) throw new HttpsError('aborted', 'Akce se změnila. Spusťte kontrolu znovu.');
+  });
+  return { snapshotId: source.snapshotId, teamCount: source.teams.length, mediaCount: media.length, mediaBytes: total, expiresAtMs, issues };
 }
 
 export const prepareOfflineEvent = onCall(issuanceOptions, async (request): Promise<PrepareOfflineEventResponse> => {
   request.rawRequest.res?.setHeader('Cache-Control', 'no-store');
-  const input = offlineInput(request.data, ['eventId', 'requestId']), eventId = offlineId(input.eventId), requestId = offlineId(input.requestId);
+  const input = offlineInput(request.data, ['eventId', 'requestId', 'expectedSnapshotId', 'expectedActorId']), eventId = offlineId(input.eventId), requestId = offlineId(input.requestId);
+  const expectedSnapshotId = 'expectedSnapshotId' in input ? offlineId(input.expectedSnapshotId) : undefined;
   const scope = requireOfflineRuntime(eventId, request.rawRequest.get('origin'), 'issue');
+  assertExpectedActor(input, request.auth?.uid);
   const cloudSigner = cloudOfflineSigner(scope);
   await freshIdentity(request.auth);
   const db = getFirestore(), exportId = offlineDigest(JSON.stringify([request.auth!.uid, eventId, requestId, 'offline-v1']));
   const exportRef = db.doc('events/' + eventId + '/offlineExports/' + exportId);
   const initial = await db.runTransaction(async tx => {
     const source = await readOfflineSource(tx, eventId, request.auth);
+    if (expectedSnapshotId !== undefined && source.snapshotId !== expectedSnapshotId) throw new HttpsError('aborted', 'Uzamčený kvíz se změnil. Spusťte kontrolu znovu.');
     const previous = (await tx.get(exportRef)).data();
     if (previous) assertOfflineExportContext(previous, scope, eventId);
-    const inventory = requiredOfflineMedia(source);
-    if (source.activeOnline) inventory.issues.push({ slidePosition: 0, field: 'session', message: 'Nejprve ukončete online projekci. Potom připravte samostatný offline večer.' });
-    const media: PreparedMediaRecord[] = [];
-    for (const [reference, use] of inventory.required) {
-      const parsed = parseQuizAsset(reference)!;
-      const record = (await tx.get(db.doc('quizzes/' + parsed.quizId + '/mediaAssets/' + parsed.assetId))).data();
-      if (!record || record.kind !== use.kind) inventory.issues.push({ slidePosition: use.position, field: use.field, message: 'Vlastní médium není dostupné nebo má jiný typ.' });
-      else media.push({ reference, position: use.position, field: use.field, record });
-    }
-    const total = media.reduce((sum, item) => sum + (typeof item.record.size === 'number' ? item.record.size : limits.payloadBytes + 1), 0);
-    if (total > limits.payloadBytes) inventory.issues.push({ slidePosition: 0, field: 'media', message: 'Součet vlastních médií přesahuje 512 MiB.' });
-    return { source, previous, media, issues: inventory.issues };
+    return { source, previous, ...await readPreparationMedia(tx, source) };
   });
   if (initial.issues.length) return { ok: false, issues: initial.issues };
   const issuedAtMs = initial.previous ? Number(initial.previous.issuedAtMs) : Date.now();
-  const expiresAtMs = initial.previous ? Number(initial.previous.expiresAtMs) : Math.min(issuedAtMs + limits.ttlMs, (initial.source.event.startsAt as Timestamp).toMillis() + 12 * 60 * 60_000);
+  const expiresAtMs = initial.previous ? Number(initial.previous.expiresAtMs) : grantExpiry(initial.source, issuedAtMs);
   if (!Number.isSafeInteger(issuedAtMs) || !Number.isSafeInteger(expiresAtMs) || expiresAtMs <= Date.now() || expiresAtMs <= issuedAtMs) throw offlineUnavailable();
   const assets: OfflineMediaAsset[] = [], issues: OfflineIssue[] = [];
   for (const media of initial.media) {

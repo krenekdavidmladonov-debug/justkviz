@@ -204,8 +204,13 @@ export async function openOfflineRuntime(sessionId: string, password: string, on
         throw error;
     }
 }
-export async function verifyStoredOfflineMedia(session: StoredOfflineSession, password: string, progress: (index: number, total: number) => void): Promise<void> {
-    const read = (index: number) => readStoredOfflineRecord(session.archiveId ?? session.sessionId, index);
+export async function verifyStoredOfflineMedia(session: StoredOfflineSession, password: string, progress: (index: number, total: number) => void,
+    inspectRecord?: (index: number, record: Blob) => Promise<void>): Promise<void> {
+    const read = async (index: number) => {
+        const record = await readStoredOfflineRecord(session.archiveId ?? session.sessionId, index);
+        await inspectRecord?.(index, record);
+        return record;
+    };
     const { key, metadata } = await unlockOfflineMetadata(session.header, read, password, await readOfflineTrusts());
     await verifyArchiveMedia(session.header, read, key, metadata.manifest, progress);
 }

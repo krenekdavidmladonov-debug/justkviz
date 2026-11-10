@@ -1,44 +1,128 @@
-import { offlineEventLimits, type OfflineTrust } from '@filmovy-kviz/quiz-domain';
+import { offlineEventLimits, type OfflineIssue, type OfflineTrust } from '@filmovy-kviz/quiz-domain';
 import { canonicalOfflineJson } from '@filmovy-kviz/quiz-domain';
-import { decodeBase64, decryptOfflineValue, deriveOfflineKey, verifyOfflineGrant } from './offlineCrypto';
-import { createOfflineArchive, readOfflineArchiveHeader, unlockOfflineMetadata, writeOfflineArchive, type OfflineArchiveHeader, type OfflineRecordReader } from './offlineFile';
+import { decodeBase64, decryptOfflineValue, deriveOfflineKey, offlineDigest, verifyOfflineGrant } from './offlineCrypto';
+import { createOfflineArchive, readOfflineArchiveHeader, unlockOfflineMetadata, writeOfflineArchive, type OfflineArchiveHeader, type OfflineArchiveMetadata, type OfflineRecordReader } from './offlineFile';
 import { createStoredOfflineSession, replayOfflineOperations, verifyStoredOfflineMedia, type OfflineRuntime } from './offlineRuntime';
-import { commitOfflineSession, deleteOfflineRecords, pinOfflineTrust, prepareOfflineStorage, readOfflineTrusts, readStoredOfflineRecord, readStoredOfflineSession, storeOfflineRecord, withOfflineWriter, type StoredOfflineSession } from './offlineStore';
+import { commitOfflineSession, deleteOfflineRecords, listOfflineSessions, pinOfflineTrust, prepareOfflineStorage, readOfflineTrusts, readStoredOfflineRecord, readStoredOfflineSession, storeOfflineRecord, withOfflineWriter, type StoredOfflineSession } from './offlineStore';
 import { installOfflineShell, testOfflineShellBoot } from './offlineShell';
 export type OfflinePreparationProgress = (message: string) => void;
 /** Installs only the application and an authenticated server key, never event media. */
-export async function installOfflineEvent(eventId: string, progress: OfflinePreparationProgress): Promise<OfflineTrust> {
-    progress('Ověřuji instalaci aplikace a trvalé úložiště…');
+export async function installOfflineEvent(eventId: string, progress: OfflinePreparationProgress, actorId?: string, signal?: AbortSignal): Promise<OfflineTrust> {
+    progress('Ověřuji aplikaci a místo pro bezpečné uložení…');
     await installOfflineShell();
     await testOfflineShellBoot();
+    signal?.throwIfAborted();
     await prepareOfflineStorage(16 * 1024 * 1024);
     const online = await import('./offlineOnline');
-    progress('Ověřuji podpisový klíč akce pro tento notebook…');
-    const trust = await online.fetchOfflineTrust(eventId);
+    progress('Ověřuji, že notebook smí kvíz otevřít…');
+    signal?.throwIfAborted();
+    const trust = await online.fetchOfflineTrust(eventId, actorId);
+    signal?.throwIfAborted();
     await pinOfflineTrust(trust);
     return trust;
 }
-export async function prepareOfflineEvent(eventId: string, password: string, progress: OfflinePreparationProgress): Promise<StoredOfflineSession> {
-    const trust = await installOfflineEvent(eventId, progress);
+export class OfflinePreparationIssues extends Error {
+    constructor(readonly issues: readonly OfflineIssue[]) { super('Kvíz vyžaduje opravu před přípravou.'); }
+}
+export class OfflinePreparationBlocked extends Error {
+    constructor(readonly reason: 'played' | 'stale' | 'expired') { super(reason); }
+}
+export interface PreparedOfflineEvent {
+    readonly session: StoredOfflineSession;
+    readonly expiresAtMs: number;
+    readonly recordDigests: readonly string[];
+    revalidate(): Promise<void>;
+}
+type MediaProgress = (done: number, total: number) => void;
+
+async function assertEventNotPlayed(eventId: string): Promise<void> {
+    if ((await listOfflineSessions()).some(session => session.eventId === eventId && session.sequence > 0)) {
+        throw new OfflinePreparationBlocked('played');
+    }
+}
+
+function preparedEvent(session: StoredOfflineSession, { manifest, grant }: OfflineArchiveMetadata, recordDigests: readonly string[]): PreparedOfflineEvent {
+    const { exportId, expiresAtMs, actorId } = manifest;
+    const event = { ...manifest.event }, payload = grant.payload;
+    return { session, expiresAtMs, recordDigests, async revalidate() {
+        if (Date.now() >= expiresAtMs) throw new OfflinePreparationBlocked('expired');
+        const current = await readStoredOfflineSession(session.sessionId);
+        if (!current?.complete || current.archiveId !== session.archiveId || current.sequence !== session.sequence) throw new OfflinePreparationBlocked('stale');
+        const { authorizePreparedOfflineEvent } = await import('./offlineOnline');
+        await authorizePreparedOfflineEvent({ event, exportId, expiresAtMs, actorId }, { payload });
+        if (Date.now() >= expiresAtMs) throw new OfflinePreparationBlocked('expired');
+    } };
+}
+
+async function verifyForExport(session: StoredOfflineSession, metadata: OfflineArchiveMetadata, password: string, progress: MediaProgress): Promise<PreparedOfflineEvent> {
+    const digests: string[] = [];
+    await verifyStoredOfflineMedia(session, password, progress, async (index, record) => {
+        digests[index] = await offlineDigest(await record.arrayBuffer());
+    });
+    return preparedEvent(session, metadata, digests);
+}
+
+export async function reusePreparedOfflineEvent(session: StoredOfflineSession, snapshotId: string, password: string, mediaProgress: MediaProgress): Promise<PreparedOfflineEvent> {
+    return withOfflineWriter(`event:${session.eventId}`, async () => {
+        await assertEventNotPlayed(session.eventId);
+        const read = (index: number) => readStoredOfflineRecord(session.archiveId ?? session.sessionId, index);
+        const { metadata } = await unlockOfflineMetadata(session.header, read, password, await readOfflineTrusts());
+        if (metadata.manifest.snapshot.id !== snapshotId || metadata.manifest.sessionId !== session.sessionId || metadata.operations.length !== 0) {
+            throw new OfflinePreparationBlocked('stale');
+        }
+        const online = await import('./offlineOnline');
+        if (Date.now() >= metadata.manifest.expiresAtMs) throw new OfflinePreparationBlocked('expired');
+        await online.authorizePreparedOfflineEvent(metadata.manifest, metadata.grant);
+        const prepared = await verifyForExport(session, metadata, password, mediaProgress);
+        await prepared.revalidate();
+        return prepared;
+    });
+}
+
+export async function prepareOfflineEvent(eventId: string, snapshotId: string, requestId: string, password: string, progress: OfflinePreparationProgress, mediaProgress: MediaProgress, signal: AbortSignal): Promise<PreparedOfflineEvent> {
+    const { currentOfflineActor } = await import('./offlineOnline');
+    const actorId = await currentOfflineActor();
+    signal.throwIfAborted();
+    return withOfflineWriter(`event:${eventId}`, () => buildOfflineEvent(eventId, snapshotId, requestId, actorId, password, progress, mediaProgress, signal));
+}
+
+async function buildOfflineEvent(eventId: string, snapshotId: string, requestId: string, actorId: string, password: string, progress: OfflinePreparationProgress, mediaProgress: MediaProgress, signal: AbortSignal): Promise<PreparedOfflineEvent> {
+    await assertEventNotPlayed(eventId);
+    signal.throwIfAborted();
+    const trust = await installOfflineEvent(eventId, progress, actorId, signal);
     const online = await import('./offlineOnline');
-    progress('Připravuji neměnnou kopii kvízu a oprávnění…');
-    const result = await online.prepareOnlineOfflineEvent(eventId, crypto.randomUUID());
+    progress('Připravuji kopii uzamčeného kvízu…');
+    signal.throwIfAborted();
+    const result = await online.prepareOnlineOfflineEvent(eventId, requestId, snapshotId, actorId);
+    signal.throwIfAborted();
     if (!result.ok) {
-        throw new Error(result.issues.map(issue => `${issue.slidePosition ? `Snímek ${issue.slidePosition}: ` : ''}${issue.field} — ${issue.message}`).join('\n'));
+        throw new OfflinePreparationIssues(result.issues);
     }
     const { manifest, grant } = result;
     await verifyOfflineGrant(manifest, grant, trust);
+    if (manifest.actorId !== actorId || manifest.snapshot.id !== snapshotId) throw new OfflinePreparationBlocked('stale');
     await prepareOfflineStorage(manifest.assets.reduce((sum, asset) => sum + asset.size, 0) + offlineEventLimits.manifestBytes);
     const metadata = { manifest, grant, operations: [] };
     const archiveId = crypto.randomUUID();
     try {
-        const { header, key } = await createOfflineArchive(metadata, password, asset => online.fetchOfflineAsset(manifest, asset), (index, blob) => storeOfflineRecord(archiveId, index, blob), (index, total) => progress(`Stahuji a ověřuji média: ${index} / ${total}`));
+        progress('Stahuji a ověřuji média.');
+        mediaProgress(0, manifest.assets.length);
+        const { header, key } = await createOfflineArchive(metadata, password, asset => online.fetchOfflineAsset(manifest, asset), (index, blob) => {
+            signal.throwIfAborted();
+            return storeOfflineRecord(archiveId, index, blob);
+        }, mediaProgress);
         const stored = await createStoredOfflineSession(metadata, header, key, archiveId);
-        progress('Ověřuji uložený soubor a skutečné dekódování všech médií…');
-        await verifyStoredOfflineMedia(stored, password, (index, total) => progress(`Ověřuji místní média: ${index} / ${total}`));
+        progress('Ověřuji, že uložené obrázky a ukázky lze přehrát…');
+        mediaProgress(0, manifest.assets.length);
+        const prepared = await verifyForExport(stored, metadata, password, mediaProgress);
         await online.authorizePreparedOfflineEvent(manifest, grant);
-        await withOfflineWriter(stored.sessionId, () => commitOfflineSession(stored, null));
-        return stored;
+        await assertEventNotPlayed(eventId);
+        await withOfflineWriter(stored.sessionId, () => {
+            signal.throwIfAborted();
+            if (Date.now() >= manifest.expiresAtMs) throw new OfflinePreparationBlocked('expired');
+            return commitOfflineSession(stored, null);
+        });
+        return prepared;
     }
     catch (error) {
         await deleteOfflineRecords(archiveId).catch(() => {
@@ -122,6 +206,7 @@ export async function importOfflineEvent(file: File, password: string, progress:
     });
 }
 interface OfflineFileHandle {
+    getFile(): Promise<File>;
     createWritable(): Promise<{
         write(blob: Blob): Promise<void>;
         close(): Promise<void>;
@@ -130,9 +215,9 @@ interface OfflineFileHandle {
 }
 async function chooseArchiveFile(name: string): Promise<OfflineFileHandle | null> {
     const picker = (window as Window & { showSaveFilePicker?: (options: unknown) => Promise<OfflineFileHandle> }).showSaveFilePicker;
-    return picker ? picker({ suggestedName: name, types: [{ description: 'Šifrovaný offline kvíz', accept: { 'application/octet-stream': ['.justkvizoffline'] } }] }) : null;
+    return picker ? picker.call(window, { suggestedName: name, types: [{ description: 'Šifrovaný offline kvíz', accept: { 'application/octet-stream': ['.justkvizoffline'] } }] }) : null;
 }
-async function saveArchive(name: string, header: OfflineArchiveHeader, readRecord: OfflineRecordReader, selected?: OfflineFileHandle | null): Promise<void> {
+async function saveArchive(name: string, header: OfflineArchiveHeader, readRecord: OfflineRecordReader, selected?: OfflineFileHandle | null, verify?: (file: File) => Promise<void>): Promise<void> {
     // Chrome streams encrypted records directly to the selected file. Other browsers
     // use bounded Blob parts, never one concatenated plaintext ArrayBuffer.
     const handle = selected === undefined ? await chooseArchiveFile(name) : selected;
@@ -143,9 +228,10 @@ async function saveArchive(name: string, header: OfflineArchiveHeader, readRecor
             await writer.close();
         }
         catch (error) {
-            await writer.abort();
+            await writer.abort().catch(() => {});
             throw error;
         }
+        if (verify) await verify(await handle.getFile());
         return;
     }
     const parts: Blob[] = [];
@@ -162,6 +248,40 @@ async function saveArchive(name: string, header: OfflineArchiveHeader, readRecor
 }
 export async function exportStoredOfflineEvent(session: StoredOfflineSession, download = false): Promise<void> {
     await saveArchive(`${session.eventId}.justkvizoffline`, session.header, index => readStoredOfflineRecord(session.archiveId ?? session.sessionId, index), download ? null : undefined);
+}
+function storedArchiveRecord(session: StoredOfflineSession): OfflineRecordReader {
+    return index => readStoredOfflineRecord(session.archiveId ?? session.sessionId, index);
+}
+
+/** Confirm that the user can read the exact encrypted bytes that passed preparation. No import or journal writes. */
+export async function verifySavedOfflineEvent({ session, recordDigests }: PreparedOfflineEvent, file: File): Promise<void> {
+    const { header, readRecord } = await readOfflineArchiveHeader(file);
+    if (canonicalOfflineJson(header) !== canonicalOfflineJson(session.header)) throw damagedArchive();
+    const verifiedRead = verifyRecords(readRecord, recordDigests);
+    for (let index = 0; index < header.recordSizes.length; index++) {
+        await verifiedRead(index);
+    }
+}
+
+const damagedArchive = () => new Error('Uložený soubor není úplný nebo neodpovídá připravenému kvízu. Uložte jej znovu.');
+function verifyRecords(readRecord: OfflineRecordReader, recordDigests: readonly string[]): OfflineRecordReader {
+    return async index => {
+        const record = await readRecord(index);
+        if (await offlineDigest(await record.arrayBuffer()) !== recordDigests[index]) throw damagedArchive();
+        return record;
+    };
+}
+
+export async function savePreparedOfflineEvent(prepared: PreparedOfflineEvent, download = false): Promise<boolean> {
+    const { session } = prepared;
+    const title = [...session.title.replace(/[^\p{L}\p{N} _-]+/gu, '-').trim()].slice(0, 48).join('').trim();
+    const name = `JustKviz-${title || 'offline'}.justkvizoffline`;
+    // The picker must be opened in the click before any asynchronous online authorization.
+    const selected = download ? null : await chooseArchiveFile(name);
+    await prepared.revalidate();
+    await saveArchive(name, session.header, verifyRecords(storedArchiveRecord(session), prepared.recordDigests), selected, file => verifySavedOfflineEvent(prepared, file));
+    if (selected) await prepared.revalidate();
+    return selected !== null;
 }
 export async function exportOfflineRecovery(runtime: OfflineRuntime, password: string, progress: OfflinePreparationProgress, download = false): Promise<void> {
     const name = `${runtime.manifest.event.id}-obnova.justkvizoffline`;

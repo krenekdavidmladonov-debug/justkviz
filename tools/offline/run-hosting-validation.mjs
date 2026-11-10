@@ -146,7 +146,10 @@ await once(server, 'listening');
 let browser;
 const external = [];
 const pageErrors = [];
-const prepare = origin + '/offline.html#/prepare?eventId=synthetic-hosting';
+const shell = origin + '/offline.html';
+// A missing event ID exercises the wizard route without contacting Firebase.
+const prepare = shell + '#/prepare';
+const transfer = shell + '#/prepare?eventId=synthetic-hosting&transfer=1';
 async function newPage(context) {
   const page = await context.newPage();
   page.on('request', request => {
@@ -168,8 +171,8 @@ try {
   ] });
   const corruptedContext = await browser.newContext();
   const corrupted = await newPage(corruptedContext);
-  await corrupted.goto(prepare);
-  await corrupted.getByRole('heading', { name: 'Připravit offline kvíz' }).waitFor();
+  await corrupted.goto(shell);
+  await corrupted.getByRole('heading', { name: 'Spustit offline kvíz', exact: true }).waitFor();
   tamper = true;
   const beforeTamper = requests.length;
   await corrupted.getByRole('button', { name: readyButton, exact: true }).click();
@@ -181,15 +184,20 @@ try {
 
   const context = await browser.newContext();
   const first = await newPage(context);
-  await first.goto(prepare);
+  await first.goto(shell);
   assert.equal(await first.evaluate(() => globalThis.isSecureContext), true);
   await install(first);
+  await first.goto(prepare);
+  await first.getByRole('heading', { name: 'Připravit offline kvíz', exact: true }).waitFor();
+  await expect(first.locator('[data-offline-wizard-step]')).toHaveAttribute('data-offline-wizard-step', '1');
+  await expect(first.getByRole('alert')).toContainText('Otevřete přípravu offline kvízu z detailu uzamčené akce.');
   const previous = reports.armed.version;
   assert.equal(await first.evaluate(version => globalThis.caches.has(version), previous), true);
   served = 'recovery';
   await first.evaluate(async () => (await navigator.serviceWorker.getRegistration()).update());
   await expect.poll(() => first.evaluate(async () => Boolean((await navigator.serviceWorker.getRegistration())?.waiting))).toBe(true);
-  await first.getByRole('heading', { name: 'Připravit offline kvíz' }).waitFor();
+  await first.getByRole('heading', { name: 'Připravit offline kvíz', exact: true }).waitFor();
+  await expect(first.locator('[data-offline-wizard-step]')).toHaveCount(1);
   const oldFile = Object.keys(reports.armed.checksums).find(url => url.endsWith('.js') && !(url in reports.recovery.checksums));
   assert(oldFile);
   const beforeOldChunk = requests.length;
@@ -221,7 +229,10 @@ try {
   await recovered.getByRole('heading', { name: 'Spustit offline kvíz' }).waitFor().catch(async error => {
     throw new Error('Updated shell rendered unexpected headings: ' + JSON.stringify(await recovered.locator('h1').allTextContents()), { cause: error });
   });
-  await recovered.getByRole('button', { name: 'Připravit notebook pro přenesený kvíz' }).waitFor({ state: 'detached' });
+  await expect(recovered.locator('[data-offline-wizard-step]')).toHaveCount(0);
+  await recovered.goto(transfer);
+  await expect(recovered.getByRole('heading', { name: 'Spustit offline kvíz', exact: true })).toBeVisible();
+  await expect(recovered.locator('[data-offline-notebook-state]')).toHaveCount(0);
   await install(recovered);
   const beforeOffline = requests.length;
   await context.setOffline(true);

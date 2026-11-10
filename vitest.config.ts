@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: [
-      'tests/offline*.test.ts',
+      'tests/offline*.test.ts', 'tests/offlineWizard.test.tsx',
       'tests/usersAccessPage.test.tsx', 'tests/accessApi.test.ts',
       'tests/privacyNotice.test.tsx', 'tests/registrationAbuse.test.ts',
       'tests/manageRegistrationPage.test.tsx', 'tests/refereeRouteScope.test.tsx', 'tests/publicEventRouteScope.test.tsx',
