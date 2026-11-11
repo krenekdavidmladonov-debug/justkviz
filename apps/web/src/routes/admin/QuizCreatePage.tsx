@@ -24,6 +24,9 @@ function creationError(error: unknown): { readonly message: string; readonly tec
 }
 
 interface CreationEntryProps { readonly isCurrentEntry: (entryKey: string) => boolean }
+type CreateRequest = ReturnType<typeof createQuiz>;
+// A selected-resource self-grant can remount the same submitted attempt.
+const pendingCreates = new Map<string, CreateRequest>();
 
 export function QuizCreatePage({ isCurrentEntry }: CreationEntryProps) {
   const { can, currentUser } = useAuth();
@@ -44,15 +47,41 @@ function QuizCreationForm({ actorUid, isCurrentEntry }: CreationEntryProps & { r
   const [title, setTitle] = useState(attempt.submittedTitle ?? '');
   const [libraryChecked, setLibraryChecked] = useState(false);
   const busy = useRef(false);
-  const active = useRef(true);
-  useLayoutEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
+  const active = useRef(false);
+  const observeCreate = useRef<((request: CreateRequest) => Promise<void>) | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<{ readonly message: string; readonly technicalCode: string } | null>(null);
   const ownsAttempt = (requestId: string) => active.current && attemptRef.current.requestId === requestId && isCurrentEntry(entryKey);
+  const scope = JSON.stringify([actorUid, attempt.requestId]);
 
-  const submit = async (event: FormEvent) => {
+  useLayoutEffect(() => {
+    active.current = true;
+    let observing = true;
+    const observe = async (request: CreateRequest) => {
+      const submitted = attemptRef.current;
+      busy.current = true; setPending(true);
+      try {
+        const result = await request;
+        if (!observing || !ownsAttempt(submitted.requestId)) return;
+        clearCreationAttempt(submitted);
+        await navigate(`/admin/quizzes/${encodeURIComponent(result.quizId)}/edit`);
+      } catch (createError) {
+        if (observing && ownsAttempt(submitted.requestId)) setError(creationError(createError));
+      } finally {
+        if (observing) { busy.current = false; setPending(false); }
+      }
+    };
+    observeCreate.current = observe;
+    const request = pendingCreates.get(scope);
+    if (request) void observe(request);
+    else { busy.current = false; setPending(false); }
+    return () => { observing = false; active.current = false; observeCreate.current = null; };
+  }, [entryKey, isCurrentEntry, navigate, scope]);
+
+  const submit = (event: FormEvent) => {
     event.preventDefault();
-    if (busy.current || !ownsAttempt(attempt.requestId)) return;
+    const observe = observeCreate.current;
+    if (!observe || busy.current || pendingCreates.has(scope) || !ownsAttempt(attempt.requestId)) return;
     const normalizedTitle = title.trim();
     if (normalizedTitle === '') {
       setError({ message: 'Zadejte název nového kvízu.', technicalCode: 'QUIZ_TITLE_REQUIRED' });
@@ -65,14 +94,14 @@ function QuizCreationForm({ actorUid, isCurrentEntry }: CreationEntryProps & { r
     setPending(true);
     setError(null);
     try {
-      const result = await createQuiz(submitted.submittedTitle, submitted.requestId);
-      if (!ownsAttempt(submitted.requestId)) return;
-      clearCreationAttempt(submitted);
-      await navigate(`/admin/quizzes/${encodeURIComponent(result.quizId)}/edit`);
+      const request = createQuiz(submitted.submittedTitle, submitted.requestId);
+      pendingCreates.set(scope, request);
+      const clear = () => { if (pendingCreates.get(scope) === request) pendingCreates.delete(scope); };
+      void request.then(clear, clear);
+      void observe(request);
     } catch (createError) {
+      busy.current = false; setPending(false);
       if (ownsAttempt(submitted.requestId)) setError(creationError(createError));
-    } finally {
-      busy.current = false; if (active.current) setPending(false);
     }
   };
 

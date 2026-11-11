@@ -120,3 +120,54 @@ test('does not let the old submit handler undo an explicitly checked reset befor
   expect(vi.mocked(createQuiz).mock.calls[1]).toEqual(['Synthetic quiz', freshId]);
   expect(router.state.location.pathname).toBe(editorPath);
 });
+
+test('retains pending ownership across a same-UID membership remount without another RPC', async () => {
+  const request = deferCreate(); await render(); await fill();
+  await act(async () => form().requestSubmit());
+  auth.version++; await render();
+  await act(async () => { form().requestSubmit(); form().requestSubmit(); });
+  try {
+    expect(createQuiz).toHaveBeenCalledTimes(1);
+    expect(button().disabled).toBe(true);
+  } finally { await act(async () => request.resolve(created)); }
+});
+
+test('consumes the original success after the self-grant membership remount', async () => {
+  const request = deferCreate(); await render(); await fill();
+  await act(async () => form().requestSubmit());
+  const original = vi.mocked(createQuiz).mock.calls[0]!;
+  auth.version++; await render();
+  await act(async () => request.resolve(created));
+  expect(createQuiz).toHaveBeenCalledTimes(1);
+  expect(router.state.location.pathname).toBe(editorPath);
+  expect(loadCreationAttempt(auth.uid).requestId).not.toBe(original[1]);
+});
+
+test('observes the original failure after a membership remount and retries the exact request', async () => {
+  const request = deferCreate(); await render(); await fill();
+  await act(async () => form().requestSubmit());
+  const original = vi.mocked(createQuiz).mock.calls[0]!;
+  auth.version++; await render();
+  await act(async () => request.reject(new Error('Synthetic uncertain completion')));
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('Kvíz nelze vytvořit');
+  expect(button().disabled).toBe(false);
+  expect(loadCreationAttempt(auth.uid)).toMatchObject({ requestId: original[1], submittedTitle: original[0] });
+  vi.mocked(createQuiz).mockResolvedValueOnce(created);
+  await act(async () => form().requestSubmit());
+  expect(vi.mocked(createQuiz).mock.calls[1]).toEqual(original);
+  expect(router.state.location.pathname).toBe(editorPath);
+});
+
+test('never hands the original promise to another UID or clears its durable attempt on raw settlement', async () => {
+  const request = deferCreate(); await render(); await fill();
+  await act(async () => form().requestSubmit());
+  const originalUid = auth.uid, original = vi.mocked(createQuiz).mock.calls[0]!;
+  auth.uid = 'other-creator'; await render();
+  const other = loadCreationAttempt(auth.uid);
+  expect(form().querySelector<HTMLInputElement>('input')!.value).toBe('');
+  await act(async () => request.resolve(created));
+  expect(router.state.location.pathname).toBe(createPath);
+  expect(loadCreationAttempt(auth.uid)).toEqual(other);
+  expect(loadCreationAttempt(originalUid)).toMatchObject({ requestId: original[1], submittedTitle: original[0] });
+  expect(createQuiz).toHaveBeenCalledTimes(1);
+});
