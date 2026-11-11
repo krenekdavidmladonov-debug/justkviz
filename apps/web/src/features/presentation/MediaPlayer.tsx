@@ -48,7 +48,8 @@ function NativeMediaPlayer({ source, command, generation, startSeconds, endSecon
     callbacks.current = { onFinished, onError, onDiagnostic, onPlaybackState, onResourceTiming, onCurrentTime, command, generation };
   }, [onFinished, onError, onDiagnostic, onPlaybackState, onResourceTiming, onCurrentTime, command, generation]);
   useEffect(() => {
-    if (failedLoad.current && (command === 'play' || command === 'replay')) { failedLoad.current = false; setAttempt(value => value + 1); }
+    // Keep the failed player fenced off until the resource effect starts a new attempt.
+    if (failedLoad.current && (command === 'play' || command === 'replay')) setAttempt(value => value + 1);
   }, [command, generation]);
   useEffect(() => {
     if (currentResource && currentTimeRequest !== undefined && currentTimeRequest > 0) callbacks.current.onCurrentTime?.(currentResource.player.currentTime);

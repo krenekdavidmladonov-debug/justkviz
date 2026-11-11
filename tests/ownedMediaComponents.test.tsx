@@ -108,6 +108,8 @@ test.each([
   await render('play',1,reference);
   const broken=host.querySelector<HTMLMediaElement>(kind)!;
   const staleMetadata=broken.onloadedmetadata,stalePlaying=broken.onplaying;
+  // The native error remains on the failed element until its resource is reset.
+  Object.defineProperty(broken, 'error', { value: { code: 4 } });
   await event(broken,'error');
   expect(failed).toHaveBeenCalledExactlyOnceWith(1,expect.any(String));
   expect(host.querySelector('[data-media-lifecycle="ERROR"]')).not.toBeNull();
@@ -115,6 +117,7 @@ test.each([
   expect(host.querySelector(kind)).toBe(broken);
   expect(window.__FILMOVY_KVIZ_MEDIA_DEBUG__?.createdPlayers).toBe(1);
   await render('replay',3,reference);
+  expect(failed).toHaveBeenCalledExactlyOnceWith(1,expect.any(String));
   const recovered=host.querySelector<HTMLMediaElement>(kind)!;
   expect(recovered).not.toBe(broken);
   expect(broken.isConnected).toBe(false);
