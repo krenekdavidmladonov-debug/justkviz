@@ -15,6 +15,7 @@ type NativeResource = {
   sessionId?: string | undefined;
   snapshotId?: string | undefined;
   offlineEpoch: string | undefined;
+  attempt: number;
   metadataReady: boolean;
 };
 const unavailable = 'Médium není dostupné nebo časování přesahuje délku souboru.';
@@ -37,10 +38,10 @@ function NativeMediaPlayer({ source, command, generation, startSeconds, endSecon
   const offlineEpoch = offline?.epoch;
   const host = useRef<HTMLDivElement>(null);
   const [resource, setResource] = useState<NativeResource>();
-  // The cleanup of an older offline generation may already have reset its native player.
-  const currentResource = resource?.source === source && resource.sessionId === sessionId
-    && resource.snapshotId === snapshotId && resource.offlineEpoch === offlineEpoch ? resource : undefined;
   const [attempt, setAttempt] = useState(0);
+  // A render starting a new load must not select the resource being disposed.
+  const currentResource = resource?.source === source && resource.sessionId === sessionId
+    && resource.snapshotId === snapshotId && resource.offlineEpoch === offlineEpoch && resource.attempt === attempt ? resource : undefined;
   const failedLoad = useRef(false);
   const callbacks = useRef({ onFinished, onError, onDiagnostic, onPlaybackState, onResourceTiming, onCurrentTime, command, generation });
   const [machine, dispatch] = useReducer(reduceMediaMachine, initialMediaMachineState);
@@ -91,7 +92,7 @@ function NativeMediaPlayer({ source, command, generation, startSeconds, endSecon
       if (player instanceof HTMLVideoElement) player.playsInline = true;
       host.current.replaceChildren(player); debug(1);
       callbacks.current.onResourceTiming?.(callbacks.current.generation, 'player-mounted');
-      setResource({ player, source, sessionId, snapshotId, offlineEpoch, metadataReady: false });
+      setResource({ player, source, sessionId, snapshotId, offlineEpoch, attempt, metadataReady: false });
     }).catch((error: unknown) => {
       if (!abort.signal.aborted) fail(callbacks.current.onDiagnostic ? quizMediaReadFailure(error) : undefined);
     });

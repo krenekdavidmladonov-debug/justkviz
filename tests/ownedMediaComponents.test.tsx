@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import React, { act } from 'react';
+import React, { act, useEffect, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { MediaPlayer } from '../apps/web/src/features/presentation/MediaPlayer';
@@ -134,6 +134,35 @@ test.each([
   expect(playback).toHaveBeenLastCalledWith(3,'playing');
   expect(failed).toHaveBeenCalledTimes(1);
   expect(host.querySelector('[data-media-lifecycle="PLAYING"]')).not.toBeNull();
+});
+test('a new generation during replacement cannot report the retired media error', async () => {
+  type Command = 'play' | 'stop' | 'replay';
+  function Player({ command }: { command: Command }) {
+    const [replayGeneration, setReplayGeneration] = useState(3);
+    useEffect(() => {
+      if (command === 'replay') setReplayGeneration(4);
+    }, [command]);
+    const generation = command === 'play' ? 1 : command === 'stop' ? 2 : replayGeneration;
+    return <MediaPlayer source="https://example.test/retry.wav" command={command} generation={generation}
+      startSeconds={1} endSeconds={3} onPlaybackState={playback} onError={failed} />;
+  }
+  const show = (command: Command) => act(async () => root.render(<Player command={command} />));
+  await show('play');
+  const broken = host.querySelector('audio')!;
+  Object.defineProperty(broken, 'error', { value: { code: 4 } });
+  await event(broken, 'error');
+  await show('stop');
+  await show('replay');
+
+  const replacement = host.querySelector('audio')!;
+  expect(replacement).not.toBe(broken);
+  expect(failed.mock.calls.map(([generation]) => generation)).toEqual([1]);
+  expect(playMock).not.toHaveBeenCalled();
+  await event(replacement, 'loadedmetadata');
+  expect(playMock).toHaveBeenCalledOnce();
+  expect(playMock.mock.contexts[0]).toBe(replacement);
+  await event(replacement, 'playing');
+  expect(playback).toHaveBeenLastCalledWith(4, 'playing');
 });
 test('blocked browser play reports error without falsely claiming playing',async()=>{
   playMock.mockRejectedValue(new Error('NotAllowedError'));
