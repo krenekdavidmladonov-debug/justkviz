@@ -156,7 +156,7 @@ test('a new generation during replacement cannot report the retired media error'
 
   const replacement = host.querySelector('audio')!;
   expect(replacement).not.toBe(broken);
-  expect(failed.mock.calls.map(([generation]) => generation)).toEqual([1]);
+  expect(failed).toHaveBeenCalledExactlyOnceWith(1, expect.any(String));
   expect(playMock).not.toHaveBeenCalled();
   await event(replacement, 'loadedmetadata');
   expect(playMock).toHaveBeenCalledOnce();
