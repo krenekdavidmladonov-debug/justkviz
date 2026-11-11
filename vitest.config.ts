@@ -36,7 +36,7 @@ export default defineConfig({
       'tests/liveMutationQueue.test.ts',
       'tests/snapshotClips.test.ts', 'tests/snapshotClipAccess.test.ts', 'tests/originalImages.test.ts',
       'tests/quizEditor.test.ts',
-      'tests/quizCreationRecovery.test.ts',
+      'tests/quizCreationRecovery.test.ts', 'tests/quizCreatePage.test.tsx',
       'tests/presentation.test.ts',
       'tests/presentationComponents.test.tsx',
       'tests/slideDesignRenderer.test.tsx',

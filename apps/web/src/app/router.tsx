@@ -38,7 +38,7 @@ const lazyAccountRoute = async () => {
   return { Component: AccountPage };
 };
 
-function isCurrentEventCreateEntry(entryKey: string): boolean {
+function isCurrentCreationEntry(entryKey: string): boolean {
   return router.state.location.key === entryKey && router.state.navigation.state === 'idle';
 }
 
@@ -62,14 +62,17 @@ export const router = createBrowserRouter([
           { path: 'settings', lazy: async () => ({ Component: (await import('../routes/admin/AdminSettingsPage')).AdminSettingsPage }) },
           { path: 'users', lazy: lazyAdminRoute(() => import('../routes/admin/UsersAccessPage').then(module => module.UsersAccessPage), ['users.manage']) },
           { path: 'quizzes', lazy: lazyAdminRoute(() => import('../routes/admin/QuizLibraryPage').then(module => module.QuizLibraryPage), ['quiz.read']) },
-          { path: 'quizzes/new', lazy: lazyAdminRoute(() => import('../routes/admin/QuizCreatePage').then(module => module.QuizCreatePage), ['quiz.create']) },
+          { path: 'quizzes/new', lazy: lazyAdminRoute(async () => {
+            const { QuizCreatePage } = await import('../routes/admin/QuizCreatePage');
+            return function QuizCreateRoute() { return <QuizCreatePage isCurrentEntry={isCurrentCreationEntry} />; };
+          }, ['quiz.create']) },
           { path: 'quizzes/:quizId', lazy: lazyAdminRoute(() => import('../routes/admin/QuizDetailPage').then(module => module.QuizDetailPage), ['quiz.read']) },
           { path: 'quizzes/:quizId/readiness', lazy: lazyAdminRoute(() => import('../routes/admin/QuizPreflightPage').then(module => module.QuizPreflightPage), ['quiz.read', 'quiz.answers.read']) },
           { path: 'quizzes/:quizId/readiness/repair', lazy: lazyAdminRoute(() => import('../routes/admin/QuizRepairPage').then(module => module.QuizRepairPage), ['quiz.edit', 'quiz.answers.edit']) },
           { path: 'events', lazy: lazyAdminRoute(() => import('../routes/admin/AdminEventsPage').then(module => module.AdminEventsPage), ['event.read']) },
           { path: 'events/new', lazy: lazyAdminRoute(async () => {
             const { AdminEventCreatePage } = await import('../routes/admin/AdminEventCreatePage');
-            return function EventCreateRoute() { return <AdminEventCreatePage isCurrentEntry={isCurrentEventCreateEntry} />; };
+            return function EventCreateRoute() { return <AdminEventCreatePage isCurrentEntry={isCurrentCreationEntry} />; };
           }, ['event.create']) },
           { path: 'events/:eventId/scoring', lazy: lazyAdminRoute(() => import('../routes/admin/AdminEventScoringPage').then(module => module.AdminEventScoringPage), ['event.read']) },
           { path: 'events/:eventId/results', lazy: lazyAdminRoute(() => import('../routes/admin/AdminEventResultsPage').then(module => module.AdminEventResultsPage), ['event.read']) },
