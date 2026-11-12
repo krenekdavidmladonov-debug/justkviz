@@ -8,7 +8,7 @@ import { usePrivateMediaPrefetch } from '../../features/media/usePrivateMediaPre
 import { DriveMediaImportStatus } from '../../features/drive/DriveMediaImportStatus';
 import { useDriveMediaImports } from '../../features/drive/useDriveMediaImports';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useBlocker, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useBlocker, useLocation, useNavigation, useParams, useSearchParams } from 'react-router-dom';
 
 import { useAuth } from '../../auth/AuthProvider';
 import { RemoveQuestionDialog, RemoveRoundDialog, UnsavedChangesDialog } from '../../features/editor/EditorDialogs';
@@ -208,6 +208,9 @@ export function QuizEditorPage() {
 
 function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const [searchParams] = useSearchParams();
+  const { pathname } = useLocation();
+  const { location: nextLocation } = useNavigation();
+  const leaving = nextLocation !== undefined && nextLocation.pathname !== pathname;
   const { can, currentUser, membership, loading: authLoading } = useAuth();
   const readOnly = !can('quiz.edit');
   const driveEnabled = !readOnly && !authLoading && !!currentUser && membership?.role === 'owner' && can('users.manage') && can('quiz.media.upload');
@@ -242,6 +245,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const savePending = useRef(false);
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null);
   const [pendingSelection, setPendingSelection] = useState<string | null>(null);
+  const [continueAfterSave, setContinueAfterSave] = useState(false);
   const [removeRound, setRemoveRound] = useState<SemanticRound | null>(null);
   const [removeQuestion, setRemoveQuestion] = useState<EditorSlide | null>(null);
   useEffect(() => { setRemoveRound(null); setRemoveQuestion(null); }, [quizId]);
@@ -278,6 +282,13 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const editorState = useRef({ dirty, quizId, driveEnabled });
   editorState.current = { dirty, quizId, driveEnabled };
   const blocker = useBlocker(dirty || uploading || saving);
+  useEffect(() => {
+    if (!continueAfterSave) return;
+    setContinueAfterSave(false);
+    if (blocker.state === 'blocked') blocker.proceed();
+    else if (pendingSelection !== null) setSelectedKey(pendingSelection);
+    setPendingSelection(null);
+  }, [blocker, continueAfterSave, pendingSelection]);
   const semantic = useMemo(() => quiz === null ? null : buildSemanticQuizModel(quiz), [quiz]);
   const selectedRoundForDraft = semantic === null ? undefined : roundForSelection(selectedKey, semantic)
     ?? (selectedKey === 'draft' ? semantic.rounds.find((round) => round.id === draft?.roundId) : undefined);
@@ -482,7 +493,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   }, [dirty]);
 
   const saveAll = useCallback(async (afterKey = selectedKey, saveAs?: 'draft' | 'ready'): Promise<EditorQuiz | null> => {
-    if (quiz === null || readOnly || semantic === null || uploadPending.current || savePending.current) return null;
+    if (quiz === null || readOnly || leaving || semantic === null || uploadPending.current || savePending.current) return null;
     let entries: Record<string, PendingEditorEntry> = { ...parkedRef.current };
     delete entries[selectedKey];
     if (dirtySlide || dirtyRound || saveAs !== undefined) entries[selectedKey] = {
@@ -569,7 +580,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
     } catch (saveError) {
       setSaveFailed(true); setError(safeErrorMessage(saveError)); return null;
     } finally { savePending.current = false; setSaving(false); }
-  }, [appearance, defaultDesign, resultTemplates, printTemplate, can, description, dirtyQuiz, dirtyRound, dirtySlide, draft, driveEnabled, driveImports.entries.length, driveImports.queueSavedSlides, pendingCreate, quiz, readOnly, reload, roundTitle, selectedKey, selectedRoundForDraft, semantic, setParked, title]);
+  }, [appearance, defaultDesign, resultTemplates, printTemplate, can, description, dirtyQuiz, dirtyRound, dirtySlide, draft, driveEnabled, driveImports.entries.length, driveImports.queueSavedSlides, leaving, pendingCreate, quiz, readOnly, reload, roundTitle, selectedKey, selectedRoundForDraft, semantic, setParked, title]);
 
   useEffect(() => {
     const keyboardSave = (event: KeyboardEvent) => {
@@ -735,6 +746,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
     } finally { savePending.current = false; setSaving(false); }
   }
 
+  if (leaving) return <QuizLoading label="Načítám další stránku…" />;
   if (loading && quiz === null) return <QuizLoading label="Načítám editor kvízu…" />;
   if (quiz === null || semantic === null) return <QuizErrorState message={error ?? 'Kvíz se nepodařilo otevřít.'} onRetry={() => void reload()} />;
 
@@ -771,10 +783,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
           saveLabel={navigationAsDraft ? "Uložit koncept a pokračovat" : "Uložit a pokračovat"}
           busy={saving || uploading}
           onSave={() => void saveAll(pendingSelection ?? selectedKey, navigationAsDraft ? 'draft' : undefined).then((loaded) => {
-            if (loaded === null) return;
-            if (blocker.state === 'blocked') blocker.proceed();
-            else if (pendingSelection !== null) setSelectedKey(pendingSelection);
-            setPendingSelection(null);
+            if (loaded !== null) setContinueAfterSave(true);
           })}
           onDiscard={() => {
             discardDraft();

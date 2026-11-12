@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { createMemoryRouter, RouterProvider } from 'react-router-dom';
+import { createMemoryRouter, Link, RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { QuizEditorPage } from '../apps/web/src/routes/admin/QuizEditorPage';
 import { getEditorQuiz } from '../apps/web/src/features/editor/editorRepository';
@@ -89,6 +89,68 @@ it('isolates the editor during a failed quiz switch and writes only to the retri
   expect(getEditorQuiz).toHaveBeenLastCalledWith('other');
   await act(async () => host.querySelector<HTMLButtonElement>('.editor-get-started button')!.click());
   expect(createQuizRound).toHaveBeenCalledExactlyOnceWith('other', 8, '2. kolo');
+});
+
+it('does not start a quiz save after clicking the library link during a slow route change', async () => {
+  const otherQuiz = { ...quiz, id: 'other', title: 'Druhý filmový večer', revision: 8 };
+  vi.mocked(getEditorQuiz).mockImplementation(async id => id === otherQuiz.id ? otherQuiz : quiz);
+  vi.mocked(updateQuizSlide).mockRejectedValue(new Error('Synthetic save during navigation'));
+  let finishLibrary!: () => void;
+  const router = createMemoryRouter([
+    { path: '/admin/quizzes/:quizId/edit', element: <QuizEditorPage /> },
+    { path: '/admin/quizzes', loader: () => new Promise<null>(resolve => { finishLibrary = () => resolve(null); }),
+      element: <Link to="/admin/quizzes/other/edit?questionId=q1">Otevřít druhý kvíz</Link> },
+  ], { initialEntries: ['/admin/quizzes/quiz/edit?questionId=q1'] });
+  await act(async () => root.render(<RouterProvider router={router} />));
+  await advance(220);
+
+  await act(async () => host.querySelector<HTMLAnchorElement>('.back-link')!.click());
+  expect(router.state.location.pathname).toBe('/admin/quizzes/quiz/edit');
+  expect(router.state.navigation.location?.pathname).toBe('/admin/quizzes');
+  const prompt = questionField('prompt');
+  if (prompt && !prompt.disabled) {
+    await setText('prompt', 'Novější text při odchodu');
+    await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true })));
+  }
+
+  await act(async () => finishLibrary());
+  await act(async () => host.querySelector<HTMLAnchorElement>('a')!.click());
+  expect(router.state.location.pathname).toBe('/admin/quizzes/other/edit');
+  expect(host.textContent).toContain(otherQuiz.title);
+  expect(updateQuizSlide).not.toHaveBeenCalled();
+
+  vi.mocked(updateQuizSlide).mockResolvedValueOnce({ quizId: otherQuiz.id, revision: 9, slideCount: 2, questionCount: 2, roundCount: 1 });
+  await setText('prompt', 'Zadání pouze pro druhý kvíz');
+  await act(async () => window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true })));
+  expect(updateQuizSlide).toHaveBeenCalledExactlyOnceWith(otherQuiz.id, 8, expect.objectContaining({ id: 'q1', text: 'Zadání pouze pro druhý kvíz' }));
+});
+
+it('continues to the latest blocked quiz after another Back during save and continue', async () => {
+  const otherQuiz = { ...quiz, id: 'other', title: 'Druhý filmový večer', revision: 8 };
+  let finishSave!: (value: Awaited<ReturnType<typeof updateQuizSlide>>) => void;
+  vi.mocked(updateQuizSlide).mockImplementationOnce(() => new Promise(resolve => { finishSave = resolve; }));
+  vi.mocked(getEditorQuiz).mockImplementation(async id => id === otherQuiz.id ? otherQuiz : quiz);
+  const router = createMemoryRouter([
+    { path: '/admin/quizzes/:quizId/edit', element: <QuizEditorPage /> },
+    { path: '/admin/quizzes', element: <p>Knihovna testu</p> },
+  ], { initialEntries: ['/admin/quizzes/other/edit', '/admin/quizzes/quiz/edit?questionId=q1'] });
+  await act(async () => root.render(<RouterProvider router={router} />));
+  await advance(220);
+  await setText('prompt', 'Text při odchodu do jiného kvízu');
+  await act(async () => host.querySelector<HTMLAnchorElement>('.back-link')!.click());
+  const save = [...host.querySelectorAll<HTMLButtonElement>('dialog button')].find(button => button.textContent === 'Uložit a pokračovat')!;
+  await act(async () => save.click());
+  expect(updateQuizSlide).toHaveBeenCalledExactlyOnceWith(quiz.id, 1, expect.objectContaining({ text: 'Text při odchodu do jiného kvízu' }));
+  expect(getEditorQuiz).not.toHaveBeenCalledWith(otherQuiz.id);
+
+  await act(async () => {
+    await router.navigate(-1);
+    expect([...router.state.blockers.values()][0]?.location?.pathname).toBe('/admin/quizzes/other/edit');
+    finishSave({ quizId: quiz.id, revision: 2, slideCount: 2, questionCount: 2, roundCount: 1 });
+  });
+  expect(router.state.location.pathname).toBe('/admin/quizzes/other/edit');
+  expect(host.textContent).toContain(otherQuiz.title);
+  expect(updateQuizSlide).toHaveBeenCalledOnce();
 });
 
 it('keeps a dirty question and its blocker when a same-quiz deep link is cancelled', async () => {
