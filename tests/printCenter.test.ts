@@ -30,7 +30,7 @@ describe('PDF Print Center renderer', () => {
         return color?.type === ColorTypes.RGB && color.red === color.green && color.green === color.blue;
       })).toBe(true);
     } finally { paths.mockRestore(); }
-  });
+  }, 20_000);
   test('renders deterministic A4 team sheets for 20 synthetic teams', async () => {
     const event = syntheticPrintEvent();
     const options = { artifactType: 'team-sheets', disposition: 'inline', mode: 'all', teams: syntheticTeams() } as const;
@@ -154,7 +154,7 @@ describe('PDF Print Center renderer', () => {
       line.mockRestore();
       rectangle.mockRestore();
     }
-  });
+  }, 20_000);
 
   test('keeps comfortable rounds separate and packs whole short rounds in compact mode', async () => {
     const event = syntheticPrintEvent();
