@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertStagingEnvironment, assertStagingProject, STAGING_PROJECT, STAGING_URL } from './guard.mjs';
 import { stagingWebConfig, stagingClient } from './cloud.mjs';
-import { deploymentMode, assertHostingOnlyConfig, hostingOnlyArgs, assertFrontendFiles, teamToolFunctionArgs } from './hosting-only.mjs';
+import { deploymentMode, assertNoObsoleteHostingDeployment, assertHostingOnlyConfig, hostingOnlyArgs, assertFrontendFiles, teamToolFunctionArgs } from './hosting-only.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 process.chdir(root);
@@ -15,6 +15,7 @@ const branch = spawnSync('git', ['branch', '--show-current'], { encoding: 'utf8'
 if (branch.status !== 0 || !branch.stdout.trim()) throw new Error('A named Git branch is required.');
 console.log(`Branch: ${branch.stdout.trim()}\nTarget: ${STAGING_PROJECT}`);
 const config = JSON.parse(readFileSync('firebase.staging.json', 'utf8'));
+assertNoObsoleteHostingDeployment(mode, config);
 if (mode !== 'full') assertHostingOnlyConfig(config);
 if (config.hosting.site !== STAGING_PROJECT || config.functions.source !== '.local-data/staging/functions' ||
     config.hosting.public !== 'apps/web/dist' || config.storage || config.functions.predeploy) throw new Error('Unexpected deploy configuration.');

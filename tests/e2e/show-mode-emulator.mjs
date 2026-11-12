@@ -180,4 +180,58 @@ try {
   await legacy.command('page', { page: 1 }); assert.equal((await legacy.rawPublic()).finalReveal.rows.length, 1);
   await deny(legacy.command('reveal-lower'), 'failed-precondition'); groups++;
 } finally { await legacy.close(); }
-console.log(`Show Mode emulator contracts: ${groups} groups PASS (anonymous payloads, exact return, six-row ties, lower/history, legacy eight, current authorization).`);
+
+// The one-button current standings command accepts incomplete rounds, while
+// the finale keeps its stricter all-cells-complete boundary and fixed show cues.
+const partial = await finalFixture(8);
+try {
+  await live(partial, 'revealAnswer');
+  const before = await partial.session();
+  const ledger = await partial.db.collection(`events/${partial.eventId}/scores`).get();
+  const missing = ledger.docs.find(score => score.data().teamId === partial.teamIds[0] && score.data().roundId === 'r1');
+  const cleared = ledger.docs.find(score => score.data().teamId === partial.teamIds[1] && score.data().roundId === 'r2');
+  const last = ledger.docs.find(score => score.data().teamId === partial.teamIds[0] && score.data().roundId === 'r3');
+  assert(missing && cleared && last);
+  await missing.ref.delete(); await cleared.ref.update({ halfPoints: null, revision: 2 }); await last.ref.update({ halfPoints: 9, revision: 2 });
+  const readLedger = async () => (await partial.db.collection(`events/${partial.eventId}/scores`).get()).docs.map(score => [score.id, score.data()]);
+  const partialLedger = await readLedger();
+  const first = await interimCommand(partial, 'current');
+  let raw = await partial.rawPublic(); safeResults(raw, partial);
+  assert.equal(raw.interimResults.presentationStyle, 'show'); assert.equal(raw.interimResults.pageSize, 6);
+  assert.equal(raw.interimResults.rows.length, 6); assert.equal(raw.interimResults.pageCount, 2);
+  assert.equal(raw.interimResults.rows.find(row => row.teamName === 'Alfa').halfPoints, 29);
+  assert.equal(raw.interimResults.rows.find(row => row.teamName === 'Beta').halfPoints, 20);
+  const version = (await partial.db.doc(`sessions/${partial.sessionId}/interimVersions/${raw.interimResults.versionId}`).get()).data();
+  assert.equal(version.scope, 'current'); assert.equal(version.complete, false);
+  assert.equal(version.expectedScoreCount, 24); assert.equal(version.presentScoreCount, 22); assert.equal(version.missingScoreCount, 2);
+  assert.match(version.sourceFingerprint, /^[a-f0-9]{64}$/u);
+  assert.deepEqual(await readLedger(), partialLedger, 'Current standings mutated the score ledger');
+  await interimCommand(partial, 'page', { page: 1 }); raw = await partial.rawPublic(); safeResults(raw, partial);
+  assert.equal(raw.interimResults.rows.length, 2);
+  const hidden = await interimCommand(partial, 'hide');
+  assert.equal(hidden.response.returnRestored, true); raw = await partial.rawPublic();
+  assert.equal(raw.revealedAnswer, 'PRIVATE ANSWER SENTINEL');
+  assert.equal((await partial.session()).currentSlidePosition, before.currentSlidePosition);
+  assert.equal((await partial.session()).mediaPlaybackState, 'idle');
+  const replayed = await partial.call('controlInterimResults', first.request);
+  assert.equal(replayed.replayed, true); assert.equal((await partial.rawPublic()).interimResults, undefined);
+  const incompleteFinal = await partial.previewFinal(); assert.equal(incompleteFinal.complete, false);
+  await deny(partial.command('start', { sourceFingerprint: incompleteFinal.sourceFingerprint, presentationStyle: 'show' }), 'failed-precondition');
+  await missing.ref.set(missing.data()); await cleared.ref.set(cleared.data());
+  // Stored old preferences are deliberately disabled. The simplified finale
+  // issues its own fixed cues, without modifying those persisted preferences.
+  const oldPreferences = { schemaVersion: 1, motion: 'none', lowerRanks: 'step', topThree: false, winnerAnimation: false,
+    audioEnabled: false, volume: .25, fadeInMs: 300, fadeOutMs: 500, cues: {} };
+  await partial.db.doc(`events/${partial.eventId}`).update({ showPreferences: oldPreferences });
+  const complete = await partial.previewFinal(); assert.equal(complete.complete, true);
+  await partial.command('start', { sourceFingerprint: complete.sourceFingerprint, presentationStyle: 'show' });
+  raw = await partial.rawPublic(); safeResults(raw, partial);
+  assert.equal(raw.showCue.intensity, 'show'); assert.equal(raw.showCue.motion, 'animate');
+  let winner;
+  while ((await partial.session()).finalReveal.revealedCount < (await partial.session()).finalReveal.totalGroups) winner = await partial.command('reveal');
+  assert.equal(winner.winnerRevealed, true); raw = await partial.rawPublic(); safeResults(raw, partial);
+  assert.equal(raw.showCue.kind, 'winners'); assert.equal(raw.showCue.motion, 'animate'); assert.equal(raw.showCue.winnerAnimation, true);
+  assert.deepEqual((await partial.db.doc(`events/${partial.eventId}`).get()).data().showPreferences, oldPreferences);
+  groups++;
+} finally { await partial.close(); }
+console.log(`Show Mode emulator contracts: ${groups} groups PASS (anonymous payloads, exact return, six-row ties, lower/history, legacy eight, current partial scores, fixed finale, current authorization).`);

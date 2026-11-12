@@ -4,6 +4,7 @@ import type { EditorSlideInput } from '../editor/types.js';
 import { currentMembership } from './authorization.js';
 import { isQuestionKind } from '../editor/model.js';
 import { slideView } from './slide-view.js';
+import { resolveOriginalImages } from '../media/original-images.js';
 
 const answerKeys = ['correctAnswer', 'answerImage', 'answerExplanation', 'answerMode', 'answerDesign'] as const;
 const mediaKeys = ['backgroundImage', 'questionImage', 'mediaSource'] as const;
@@ -11,7 +12,12 @@ const equal = (a: unknown, b: unknown) => JSON.stringify(a ?? '') === JSON.strin
 const deny = () => { throw new HttpsError('permission-denied', 'Tato změna vyžaduje další oprávnění.'); };
 export function protectPrivateMedia(slides: readonly { data: Record<string, unknown> }[], inputs: readonly Record<string, unknown>[]) {
   if (currentMembership().permissions.includes('quiz.answers.read')) return;
-  const hidden = new Set(slides.flatMap(s => { const mapped = mapEditorSlide('source', s.data); return [mapped.answerImage, mapped.answerDesign?.backgroundImage, mapped.answerDesign?.logoImage, ...mapped.media.filter(m => m.role === 'answer').map(m => m.source)].filter(Boolean); }));
+  const hidden = new Set<string>();
+  for (const slide of slides) for (const data of [slide.data, resolveOriginalImages(slide.data)]) {
+    const mapped = mapEditorSlide('source', data);
+    for (const source of [mapped.answerImage, mapped.answerDesign?.backgroundImage, mapped.answerDesign?.logoImage,
+      ...mapped.media.filter(media => media.role === 'answer').map(media => media.source)]) if (source) hidden.add(source);
+  }
   for (const input of inputs) {
     const sources: unknown[] = [input.backgroundImage, input.questionImage, input.mediaSource];
     if (input.design && typeof input.design === 'object') sources.push(...['backgroundImage', 'logoImage'].map(field => (input.design as Record<string, unknown>)[field]));
@@ -23,7 +29,7 @@ export function protectPrivateMedia(slides: readonly { data: Record<string, unkn
 }
 export function protectSlideFields(current: Record<string, unknown> | undefined, input: EditorSlideInput): EditorSlideInput {
   const member = currentMembership(), allowed = member.permissions;
-  const previous = current ? mapEditorSlide('current', current) : undefined;
+  const previous = current ? mapEditorSlide('current', resolveOriginalImages(current)) : undefined;
   const visible = current ? slideView('current', current, allowed.includes('quiz.answers.read'), allowed.includes('quiz.notes.read')) : undefined;
   if (!allowed.includes('quiz.answers.edit')) {
     // Options and question kind affect the meaning/validation of a hidden answer.

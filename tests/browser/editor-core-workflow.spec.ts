@@ -30,6 +30,10 @@ async function waitForCallable(page: Page, callableName: string, action: () => P
 
 async function selectOnlyQuestion(page: Page): Promise<ReturnType<Page['getByLabel']>> {
   await expect(page.locator('.round-first-editor')).toBeVisible();
+  await expect(page.locator('.outline-round').first()).toBeVisible();
+  while (await page.locator('.outline-collapse[aria-expanded="false"]').count()) {
+    await page.locator('.outline-collapse[aria-expanded="false"]').first().click();
+  }
   await expect(page.locator('.outline-question')).toHaveCount(1);
   await page.locator('.outline-question').click();
   const prompt = page.getByLabel('Otázka *');
@@ -130,7 +134,6 @@ test('library CTA creates an empty quiz and carries its first round and free que
     await waitForCallable(page, 'createQuizRound', () => page.getByRole('button', { name: '+ Přidat kolo' }).click());
     await expect(page.locator('.outline-round')).toHaveCount(1);
     await page.getByRole('button', { name: '+ Přidat otázku' }).click();
-    await page.getByRole('dialog', { name: /Typ otázky/u }).getByRole('button', { name: 'Volná odpověď' }).click();
     await page.getByLabel('Otázka *').fill(question);
     await page.getByLabel('Správná odpověď *').fill(answer);
     await waitForCallable(page, 'createQuizSlide', () => page.getByRole('button', { name: 'Uložit vše', exact: true }).click());
@@ -144,6 +147,8 @@ test('library CTA creates an empty quiz and carries its first round and free que
     await expect(page.getByRole('link', { name: title, exact: true })).toBeVisible();
     await page.getByRole('link', { name: title, exact: true }).click();
     await page.getByRole('link', { name: 'Otevřít editor' }).click();
+    await expect(page.locator('.outline-round').first()).toBeVisible();
+    while (await page.locator('.outline-collapse[aria-expanded="false"]').count()) await page.locator('.outline-collapse[aria-expanded="false"]').first().click();
     await page.locator('.outline-question').filter({ hasText: question }).click();
     await expect(page.getByLabel('Otázka *')).toHaveValue(question);
     await expect(page.getByLabel('Správná odpověď *')).toHaveValue(answer);

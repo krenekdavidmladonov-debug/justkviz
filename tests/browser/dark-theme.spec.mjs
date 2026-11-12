@@ -7,6 +7,7 @@ import { auditDarkUi, installPaintProbe } from './dark-theme-audit.mjs';
 
 const dir='.local-data/dark-mode/local-visual';
 const measurements=[];
+const loopback=context=>context.route('**/*',route=>['127.0.0.1','localhost'].includes(new URL(route.request().url()).hostname)?route.continue():route.abort());
 async function audit(page,name) {
   const result=await auditDarkUi(page);measurements.push({name,...result});
   expect(result.rootBackground).toBe('rgb(11, 18, 32)');expect(result.colorScheme).toBe('dark');
@@ -18,10 +19,10 @@ const save=async page=>{await page.getByRole('button',{name:'Uložit vše',exact
 test('fresh system-light browser starts dark before JS, refreshes dark, and supports keyboard/high contrast',async({browser})=>{
   await mkdir(dir,{recursive:true});
   const noJs=await browser.newContext({javaScriptEnabled:false,colorScheme:'light'});
-  const shell=await noJs.newPage();await shell.goto('http://127.0.0.1:5198/admin/quizzes');
+  await loopback(noJs);const shell=await noJs.newPage();await shell.goto('http://127.0.0.1:5198/admin/quizzes');
   expect(await shell.locator('html').evaluate(el=>getComputedStyle(el).backgroundColor)).toBe('rgb(11, 18, 32)');
   expect(await shell.locator('html').evaluate(el=>getComputedStyle(el).colorScheme)).toBe('dark');await noJs.close();
-  const context=await browser.newContext({colorScheme:'light'});await installPaintProbe(context);const page=await context.newPage();
+  const context=await browser.newContext({colorScheme:'light'});await loopback(context);await installPaintProbe(context);const page=await context.newPage();
   for(const [width,height] of [[1920,1080],[1366,768],[1024,768],[390,844]]){
     await page.setViewportSize({width,height});await page.goto('http://127.0.0.1:5198/admin/login');await expect(page.getByLabel('E-mail')).toBeVisible();await audit(page,'login-'+width);
     const paints=await page.evaluate(()=>window.__darkPaints);expect(paints.length).toBeGreaterThan(0);expect(paints.every(p=>p.html==='rgb(11, 18, 32)'&&p.body==='rgb(11, 18, 32)')).toBe(true);
@@ -30,7 +31,7 @@ test('fresh system-light browser starts dark before JS, refreshes dark, and supp
   await page.getByLabel('E-mail').focus();await page.keyboard.press('Tab');await expect(page.getByLabel('Heslo')).toBeFocused();
   expect(await page.getByLabel('Heslo').evaluate(el=>({width:getComputedStyle(el).outlineWidth,color:getComputedStyle(el).outlineColor}))).toEqual({width:'3px',color:'rgb(96, 165, 250)'});
   await page.keyboard.press('Tab');await expect(page.getByRole('button',{name:'Přihlásit se'})).toBeFocused();
-  await page.emulateMedia({forcedColors:'active'});expect(await page.locator('body').evaluate(el=>getComputedStyle(el).forcedColorAdjust)).toBe('auto');await page.screenshot({path:dir+'/forced-colors.png'});
+  await page.emulateMedia({forcedColors:'active'});expect(await page.locator('body').evaluate(el=>getComputedStyle(el).forcedColorAdjust)).toBe('auto');await page.screenshot({path:dir+'/forced-colors.png',mask:[page.locator('.admin-account > strong')]});
   await context.close();
 });
 
@@ -44,11 +45,11 @@ test('real editor controls, modal focus, media and light content remain separate
     await page.goto('/admin/quizzes');await audit(page,'library-empty');await page.getByRole('link',{name:'+ Nový kvíz',exact:true}).first().click();await audit(page,'create-quiz');
     await page.getByLabel('Název kvízu').fill('QA-DarkMode — světlý obsah');await page.getByRole('button',{name:'Vytvořit',exact:true}).click();await expect(page).toHaveURL(/\/edit$/);quizId=page.url().split('/').at(-2);
     await page.getByRole('button',{name:'+ Přidat kolo',exact:true}).click();await page.getByLabel('Název kola *').fill('QA první kolo');await save(page);
-    await page.getByRole('button',{name:'+ Přidat otázku',exact:true}).click();await audit(page,'question-type-menu');await page.getByRole('dialog',{name:/Typ otázky/}).getByRole('button',{name:'ABCD',exact:true}).click();
+    await page.getByRole('button',{name:/Další typy otázek pro kolo/}).click();await audit(page,'question-type-menu');await page.getByRole('dialog',{name:/Typ otázky/}).getByRole('button',{name:'Výběr z možností (ABCD)',exact:true}).click();
     await page.getByLabel('Otázka *',{exact:true}).fill('QA kontrast odpovědí');for(let i=0;i<4;i++)await page.getByLabel('Možnost '+String.fromCharCode(65+i),{exact:true}).fill('QA možnost '+(i+1));await page.getByLabel('Označit možnost B jako správnou').check();await save(page);
     expect(await page.getByLabel('Označit možnost B jako správnou').isChecked()).toBe(true);
     for(const [width,height] of [[1920,1080],[1366,768],[1024,768]]){await page.setViewportSize({width,height});await audit(page,'editor-abcd-'+width);await expect(page.getByRole('button',{name:'Uložit vše',exact:true})).toBeInViewport();await expect(page.getByRole('button',{name:'+ Přidat kolo',exact:true})).toBeInViewport();}
-    await page.setViewportSize({width:1920,height:1080});await page.locator('details.editor-extra > summary').filter({hasText:'Vzhled slidu'}).click();
+    await page.setViewportSize({width:1920,height:1080});await page.locator('details.editor-extra > summary').filter({hasText:'Vzhled otázky nebo slidu'}).click();
     const picker=page.locator('.slide-design-editor').first().getByRole('region',{name:/^Pozadí · (děděné|vlastní)$/,exact:true});await picker.getByRole('button',{name:'Vložit odkaz',exact:true}).click();await audit(page,'media-url-picker');await picker.getByRole('textbox').fill('http://127.0.0.1:5198/qa-light.png');await picker.getByRole('button',{name:'Použít odkaz'}).click();await save(page);
     const slide=page.locator('.round-editor-preview .slide-renderer');await expect(slide.locator('.slide-background img')).toBeVisible();await slide.locator('img').evaluateAll(images=>Promise.all(images.map(img=>img.decode())));
     const before=PNG.sync.read(await slide.screenshot({path:dir+'/light-slide-current.png'}));
@@ -80,6 +81,14 @@ test('real editor controls, modal focus, media and light content remain separate
     expect(tabOrder.slice(0,3)).toEqual(['Uložit a pokračovat','Pokračovat bez uložení','Zrušit']);
     await page.keyboard.press('Escape');await expect(dialog).toHaveCount(0);await expect(page.getByLabel('Otázka *',{exact:true})).toHaveValue('QA neuložená změna');await expect(page.getByRole('button',{name:'Zahodit změny…',exact:true})).toBeFocused();
     await writeFile(dir+'/measurements.json',JSON.stringify({status:'PASS',measurements,contentPixelsIdentical:true,nativeModalBackgroundInert:true,tabOrder,escapePreservesDraft:true,focusReturned:true},null,2));
+  } catch (error) {
+    try {
+      const docs=await identity.db.collection('memberships').where('email','==',identity.email).limit(2).get();
+      const d=docs.size===1?docs.docs[0]:null,m=d?.data();
+      const pathname=new URL(page.url()).pathname;
+      console.log('DARK_AUTH_DIAGNOSTIC '+JSON.stringify({membershipCount:docs.size,membership:m?{uidMatchesDocument:m.uid===d.id,active:m.status==='active',role:['owner','manager','creator','moderator','referee','viewer'].includes(m.role)?m.role:'other',permissionCount:Array.isArray(m.permissions)?m.permissions.length:null,quizRead:m.permissions?.includes('quiz.read')===true,quizEdit:m.permissions?.includes('quiz.edit')===true,cutoffZero:m.sessionValidAfter===0}:null,route:['/admin','/admin/login','/admin/quizzes','/admin/no-access'].includes(pathname)?pathname:'other'}));
+    } catch { console.log('DARK_AUTH_DIAGNOSTIC '+JSON.stringify({unavailable:true})); }
+    throw error;
   } finally {if(quizId)await identity.db.recursiveDelete(identity.db.doc('quizzes/'+quizId));await identity.dispose();}
 });
 

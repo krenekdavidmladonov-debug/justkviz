@@ -7,7 +7,7 @@ import { authorizeStaff, loadSlide } from '../live/callables.js';
 import { applyLiveSessionAction } from '../live/session-machine.js';
 import { buildPublicSessionState, publicResultTemplate } from '../live/publication.js';
 import { advanceFinal, initialFinal, publicFinalPage, type FinalAction } from './model.js';
-import { normalizeResultPagination, resultPagination, type ShowCue } from '@filmovy-kviz/quiz-domain';
+import { defaultShowPreferences, normalizeResultPagination, resultPagination, type ShowCue } from '@filmovy-kviz/quiz-domain';
 import { makeShowCue } from '../live/show-mode.js';
 const options = { region: 'europe-west1', cors: true, maxInstances: 10 };
 
@@ -43,7 +43,7 @@ export const controlFinalReveal = securedOnCall('controlFinalReveal', options, a
     ...(data.presentationStyle === undefined && data.motion === undefined ? [] : [data.presentationStyle ?? null, data.motion ?? null])]);
   return runAccessTransaction(db, async tx => {
     await staff(request); // Current role, including every transaction retry.
-    const { session, event } = await bound(tx, eventId, sessionId);
+    const { session } = await bound(tx, eventId, sessionId);
     const receipt = (await tx.get(receiptRef)).data();
     if (receipt) {
       if (receipt.fingerprint !== commandFingerprint) throw new HttpsError('already-exists', 'Request ID má jiný obsah.');
@@ -85,7 +85,7 @@ export const controlFinalReveal = securedOnCall('controlFinalReveal', options, a
     if (action === 'static' && !show) throw new HttpsError('failed-precondition', 'Klasické výsledky nemají show animaci.');
     const cueKind: ShowCue['kind'] = state.mode === 'intro' ? 'final-intro' : state.mode === 'lower' ? 'lower'
       : state.rank === 1 ? 'winners' : state.rank === 2 ? 'second' : state.rank === 3 ? 'third' : 'reveal';
-    const cue = show && state.visible ? makeShowCue(operationId, cueKind, event.showPreferences, now.toMillis(), animate ? data.motion : 'static') : undefined;
+    const cue = show && state.visible ? makeShowCue(operationId, cueKind, { ...defaultShowPreferences, motion: 'show' }, now.toMillis(), animate ? data.motion : 'static') : undefined;
     const updated = { ...(reset ? applyLiveSessionAction(clean, { type: 'go-to-slide', position: session.currentSlidePosition, slideId: slide.id }, expected, uid, now, slide)
       : { ...clean, revision: expected + 1, updatedBy: uid, updatedAt: now }), finalReveal: state };
     const finalUpdated = { ...updated, ...(cue ? { showCue: cue } : {}) };

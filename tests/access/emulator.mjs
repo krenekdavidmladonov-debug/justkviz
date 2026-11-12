@@ -38,6 +38,17 @@ const payload = slide => Object.fromEntries(['kind', 'title', 'text', 'moderator
 try {
   await db.doc('accessControl/state').set({ collaborationEnabled: true, revision: 0 });
   const owner = await account('owner', { role: 'owner', permissions, quizzes: all(), events: all() });
+  await test('legacy string audit time cannot break the independent nonempty membership list', async () => {
+    const entryId = prefix + '-legacy-audit', at = '2026-11-04T12:30:00.000Z';
+    await put(`accessAudit/${entryId}`, { actorUid: owner.uid, targetId: owner.uid, kind: 'approved-owner-bootstrap', changes: {}, at });
+    const overview = await owner.call('listAccessUsers');
+    assert.ok(overview.users.some(user => user.uid === owner.uid));
+    const entries = await owner.call('listAccessAudit');
+    assert.equal(entries.find(entry => entry.id === entryId)?.at, at);
+    await db.doc(`accessAudit/${entryId}`).update({ at: 'invalid-historical-time' });
+    const invalid = (await owner.call('listAccessAudit')).find(entry => entry.id === entryId);
+    assert.equal(invalid.at, null);
+  });
   const creator = await account('creator', { role: 'creator', permissions: [...rolePresets.creator], quizzes: selected([quizA]), events: none() });
   const structure = await account('structure', { role: 'creator', permissions: ['quiz.read', 'quiz.edit'], quizzes: selected([quizA]), events: none() });
   const moderator = await account('moderator', { role: 'moderator', permissions: [...rolePresets.moderator], quizzes: none(), events: selected([eventA]) });
@@ -45,6 +56,18 @@ try {
   const viewer = await account('viewer', { role: 'viewer', permissions: [...rolePresets.viewer], quizzes: selected([quizA]), events: selected([eventA]) }, true, { role: 'admin' });
   const manager = await account('manager', { role: 'manager', permissions, quizzes: selected([quizA]), events: selected([eventA]) });
   const legacy = await account('legacy-admin', null, true, { role: 'admin' });
+  await test('owner overview is nonempty and Auth-only registration creates neither membership nor approval', async () => {
+    const overview = await owner.call('listAccessUsers');
+    assert.equal(overview.collaborationEnabled, true);
+    assert.ok(overview.users.some(user => user.uid === owner.uid));
+    assert.equal(overview.users.some(user => user.uid === legacy.uid), false);
+    assert.equal((await legacy.call('getMyAccess')).member, null);
+    for (const name of ['listAccessUsers', 'listAccessAudit']) {
+      await denied(() => legacy.call(name));
+      await denied(() => viewer.call(name));
+    }
+    await denied(() => legacy.call('updateAccessMembership', { uid: viewer.uid, expectedVersion: 1, grant: { role: 'viewer', permissions: rolePresets.viewer, quizzes: none(), events: none() }, status: 'active' }));
+  });
   for (const id of [quizA, quizB]) {
     await put(`quizzes/${id}`, { title: id, description: '', status: 'draft', revision: 1, slideCount: 2, roundCount: 1, questionCount: 1, createdBy: creator.uid, updatedBy: owner.uid, createdAt: Timestamp.now(), updatedAt: Timestamp.now() });
     await put(`quizzes/${id}/rounds/round`, { title: 'Round', position: 1, type: 'classic', questionCount: 1, slideCount: 2 });
@@ -232,6 +255,12 @@ try {
     assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
     documents.push(`memberships/${invited.uid}`);
     const actual = (await db.doc(`memberships/${invited.uid}`).get()).data(); assert.equal(actual.role, 'creator'); assert.deepEqual(actual.quizzes, selected([quizA])); assert.equal(actual.permissions.includes('quiz.delete'), false);
+    assert.equal((await invited.call('getMyAccess')).member.uid, invited.uid);
+    assert.equal((await invited.call('readAccessData', { operation: 'editor', quizId: quizA })).id, quizA);
+    assert.equal((await owner.call('listAccessUsers')).users.filter(user => user.uid === invited.uid).length, 1);
+    await owner.call('updateAccessMembership', { uid: invited.uid, expectedVersion: 1, status: 'active', grant: { role: 'viewer', permissions: rolePresets.viewer, quizzes: selected([quizA]), events: none() } });
+    assert.equal((await invited.call('getMyAccess')).member.version, 2);
+    await denied(() => invited.call('updateQuizMetadata', { quizId: quizA }));
   });
   await test('revoked and expired invitations fail closed', async () => {
     const invite = await owner.call('createAccessInvitation', { email: wrong.email, grant }); documents.push(`accessInvites/${invite.inviteId}`);
@@ -263,8 +292,13 @@ try {
     const recipient = await account('paused-invite', null);
     const invite = await manager.call('createAccessInvitation', { email: recipient.email, grant }); documents.push(`accessInvites/${invite.inviteId}`);
     await db.doc('accessControl/state').update({ collaborationEnabled: false });
+    const overview = await owner.call('listAccessUsers');
+    assert.equal(overview.collaborationEnabled, false);
+    assert.ok(overview.users.some(user => user.uid === owner.uid));
+    await owner.call('listAccessAudit');
     await denied(() => recipient.call('acceptAccessInvitation', { inviteId: invite.inviteId, token: invite.token }), 'functions/failed-precondition');
     await denied(() => owner.call('createAccessInvitation', { email: `${prefix}-paused@example.test`, grant }), 'functions/failed-precondition');
+    await denied(() => owner.call('changeAccessInvitation', { inviteId: invite.inviteId, expectedVersion: 1, action: 'reissue' }), 'functions/failed-precondition');
     await db.doc('accessControl/state').update({ collaborationEnabled: true });
     const current = (await db.doc(`memberships/${manager.uid}`).get()).data();
     const managerGrant = { role: current.role, permissions: current.permissions, quizzes: current.quizzes, events: current.events };
@@ -279,6 +313,7 @@ try {
     await denied(() => creator.call('readAccessData', { operation: 'editor', quizId: quizA }));
     await denied(() => creator.call('updateQuizMetadata', { quizId: quizA, expectedRevision: 2, quiz: { title: 'Late save', description: '' } }));
     await denied(() => creator.call('beginQuizMediaUpload', { quizId: quizA }));
+    assert.equal((await creator.call('getMyAccess')).member, null);
   });
   await test('a new quiz is explicitly added to a creator scope that started empty', async () => {
     const fresh = await account('new-creator', { ...grant, quizzes: selected([]) });

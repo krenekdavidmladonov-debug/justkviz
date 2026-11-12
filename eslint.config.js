@@ -7,9 +7,11 @@ export default tseslint.config(
     ignores: [
       '**/dist/**',
       '**/lib/**',
+      'functions/worker/**', // Generated, verified copy of tools/media-worker (linted at source).
       '**/node_modules/**',
       '**/.tools/**',
       '.local-data/**',
+      'output/**', // Generated posters and other non-application deliverables.
       '.firebase/**',
       'coverage/**',
       'playwright-report/**',

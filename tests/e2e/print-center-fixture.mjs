@@ -11,7 +11,7 @@ export async function printCenterFixture(teamCount = 2, roundCount = 3) {
   const { Timestamp, FieldValue } = require('firebase-admin/firestore');
   const created = await identity.call('createEvent', { expectedRevision: 0, event: {
     title: 'Filmový večer - Žluťoučký kůň a české filmové příběhy', startsAt: '2031-11-20T18:00:00Z', timeZone: 'Europe/Prague',
-    venue: { name: 'Sál JustKvízu', publicLocation: 'Praha' }, teamCapacity: 30, peopleCapacity: 180, teamSizeMin: 2, teamSizeMax: 6,
+    venue: { name: 'Sál JustKvízu', publicLocation: 'Praha' }, teamCapacity: 30, peopleCapacity: 180, teamSizeMin: 2, teamSizeMax: 4,
   } });
   const eventId = created.eventId, snapshotId = 'print-' + randomUUID(), quizId = 'print-library-' + randomUUID();
   const snapshot = identity.db.doc('quizSnapshots/' + snapshotId), event = identity.db.doc('events/' + eventId);

@@ -8,7 +8,8 @@ import { useAuth } from '../../auth/AuthProvider';
 
 const initialValues: EventFormValues = {
   title: '', startsAt: '', timeZone: 'Europe/Prague', venueName: '', publicLocation: '',
-  teamCapacity: 20, peopleCapacity: 120, teamSizeMin: 2, teamSizeMax: 6,
+  pricingMode: 'per-team', pricingAmountCzk: 350, pricingHidden: false,
+  teamCapacity: 20, peopleCapacity: 80, teamSizeMin: 2, teamSizeMax: 4,
 };
 
 export function AdminEventCreatePage() {

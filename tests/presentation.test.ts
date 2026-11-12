@@ -70,20 +70,20 @@ describe('unified slide render model', () => {
 
   test('VIDEO shows the question before play, uses one player while playing, and returns after stop or finish', () => {
     const model = buildSlideRenderModel(slide({ kind: 'video', mediaSource: 'abcdefghijk', clipStartSeconds: 7, clipEndSeconds: 24 }));
-    expect(projectorMediaPlan(model, 'idle')).toMatchObject({ mountPlayer: false, showQuestion: true });
+    expect(projectorMediaPlan(model, 'idle')).toMatchObject({ mountPlayer: true, showQuestion: true });
     expect(projectorMediaPlan(model, 'play')).toMatchObject({ mountPlayer: true, showQuestion: false, startSeconds: 7, endSeconds: 24 });
-    expect(projectorMediaPlan(model, 'stop')).toMatchObject({ mountPlayer: false, showQuestion: true });
+    expect(projectorMediaPlan(model, 'stop')).toMatchObject({ mountPlayer: true, showQuestion: true });
     expect(projectorMediaPlan(model, 'replay')).toMatchObject({ mountPlayer: true, startSeconds: 7 });
-    expect(projectorMediaPlan(model, 'play', 'finished', true)).toMatchObject({ mountPlayer: false, showQuestion: true });
+    expect(projectorMediaPlan(model, 'play', 'finished', true)).toMatchObject({ mountPlayer: true, showQuestion: true });
   });
 
-  test('RECAP publishes a prominent selected answer and A/V starts at zero without a clip end', () => {
+  test('RECAP publishes a selected answer and preserves clip timing until original is explicitly selected', () => {
     const model = buildSlideRenderModel(slide({
       kind: 'audio', mediaSource: 'abcdefghijk', clipStartSeconds: 12, clipEndSeconds: 30,
       answerImage: 'https://example.test/answer.jpg', revealedAnswer: 'Sanitizovaná odpověď',
     }), 'recap');
     expect(model).toMatchObject({ renderMode: 'recap', revealedAnswer: 'Sanitizovaná odpověď', answerImage: 'https://example.test/answer.jpg' });
-    expect(projectorMediaPlan(model, 'idle')).toEqual({ mountPlayer: true, showQuestion: true, vinylPlaying: false, startSeconds: 0 });
+    expect(projectorMediaPlan(model, 'idle')).toEqual({ mountPlayer: true, showQuestion: true, vinylPlaying: false, startSeconds: 12, endSeconds: 30 });
   });
 
   test('PL remains a legacy-only render kind with Czech truth labels', () => {

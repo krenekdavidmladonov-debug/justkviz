@@ -17,14 +17,14 @@ connectFirestoreEmulator(firestore, firestoreEndpoint.host, firestoreEndpoint.po
 connectFunctionsEmulator(functions, functionsEndpoint.host, functionsEndpoint.port);
 const invoke = async (name, data) => (await httpsCallable(functions, name)(data)).data;
 
-const eventInput = (title, teamCapacity, peopleCapacity, teamSizeMax = 6) => ({
+const eventInput = (title, teamCapacity, peopleCapacity, teamSizeMax = 4) => ({
   title, startsAt: new Date(Date.now() + 86_400_000).toISOString(), timeZone: 'Europe/Prague',
   venue: { name: 'Syntetický sál', publicLocation: 'Praha' },
   teamCapacity, peopleCapacity, teamSizeMin: 1, teamSizeMax,
 });
 const form = (teamName, memberCount, contactEmail = 'team@example.test') => ({ teamName, memberCount, contactEmail });
 
-async function createOpenEvent(title, teams, people, max = 6) {
+async function createOpenEvent(title, teams, people, max = 4) {
   const created = await invoke('createEvent', { expectedRevision: 0, event: eventInput(title, teams, people, max) });
   await invoke('configureEventRegistration', {
     eventId: created.eventId, expectedRevision: 1,
@@ -44,18 +44,18 @@ async function oneWins(promises) {
 async function run() {
   await signInWithEmailAndPassword(auth, 'admin@example.test', 'LocalQuiz123!');
   const teamRace = await createOpenEvent('Poslední týmový slot', 1, 10);
-  const peopleRace = await createOpenEvent('Poslední kapacita osob', 3, 3, 3);
+  const peopleRace = await createOpenEvent('Historický počet osob neomezuje týmy', 3, 3, 3);
   const nameRace = await createOpenEvent('Unikátní jméno', 3, 10);
-  const editRace = await createOpenEvent('Editace versus create', 3, 5, 5);
+  const editRace = await createOpenEvent('Editace versus create', 3, 5, 4);
   const cancelRace = await createOpenEvent('Cancel versus create', 1, 4, 4);
-  const privacyEvent = await createOpenEvent('Token isolation', 3, 12, 6);
+  const privacyEvent = await createOpenEvent('Token isolation', 3, 12, 4);
   await signOut(auth);
 
   await oneWins([
     invoke('createEventRegistration', { eventId: teamRace, ...form('Tým A', 2, 'a@example.test') }),
     invoke('createEventRegistration', { eventId: teamRace, ...form('Tým B', 2, 'b@example.test') }),
   ]);
-  await oneWins([
+  await Promise.all([
     invoke('createEventRegistration', { eventId: peopleRace, ...form('Tým C', 2, 'c@example.test') }),
     invoke('createEventRegistration', { eventId: peopleRace, ...form('Tým D', 2, 'd@example.test') }),
   ]);
@@ -65,7 +65,7 @@ async function run() {
   ]);
 
   const editable = await invoke('createEventRegistration', { eventId: editRace, ...form('Editovaný tým', 2, 'edit@example.test') });
-  await oneWins([
+  await Promise.all([
     invoke('updateEventRegistration', { eventId: editRace, registrationId: editable.registrationId, token: editable.managementToken, ...form('Editovaný tým', 4, 'edit@example.test') }),
     invoke('createEventRegistration', { eventId: editRace, ...form('Nový tým', 2, 'new@example.test') }),
   ]);
@@ -96,17 +96,18 @@ async function run() {
   for (const eventId of [teamRace, peopleRace, nameRace, editRace, cancelRace]) {
     const state = (await getDoc(doc(firestore, 'events', eventId))).data();
     assert.ok(state.acceptedTeams <= state.teamCapacity);
-    assert.ok(state.acceptedPeople <= state.peopleCapacity);
     assert.ok(state.acceptedTeams >= 0);
     assert.ok(state.acceptedPeople >= 0);
   }
+  assert.equal((await getDoc(doc(firestore, 'events', peopleRace))).data().acceptedPeople, 4);
+  assert.equal((await getDoc(doc(firestore, 'events', editRace))).data().acceptedPeople, 6);
   const privateRegistration = (await getDoc(doc(firestore, 'events', privacyEvent, 'registrations', tokenA.registrationId))).data();
   assert.equal(typeof privateRegistration.managementTokenHash, 'string');
   assert.equal(JSON.stringify(privateRegistration).includes(tokenA.managementToken), false);
   const publicEvent = (await getDoc(doc(firestore, 'publicEvents', privacyEvent))).data();
   assert.equal(JSON.stringify(publicEvent).includes('example.test'), false);
 
-  console.log(JSON.stringify({ status: 'PASS', teamSlotRace: true, peopleRace: true, normalizedNameRace: true, editCreateRace: true, cancelCreateRace: true, tokenIsolation: true, rawTokenNotStored: true }, null, 2));
+  console.log(JSON.stringify({ status: 'PASS', teamSlotRace: true, nonbindingPeopleCapacity: true, normalizedNameRace: true, editCreateRace: true, cancelCreateRace: true, tokenIsolation: true, rawTokenNotStored: true }, null, 2));
 }
 
 try { await run(); } finally { await deleteApp(app); }

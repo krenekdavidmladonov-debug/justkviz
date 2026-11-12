@@ -1,4 +1,5 @@
 import { LiveSessionError } from './errors.js';
+import { originalYoutubeSource } from '@filmovy-kviz/quiz-domain';
 import { displayAnswer } from './publication.js';
 import type { LiveMediaPlaybackState, LiveSessionAction, PrivateLiveSession, PrivateSlide } from './types.js';
 
@@ -35,13 +36,18 @@ function isMediaKind(kind: string): boolean {
 }
 
 function withoutRecapSelection(session: PrivateLiveSession): PrivateLiveSession {
-  const { recapQuestionPosition, recapQuestionId, ...clean } = session;
+  const { recapQuestionPosition, recapQuestionId, mediaPlaybackMode, ...clean } = session;
+  void mediaPlaybackMode;
   void recapQuestionPosition;
   void recapQuestionId;
   return clean;
 }
 function withoutShowState(session: PrivateLiveSession): PrivateLiveSession {
   const { interimReturn, showCue, ...clean } = session; void interimReturn; void showCue;
+  return clean;
+}
+function withoutOriginalPlayback(session: PrivateLiveSession): PrivateLiveSession {
+  const { mediaPlaybackMode, ...clean } = session; void mediaPlaybackMode;
   return clean;
 }
 
@@ -75,6 +81,7 @@ export function applyLiveSessionAction(
     const recap = isRecapKind(slide.kind);
     return {
       ...withoutShowState(withoutRecapSelection(session)),
+      ...(session.finalReveal ? { finalReveal: { ...session.finalReveal, visible: false } } : {}),
       ...common,
       status: 'active',
       currentSlidePosition: position,
@@ -96,7 +103,7 @@ export function applyLiveSessionAction(
       throw new LiveSessionError('failed-precondition', 'The requested recap question is unavailable.');
     }
     return {
-      ...session, ...common, answerRevealed: true,
+      ...withoutOriginalPlayback(session), ...common, answerRevealed: true,
       recapQuestionPosition: slide.position, recapQuestionId: slide.id,
       mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: session.mediaGeneration + 1,
     };
@@ -112,9 +119,9 @@ export function applyLiveSessionAction(
     if (session.presentationMode !== 'slide' || !slide.isQuestion || displayAnswer(slide.correctAnswer, slide.kind) === undefined) {
       throw new LiveSessionError('failed-precondition', 'This slide has no displayable answer.');
     }
-    return { ...session, ...common, answerRevealed: true, mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: session.mediaGeneration + 1 };
+    return { ...withoutOriginalPlayback(session), ...common, answerRevealed: true, mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: session.mediaGeneration + 1 };
   }
-  if (action.type === 'hide-answer') return { ...session, ...common, answerRevealed: false, mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: session.mediaGeneration + 1 };
+  if (action.type === 'hide-answer') return { ...withoutOriginalPlayback(session), ...common, answerRevealed: false, mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: session.mediaGeneration + 1 };
   if (action.type === 'start-intro') {
     if (!isIntroKind(slide.kind) || session.presentationMode !== 'slide') {
       throw new LiveSessionError('failed-precondition', 'The current slide has no intro animation.');
@@ -128,9 +135,14 @@ export function applyLiveSessionAction(
         : action.type === 'finish-media' ? 'finished'
           : undefined;
   if (command === undefined) throw new LiveSessionError('invalid-argument', 'Unsupported live action.');
+  const mode = action.type === 'play-media' ? action.mode === 'original' ? 'original' : undefined : session.mediaPlaybackMode;
+  if (mode === 'original' && (!session.answerRevealed || !slide.isQuestion || !originalYoutubeSource(slide))) {
+    throw new LiveSessionError('failed-precondition', 'Original video requires an explicitly revealed answer and a supported source.');
+  }
   const mediaPlaybackState = command === 'play' || command === 'replay' ? 'preparing'
     : command === 'finished' ? 'finished' : 'idle';
-  return { ...session, ...common, mediaCommand: command, mediaPlaybackState, mediaGeneration: session.mediaGeneration + 1 };
+  const { mediaPlaybackMode, ...clean } = session; void mediaPlaybackMode;
+  return { ...clean, ...common, ...(mode ? { mediaPlaybackMode: mode } : {}), mediaCommand: command, mediaPlaybackState, mediaGeneration: session.mediaGeneration + 1 };
 }
 
 export function applyMediaPlaybackReport(

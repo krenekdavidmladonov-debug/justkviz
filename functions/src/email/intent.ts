@@ -20,6 +20,22 @@ interface EmailIntentState {
   readonly leaseUntil: Timestamp | null;
 }
 
+export interface RegistrationOwnerNotificationContent {
+  readonly eventTitle: string;
+  readonly startsAtMillis: number;
+  readonly timeZone: string;
+  readonly teamName: string;
+  readonly memberCount: number;
+}
+export interface RegistrationOwnerNotificationIntent extends EmailIntentState {
+  readonly type: 'registration-organizer-notification';
+  readonly content: RegistrationOwnerNotificationContent;
+  readonly recipientPolicy: 'future-public-registration-owner';
+  readonly provenance: 'public-registration-create';
+  readonly ownerUid: string;
+  readonly registrationCreatedAt: Timestamp;
+}
+
 export interface RegistrationEmailIntent extends EmailIntentState {
   readonly type: RegistrationEmailType;
   readonly content: RegistrationEmailContent;
@@ -30,7 +46,7 @@ export interface EventTeamEmailIntent extends EmailIntentState {
   readonly type: 'event-team-message';
   readonly campaignId: string;
 }
-export type EmailIntent = RegistrationEmailIntent | EventTeamEmailIntent;
+export type EmailIntent = RegistrationEmailIntent | EventTeamEmailIntent | RegistrationOwnerNotificationIntent;
 
 // Called only after the domain transaction has authorized and validated its operation.
 // No raw token, full URL, provider body or client-supplied destination enters the audit.

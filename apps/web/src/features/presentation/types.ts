@@ -46,6 +46,7 @@ export interface SlidePresentationInput {
 }
 
 export interface SlideRenderInput {
+  readonly mediaPlaybackMode?: 'original';
   readonly design?: SlideDesign;
   readonly roundTitle?: string;
   readonly kind: string;
@@ -69,6 +70,7 @@ export interface SlideRenderInput {
 }
 
 export interface NormalizedSlideRenderModel {
+  readonly mediaPlaybackMode?: 'original';
   readonly design: SlideDesign;
   readonly roundTitle?: string;
   readonly contentKind: SlideContentKind;

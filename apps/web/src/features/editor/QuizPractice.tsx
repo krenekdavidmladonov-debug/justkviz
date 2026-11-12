@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { canHideInfoSlide, resolveSlideDesign, resolveLegacySlideAppearance, semanticQuestionType } from '@filmovy-kviz/quiz-domain';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { originalYoutubeSource, canHideInfoSlide, resolveSlideDesign, resolveLegacySlideAppearance, semanticQuestionType } from '@filmovy-kviz/quiz-domain';
 import type { EditorQuiz, EditorSlide } from './types';
 import { SlideRenderer } from '../presentation/SlideRenderer';
-import { MediaPlayer } from '../presentation/MediaPlayer';
 import type { MediaPlaybackCommand } from '../presentation/types';
+import { usePrivateMediaPrefetch } from '../media/usePrivateMediaPrefetch';
+import { liveNavigationDirection } from '../live/navigationKeys';
 
 export function practiceSlides(quiz: EditorQuiz): readonly EditorSlide[] {
   // Rehearse the same persisted stream consumed by snapshots and live sessions.
@@ -37,22 +38,41 @@ export function QuizPractice({ quiz, onClose }: { quiz: EditorQuiz; onClose: () 
   const slides = useMemo(() => practiceSlides(quiz), [quiz]);
   const [index, setIndex] = useState(0), [answer, setAnswer] = useState(false), [recapId, setRecapId] = useState('');
   const [command, setCommand] = useState<MediaPlaybackCommand>('idle'), [generation, setGeneration] = useState(1);
+  const [originalVideo, setOriginalVideo] = useState(false);
   const original = slides[index]!;
-  const recapQuestions = quiz.slides.filter(item => item.isQuestion && item.roundId === original.roundId);
+  usePrivateMediaPrefetch(quiz, original.id, true, quiz.id);
+  const recapQuestions = useMemo(() => quiz.slides.filter(item => item.isQuestion && item.roundId === original.roundId), [quiz, original.roundId]);
   const slide = original.kind === 'recap' ? recapQuestions.find(item => item.id === recapId) ?? original : original;
   const type = semanticQuestionType(slide);
   const showAnswer = original.kind === 'recap' ? slide.isQuestion : answer;
-  const change = (next: number) => { setIndex(next); setAnswer(false); setRecapId(''); setCommand('idle'); setGeneration(n => n + 1); };
+  const originalSource = showAnswer && originalVideo ? originalYoutubeSource(slide) : undefined;
+  const renderedSlide = useMemo(() => ({
+    ...slide,
+    ...resolveLegacySlideAppearance(quiz.defaultAppearance, slide),
+    design: resolveSlideDesign(quiz.defaultDesign, quiz.slides.find(item => item.roundId === slide.roundId && ['round', 'roundheader', 'round-header', 'section'].includes(item.kind))?.design ?? quiz.slides.find(item => item.roundId === slide.roundId && item.kind === 'intro' && !item.isQuestion)?.design, slide.design, slide.answerDesign, showAnswer),
+    ...(showAnswer ? { revealedAnswer: slide.correctAnswer } : {}),
+    ...(originalSource ? { mediaPlaybackMode: 'original' as const, mediaSource: originalSource, clipStartSeconds: 0, clipEndSeconds: null } : {}),
+  }), [quiz, slide, showAnswer, originalSource]);
+  const mediaFinished = useCallback(() => setCommand('finished'), []);
+  const change = (next: number) => { setIndex(next); setAnswer(false); setRecapId(''); setOriginalVideo(false); setCommand('idle'); setGeneration(n => n + 1); };
   const run = (next: MediaPlaybackCommand) => { setCommand(next); setGeneration(n => n + 1); };
-  return <dialog ref={dialogRef} className="private-practice" aria-modal="true" aria-label="Soukromá zkouška kvízu" onKeyDown={trapBoundaryTab} style={{ margin: 0, width: '100%', height: '100%', maxWidth: 'none', maxHeight: 'none', boxSizing: 'border-box', border: 0, color: 'inherit' }} onCancel={event => { event.preventDefault(); onClose(); }}>
+  const keyboardNavigation = (event: KeyboardEvent<HTMLDialogElement>) => {
+    trapBoundaryTab(event);
+    const direction = liveNavigationDirection(event.nativeEvent, event.currentTarget);
+    if (direction === undefined) return;
+    event.preventDefault();
+    const next = index + direction;
+    if (next >= 0 && next < slides.length) change(next);
+  };
+  return <dialog ref={dialogRef} className="private-practice" aria-modal="true" aria-label="Soukromá zkouška kvízu" onKeyDown={keyboardNavigation} style={{ margin: 0, width: '100%', height: '100%', maxWidth: 'none', maxHeight: 'none', boxSizing: 'border-box', border: 0, color: 'inherit' }} onCancel={event => { event.preventDefault(); onClose(); }}>
     <div className="practice-content" style={{ display: 'flex', flexDirection: 'column', flex: 1, background: 'var(--color-background)' }}>
     <header><strong>Soukromá zkouška · {index + 1} / {slides.length}</strong><span>Bez živé publikace</span><button type="button" onClick={event => { const content = event.currentTarget.closest('.practice-content'); if (content && document.fullscreenElement === null) void content.requestFullscreen().catch(() => {}); }}>Zvětšit</button><button ref={closeRef} type="button" onClick={onClose}>Zavřít zkoušku</button></header>
-    <div className="practice-stage" data-slide-id={original.id}><SlideRenderer key={slide.id} quizTitle={quiz.title} mode={showAnswer ? 'recap' : undefined} slide={{ ...slide, ...resolveLegacySlideAppearance(quiz.defaultAppearance, slide), design: resolveSlideDesign(quiz.defaultDesign, quiz.slides.find(item => item.roundId === slide.roundId && ['round', 'roundheader', 'round-header', 'section'].includes(item.kind))?.design ?? quiz.slides.find(item => item.roundId === slide.roundId && item.kind === 'intro' && !item.isQuestion)?.design, slide.design, slide.answerDesign, showAnswer), ...(showAnswer ? { revealedAnswer: slide.correctAnswer } : {}) }} mediaCommand={command} mediaGeneration={generation} onMediaFinished={() => setCommand('finished')} /></div>
-    {type === 'audio' && !showAnswer && original.kind !== 'recap' && slide.mediaSource && <div className="practice-audio"><MediaPlayer key={slide.id} source={slide.mediaSource} command={command} generation={generation} startSeconds={slide.clipStartSeconds ?? 0} {...(slide.clipEndSeconds === null ? {} : { endSeconds: slide.clipEndSeconds })} onFinished={() => setCommand('finished')} /></div>}
-    <footer><button type="button" disabled={index === 0} onClick={() => change(index - 1)}>Předchozí</button><button type="button" disabled={index === slides.length - 1} onClick={() => change(index + 1)}>Další</button>
-      {original.isQuestion && <button type="button" onClick={() => { setAnswer(value => !value); run('stop'); }}>{answer ? 'Skrýt odpověď' : 'Odhalit odpověď ve zkoušce'}</button>}
-      {original.kind === 'recap' && <label>Otázka rekapitulace<select value={recapId} onChange={event => { setRecapId(event.target.value); run('stop'); }}><option value="">Vyberte otázku</option>{recapQuestions.map(item => <option key={item.id} value={item.id}>{item.questionNumber}. {item.text || item.title}</option>)}</select></label>}
-      {['audio','video'].includes(type) && <><button type="button" onClick={() => run('play')}>Přehrát</button><button type="button" onClick={() => run('stop')}>Zastavit</button><button type="button" onClick={() => run('replay')}>Pustit znovu</button></>}
+    <div className="practice-stage" data-slide-id={original.id}><SlideRenderer key={slide.id} playPrivateAudio quizTitle={quiz.title} mode={showAnswer ? 'recap' : undefined} slide={renderedSlide} mediaCommand={command} mediaGeneration={generation} onMediaFinished={mediaFinished} /></div>
+    <footer><button type="button" title="Šipka vlevo" disabled={index === 0} onClick={() => change(index - 1)}>Předchozí</button><button type="button" title="Šipka vpravo nebo mezerník" disabled={index === slides.length - 1} onClick={() => change(index + 1)}>Další</button>
+      {original.isQuestion && <button type="button" onClick={() => { setAnswer(value => !value); setOriginalVideo(false); run('stop'); }}>{answer ? 'Skrýt odpověď' : 'Odhalit odpověď ve zkoušce'}</button>}
+      {original.kind === 'recap' && <label>Otázka rekapitulace<select value={recapId} onChange={event => { setRecapId(event.target.value); setOriginalVideo(false); run('stop'); }}><option value="">Vyberte otázku</option>{recapQuestions.map(item => <option key={item.id} value={item.id}>{item.questionNumber}. {item.text || item.title}</option>)}</select></label>}
+      {['audio','video'].includes(type) && <><button type="button" onClick={() => { setOriginalVideo(false); run('play'); }}>Přehrát</button><button type="button" onClick={() => run('stop')}>Zastavit</button><button type="button" onClick={() => run('replay')}>Pustit znovu</button></>}
+      {showAnswer && originalYoutubeSource(slide) && <button type="button" onClick={() => { setOriginalVideo(true); run('play'); }}>Přehrát celé původní video z YouTube</button>}
     </footer>
     </div>
   </dialog>;

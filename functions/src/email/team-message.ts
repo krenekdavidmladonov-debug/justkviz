@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
+import { brand } from '@filmovy-kviz/quiz-domain';
 import { HttpsError } from 'firebase-functions/v2/https';
 
 import { mailbox } from './gmail.js';
+import { emailBrandHeader } from './brand.js';
 import { escapeHtml, type EmailBody } from './templates.js';
 
 export const MAX_TEAM_MESSAGE_RECIPIENTS = 450; // Below the existing 475-write snapshot safety budget.
@@ -49,10 +51,10 @@ export function recipientSnapshot(eventId: string, rows: readonly { id: string; 
   if (recipients.length > MAX_TEAM_MESSAGE_RECIPIENTS) throw new HttpsError('resource-exhausted', 'Jedna zpráva podporuje nejvýše 450 příjemců. Nic nebylo odesláno.');
   return recipients.sort((a, b) => a.registrationId.localeCompare(b.registrationId));
 }
-export function eventTeamMessage(content: TeamMessageContent): EmailBody {
+export function eventTeamMessage(content: TeamMessageContent, origin?: string): EmailBody {
   const paragraphs = content.message.split('\n').map(line => line ? '<p>' + escapeHtml(line) + '</p>' : '<br>').join('');
-  return { subject: content.subject, text: [content.eventTitle, content.message, 'JustKvíz'].join('\n\n'),
-    html: '<!doctype html><html lang="cs"><head><meta charset="utf-8"></head><body style="font-family:Arial,sans-serif;line-height:1.6;color:#202938;padding:24px"><main style="max-width:560px;margin:auto"><p>JustKvíz</p><h1>' + escapeHtml(content.eventTitle) + '</h1>' + paragraphs + '</main></body></html>' };
+  return { subject: content.subject, text: [content.eventTitle, content.message, brand.name].join('\n\n'),
+    html: '<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="font-family:Arial,sans-serif;line-height:1.6;color:#202938;padding:24px"><main style="max-width:560px;margin:auto"><div style="padding:20px 24px;background:#0b1220;border-top:4px solid #ffc107">' + emailBrandHeader(origin) + '</div><h1>' + escapeHtml(content.eventTitle) + '</h1>' + paragraphs + '<p>' + brand.name + '</p></main></body></html>' };
 }
 export function deliverySummary(statuses: readonly unknown[]) {
   if (statuses.some(status => !['pending', 'processing', 'sent', 'failed'].includes(status as string))) throw new HttpsError('failed-precondition', 'Stav zprávy je neplatný.');

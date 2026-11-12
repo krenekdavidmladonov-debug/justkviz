@@ -20,7 +20,7 @@ const login = (client, role) => signInWithEmailAndPassword(client.auth, `${role}
 const denied = (promise, code) => assert.rejects(promise, error => error.code === `functions/${code}`);
 const state = async id => (await db.doc(`events/${id}`).get()).data();
 async function event(teamCapacity = 5, peopleCapacity = 20) {
-  return (await staff.call('createEvent', { expectedRevision: 0, event: { title: 'Synthetic manual QA', startsAt: '2031-01-01T18:00:00Z', timeZone: 'Europe/Prague', venue: { name: 'Test', publicLocation: 'Test' }, teamCapacity, peopleCapacity, teamSizeMin: 2, teamSizeMax: Math.min(6, peopleCapacity) } })).eventId;
+  return (await staff.call('createEvent', { expectedRevision: 0, event: { title: 'Synthetic manual QA', startsAt: '2031-01-01T18:00:00Z', timeZone: 'Europe/Prague', venue: { name: 'Test', publicLocation: 'Test' }, teamCapacity, peopleCapacity, teamSizeMin: 2, teamSizeMax: 4 } })).eventId;
 }
 const manual = (id, key, name = 'Manual QA', size = 2) => staff.call('adminAddEventTeam', { eventId: id, requestId: key, teamName: name, memberCount: size });
 const online = (id, name = 'Online QA') => publicClient.call('createEventRegistration', { eventId: id, teamName: name, memberCount: 2, contactEmail: 'synthetic@example.test', source: 'manual', createdBy: 'spoofed' });

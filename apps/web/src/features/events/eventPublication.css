@@ -1,0 +1,6 @@
+.event-publication-control { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+.event-publication-dialog { box-sizing:border-box; width:min(32rem,94vw); max-height:88vh; overflow:auto; }
+.event-publication-dialog p { line-height:1.6; }
+.event-publication-dialog .team-tool-actions { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:12px; margin-top:20px; }
+.public-event-history { margin-top:32px; }
+.public-event-card .event-description { overflow-wrap:anywhere; white-space:pre-line; }

@@ -43,6 +43,7 @@ export function SlidePreview({
     <div className="preview-stage" data-slide-position={position}>
       <SlideRenderer
         compact
+        mediaEnabled={false}
         quizTitle={quizTitle}
         {...(showAnswer ? { mode: 'recap' as const } : {})}
         slide={{

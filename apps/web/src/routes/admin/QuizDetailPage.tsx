@@ -7,11 +7,12 @@ import {
   formatQuizDate,
   getQuizDataError,
   questionTypeLabels,
-  quizStatusLabels,
   roundTypeLabels,
 } from '../../features/quizzes/presentation';
 import { getQuizDetail } from '../../features/quizzes/quizRepository';
 import type { QuizDetail } from '../../features/quizzes/types';
+import { QuizStatusControl } from '../../features/quizzes/QuizStatusControl';
+import { LiveStartButton } from '../../features/live/LiveStartButton';
 
 export function QuizDetailPage() {
   const { quizId } = useParams<{ quizId: string }>();
@@ -74,7 +75,7 @@ export function QuizDetailPage() {
       <header className="quiz-detail-heading">
         <div>
           <div className="detail-kicker">
-            <span className={`quiz-status status-${quiz.status}`}>{quizStatusLabels[quiz.status]}</span>
+            <QuizStatusControl quiz={quiz} onChanged={loadQuiz} />
             <span>Poslední úprava {formatQuizDate(quiz.updatedAt)}</span>
           </div>
           <h1>{quiz.title}</h1>
@@ -85,7 +86,7 @@ export function QuizDetailPage() {
             <div><dt>Kola</dt><dd>{quiz.roundCount}</dd></div>
             <div><dt>Otázky</dt><dd>{quiz.questionCount}</dd></div>
           </dl>
-          <Link className="primary-button" to={`/admin/quizzes/${encodeURIComponent(quiz.id)}/readiness`}>Spustit kvíz</Link>
+          <LiveStartButton quizId={quiz.id} />
           <Link className="secondary-link" to={`/admin/quizzes/${encodeURIComponent(quiz.id)}/readiness`}>Zkontrolovat připravenost</Link>
           <Link className="secondary-link" to={`/admin/quizzes/${encodeURIComponent(quiz.id)}/edit`}>Otevřít editor</Link>
         </div>

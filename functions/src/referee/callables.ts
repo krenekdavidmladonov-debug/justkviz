@@ -6,8 +6,8 @@ import { accessActor, authorize, freshIdentity, securedOnCall, runAccessTransact
 import { getFirestore, Timestamp, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError, onCall, type CallableRequest } from 'firebase-functions/v2/https';
 import { isObject } from '../events/validation.js';
-import { commitScore, scoreHash } from '../scoring/core.js';
-import { parseScoreRequest } from '../scoring/validation.js';
+import { commitScore, commitRoundScores, scoreHash } from '../scoring/core.js';
+import { parseScoreRequest, parseRoundScoreRequest } from '../scoring/validation.js';
 
 const options = { region: 'europe-west1', cors: true, maxInstances: 10 };
 const db = () => getFirestore();
@@ -125,6 +125,15 @@ export const readRefereeHistory = onCall(options, async request => {
 export const saveRefereeScore = onCall(options, async request => {
   const data = record(request.data), c = credential(data.credential); await throttle(request);
   if (request.auth) await freshIdentity(request.auth);
+  if (isObject(data.score) && 'scores' in data.score) {
+    if (Object.keys(data).some(key => !['credential', 'score'].includes(key))) throw new HttpsError('invalid-argument', 'Unsupported round request.');
+    const input = parseRoundScoreRequest(data.score); if (input.eventId !== c.eventId) throw deny();
+    return commitRoundScores(input, async transaction => {
+      if (request.auth) await authorize(request.auth, ['event.score'], { kind: 'event', id: c.eventId }, transaction);
+      const { grant } = await accessIn(transaction, c);
+      return { key: 'referee:' + c.accessId, audit: { actorAccessId: c.accessId, actorLabel: String(grant.label) } };
+    });
+  }
   const input = parseScoreRequest(data.score); if (input.eventId !== c.eventId) throw deny();
   return commitScore(input, async transaction => {
     if (request.auth) await authorize(request.auth, ['event.score'], { kind: 'event', id: c.eventId }, transaction);

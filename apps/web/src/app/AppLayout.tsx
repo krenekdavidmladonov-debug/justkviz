@@ -7,7 +7,7 @@ export function AppLayout() {
   return (
     <div className="app-shell">
       <header className="site-header">
-        <NavLink className="brand" to="/events" aria-label={`${productConfig.adminLabel} – úvod`}>
+        <NavLink className="brand" to="/" aria-label={`${productConfig.adminLabel} – úvod`}>
           <Brand />
         </NavLink>
         <NavLink className="nav-link" to="/admin">Administrace</NavLink>
@@ -15,6 +15,7 @@ export function AppLayout() {
       <main className="page-shell">
         <Outlet />
       </main>
+      <footer className="site-credit"><NavLink to="/privacy">Ochrana osobních údajů</NavLink></footer>
     </div>
   );
 }

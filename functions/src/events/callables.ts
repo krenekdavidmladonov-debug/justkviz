@@ -1,12 +1,13 @@
+import { assertPlayableQuizSource } from '../quizzes/playable.js';
 import { eventSessions } from '../live/event-lifecycle.js';
 import { assertQuizAssets } from '../media/model.js';
 import { assertEventOperational } from './guards.js';
+import { storedEventPricing } from './pricing.js';
 export { cancelEvent, archiveEvent } from './management.js';
 import {
   mapEditorQuiz,
   mapEditorSlide,
   runQuizPreflight,
-  type PreflightIssue,
 } from '@filmovy-kviz/quiz-domain';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import {
@@ -29,13 +30,13 @@ import {
 } from './model.js';
 import {
   buildQuizSnapshotMetadata,
-  decidePreflightLock,
   snapshotWriteCount,
 } from './snapshot-model.js';
 import type {
   EventConfigurationInput,
   EventLifecycleStatus,
   EventMutationResponse,
+  EventPricing,
   EventScoringConfiguration,
   EventVenueInput,
   RegistrationStatus,
@@ -43,7 +44,6 @@ import type {
 import {
   expectedRevision,
   isObject,
-  requestedBoolean,
   requestedEventConfiguration,
   requiredId,
 } from './validation.js';
@@ -55,6 +55,7 @@ const maximumSnapshotWrites = 475;
 
 interface AdminActor { readonly uid: string; readonly role: 'admin' }
 interface StoredEvent {
+  readonly pricing: EventPricing;
   readonly title: string;
   readonly description: string;
   readonly startsAt: unknown;
@@ -116,6 +117,7 @@ function storedEvent(snapshot: DocumentSnapshot): StoredEvent {
     throw new HttpsError('failed-precondition', 'Event is malformed.');
   }
   return {
+    pricing: storedEventPricing(data.pricing),
     title: storedText(data, 'title', 'Event'),
     description: typeof data.description === 'string' ? data.description : '',
     startsAt: data.startsAt,
@@ -153,7 +155,7 @@ function assertExpectedRevision(event: StoredEvent, requested: number): void {
 }
 
 function publicProjection(
-  event: Pick<StoredEvent, 'title' | 'startsAt' | 'timeZone' | 'venue' | 'registrationStatus' | 'registrationPublished' | 'teamSizeMin' | 'teamSizeMax' | 'teamCapacity' | 'peopleCapacity' | 'acceptedTeams' | 'acceptedPeople' | 'registrationOpensAt' | 'registrationClosesAt'>,
+  event: Pick<StoredEvent, 'pricing' | 'title' | 'description' | 'lifecycleStatus' | 'startsAt' | 'timeZone' | 'venue' | 'registrationStatus' | 'registrationPublished' | 'teamSizeMin' | 'teamSizeMax' | 'teamCapacity' | 'peopleCapacity' | 'acceptedTeams' | 'acceptedPeople' | 'registrationOpensAt' | 'registrationClosesAt'>,
   revision: number,
   updatedAt: Timestamp,
 ): Record<string, unknown> {
@@ -162,6 +164,7 @@ function publicProjection(
 
 function configurationFields(configuration: EventConfigurationInput): Record<string, unknown> {
   return {
+    pricing: storedEventPricing(configuration.pricing),
     description: configuration.description ?? '',
     title: configuration.title,
     startsAt: Timestamp.fromDate(configuration.startsAt),
@@ -176,16 +179,6 @@ function configurationFields(configuration: EventConfigurationInput): Record<str
 
 function response(eventId: string, revision: number, lifecycleStatus: EventLifecycleStatus, registrationStatus: RegistrationStatus): EventMutationResponse {
   return { eventId, revision, lifecycleStatus, registrationStatus };
-}
-
-function safePreflightIssues(issues: readonly PreflightIssue[]): readonly Record<string, unknown>[] {
-  return issues.map((issue) => ({
-    severity: issue.severity,
-    code: issue.code,
-    category: issue.category,
-    reference: issue.reference,
-    ...(issue.fixTarget === undefined ? {} : { fixTarget: issue.fixTarget }),
-  }));
 }
 
 export const createEvent = securedOnCall('createEvent', callableOptions, async (request): Promise<EventMutationResponse> => {
@@ -223,7 +216,10 @@ export const createEvent = securedOnCall('createEvent', callableOptions, async (
     grantCreatedResource(transaction, 'event', eventRef.id);
     transaction.create(eventRef, eventData);
     transaction.create(publicRef, publicProjection({
+      pricing: storedEventPricing(configuration.pricing),
       title: configuration.title,
+      description: configuration.description ?? '',
+      lifecycleStatus,
       startsAt: Timestamp.fromDate(configuration.startsAt),
       timeZone: configuration.timeZone,
       venue: configuration.venue,
@@ -255,18 +251,20 @@ export const updateEvent = securedOnCall('updateEvent', callableOptions, async (
     if (!canMutateEvent(current.lifecycleStatus) && current.lifecycleStatus !== 'live') {
       throw new HttpsError('failed-precondition', 'This event can no longer be edited.');
     }
-    if (configuration.teamCapacity < current.acceptedTeams
-      || configuration.peopleCapacity < current.acceptedPeople) {
-      throw new HttpsError('failed-precondition', `Kapacitu nelze snížit pod ${current.acceptedTeams} přijatých týmů a ${current.acceptedPeople} účastníků.`);
+    if (configuration.teamCapacity < current.acceptedTeams) {
+      throw new HttpsError('failed-precondition', `Kapacitu nelze snížit pod ${current.acceptedTeams} přijatých týmů.`);
     }
     const sessions = await eventSessions(transaction, eventId);
     const live = sessions.some(s => s.session.status !== 'ended');
-    if (live && (configuration.teamCapacity !== current.teamCapacity || configuration.peopleCapacity !== current.peopleCapacity || configuration.teamSizeMin !== current.teamSizeMin || configuration.teamSizeMax !== current.teamSizeMax)) throw new HttpsError('failed-precondition', 'Během živého běhu lze měnit jen název, termín, místo a popis.');
+    if (live && (configuration.teamCapacity !== current.teamCapacity || configuration.peopleCapacity !== current.peopleCapacity || configuration.teamSizeMin !== current.teamSizeMin || configuration.teamSizeMax !== current.teamSizeMax)) throw new HttpsError('failed-precondition', 'Během živého běhu lze měnit jen název, termín, místo, popis a cenu.');
     const now = Timestamp.now();
     const revision = current.revision + 1;
-    const fields = configurationFields(configuration);
-    const capacityFull = current.acceptedTeams >= configuration.teamCapacity
-      || current.acceptedPeople >= configuration.peopleCapacity;
+    const pricing = storedEventPricing(configuration.pricing === undefined ? current.pricing : {
+      ...configuration.pricing,
+      hidden: configuration.pricing.hidden ?? current.pricing.hidden ?? false,
+    });
+    const fields = configurationFields({ ...configuration, pricing });
+    const capacityFull = current.acceptedTeams >= configuration.teamCapacity;
     const registrationStatus = current.registrationStatus === 'open' && capacityFull
       ? 'full'
       : current.registrationStatus === 'full' && !capacityFull ? 'open' : current.registrationStatus;
@@ -274,6 +272,8 @@ export const updateEvent = securedOnCall('updateEvent', callableOptions, async (
     transaction.set(publicRef, publicProjection({
       ...current,
       ...fields,
+      pricing,
+      description: configuration.description ?? '',
       registrationStatus,
       startsAt: fields.startsAt,
       venue: configuration.venue,
@@ -288,7 +288,6 @@ export const lockEventQuiz = securedOnCall('lockEventQuiz', callableOptions, asy
   const quizId = requiredId(request.data, 'quizId');
   const requestedEventRevision = expectedRevision(request.data);
   const requestedQuizRevision = expectedRevision(request.data, 'expectedQuizRevision');
-  const acknowledgeWarnings = requestedBoolean(request.data, 'acknowledgeWarnings');
   const eventRef = db.collection('events').doc(eventId);
   const publicRef = db.collection('publicEvents').doc(eventId);
   const quizRef = db.collection('quizzes').doc(quizId);
@@ -312,7 +311,7 @@ export const lockEventQuiz = securedOnCall('lockEventQuiz', callableOptions, asy
       throw new HttpsError('failed-precondition', 'Quiz revision is malformed.');
     }
     if (actualQuizRevision !== requestedQuizRevision) {
-      throw new HttpsError('aborted', 'Quiz changed after readiness review. Reload and try again.');
+      throw new HttpsError('aborted', 'Quiz changed after selection. Reload and try again.');
     }
     if (snapshotWriteCount(slideSnapshot.size, roundSnapshot.size) > maximumSnapshotWrites) {
       throw new HttpsError('resource-exhausted', 'Quiz is too large for one atomic event snapshot.');
@@ -334,38 +333,16 @@ export const lockEventQuiz = securedOnCall('lockEventQuiz', callableOptions, asy
       });
       quiz = mapEditorQuiz(quizSnapshot.id, quizData, slides);
     } catch {
-      throw new HttpsError('failed-precondition', 'Quiz cannot be mapped for readiness validation.');
+      throw new HttpsError('failed-precondition', 'Quiz source is malformed.');
     }
+    assertPlayableQuizSource(quiz.slideCount, slideSnapshot.docs.map(slide => slide.data()));
     await assertQuizAssets(transaction, db, quizId, slideSnapshot.docs.map(slide => slide.data()));
     const preflight = runQuizPreflight(quiz);
-    const lockDecision = decidePreflightLock(preflight, acknowledgeWarnings);
-    if (lockDecision === 'BLOCKED') {
-      throw new HttpsError('failed-precondition', 'Quiz has blocking readiness issues.', {
-        reason: 'QUIZ_BLOCKED',
-        status: preflight.status,
-        blockerCount: preflight.blockerCount,
-        warningCount: preflight.warningCount,
-        issues: safePreflightIssues(preflight.issues),
-      });
-    }
-    if (lockDecision === 'WARNINGS_REQUIRE_ACKNOWLEDGEMENT') {
-      throw new HttpsError('failed-precondition', 'Quiz warnings require explicit acknowledgement.', {
-        reason: 'WARNINGS_REQUIRE_ACKNOWLEDGEMENT',
-        status: preflight.status,
-        blockerCount: 0,
-        warningCount: preflight.warningCount,
-        issues: safePreflightIssues(preflight.issues),
-      });
-    }
-
     const now = Timestamp.now();
     const revision = event.revision + 1;
-    const preflightStatus: 'READY' | 'READY_WITH_WARNINGS' = preflight.warningCount > 0
-      ? 'READY_WITH_WARNINGS'
-      : 'READY';
     const preflightSummary = {
-      status: preflightStatus,
-      blockerCount: 0,
+      status: preflight.status,
+      blockerCount: preflight.blockerCount,
       warningCount: preflight.warningCount,
     } as const;
     transaction.create(snapshotRef, { ...buildQuizSnapshotMetadata(quiz, preflight, actor.uid, now), eventId });
@@ -391,7 +368,7 @@ export const lockEventQuiz = securedOnCall('lockEventQuiz', callableOptions, asy
       updatedAt: now,
       updatedBy: actor.uid,
     });
-    transaction.set(publicRef, publicProjection(event, revision, now));
+    transaction.set(publicRef, publicProjection({ ...event, lifecycleStatus: 'ready' }, revision, now));
     return {
       ...response(eventId, revision, 'ready', event.registrationStatus),
       snapshotId: snapshotRef.id,

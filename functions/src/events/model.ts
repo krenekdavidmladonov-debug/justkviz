@@ -5,6 +5,7 @@ import type {
   PublicEventProjectionInput,
   RegistrationStatus,
 } from './types.js';
+import { publicEventPricing } from './pricing.js';
 
 export const defaultScoringConfiguration: EventScoringConfiguration = {
   unitScale: 2,
@@ -12,10 +13,17 @@ export const defaultScoringConfiguration: EventScoringConfiguration = {
   started: false,
 };
 
+export const maximumTeamMembers = 4;
+
+interface ConfigurationValidationOptions {
+  // Publication must still validate retained events without rewriting their team limits.
+  readonly allowLegacyTeamSize?: boolean;
+}
+
 export function validateEventCapacity(configuration: Pick<
   EventConfigurationInput,
   'teamCapacity' | 'peopleCapacity' | 'teamSizeMin' | 'teamSizeMax'
->): readonly string[] {
+>, options: ConfigurationValidationOptions = {}): readonly string[] {
   const issues: string[] = [];
   if (!Number.isInteger(configuration.teamCapacity) || configuration.teamCapacity <= 0) {
     issues.push('teamCapacity must be a positive integer.');
@@ -30,16 +38,14 @@ export function validateEventCapacity(configuration: Pick<
     || configuration.teamSizeMax < configuration.teamSizeMin) {
     issues.push('teamSizeMax must be an integer greater than or equal to teamSizeMin.');
   }
-  if (Number.isInteger(configuration.peopleCapacity)
-    && Number.isInteger(configuration.teamSizeMax)
-    && configuration.teamSizeMax > configuration.peopleCapacity) {
-    issues.push('teamSizeMax cannot exceed peopleCapacity.');
+  if (!options.allowLegacyTeamSize && configuration.teamSizeMax > maximumTeamMembers) {
+    issues.push(`teamSizeMax cannot exceed ${maximumTeamMembers}.`);
   }
   return issues;
 }
 
-export function validateEventConfiguration(configuration: EventConfigurationInput): readonly string[] {
-  const issues = [...validateEventCapacity(configuration)];
+export function validateEventConfiguration(configuration: EventConfigurationInput, options: ConfigurationValidationOptions = {}): readonly string[] {
+  const issues = [...validateEventCapacity(configuration, options)];
   if (configuration.title.trim() === '') issues.push('title is required.');
   if (configuration.venue.name.trim() === '') issues.push('venue.name is required.');
   if (configuration.venue.publicLocation.trim() === '') issues.push('venue.publicLocation is required.');
@@ -55,6 +61,9 @@ export function validateEventConfiguration(configuration: EventConfigurationInpu
 export function buildPublicEventProjection(input: PublicEventProjectionInput): Record<string, unknown> {
   return {
     title: input.title,
+    pricing: publicEventPricing(input.pricing),
+    ...(typeof input.description === 'string' ? { description: input.description } : {}),
+    ...(isEventLifecycleStatus(input.lifecycleStatus) ? { lifecycleStatus: input.lifecycleStatus } : {}),
     startsAt: input.startsAt,
     timeZone: input.timeZone,
     venueName: input.venue.name,

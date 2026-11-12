@@ -1,5 +1,6 @@
 import { eventDisposition } from '@filmovy-kviz/quiz-domain';
 import { Timestamp, type DocumentData } from 'firebase/firestore';
+import { mapEventPricing, mapPublicEventPricing } from './eventPricing';
 
 import type {
   EventLifecycleStatus,
@@ -81,6 +82,7 @@ export function mapEvent(id: string, value: DocumentData): EventRecord {
   }
   return {
     id,
+    pricing: mapEventPricing(data.pricing),
     description: typeof data.description === 'string' ? data.description : '',
     disposition: eventDisposition(data),
     ...(typeof data.liveSessionId === 'string' ? { liveSessionId: data.liveSessionId } : {}),
@@ -117,6 +119,9 @@ export function mapPublicEvent(id: string, value: DocumentData): PublicEventReco
   if (teamSize === undefined) throw new Error('Veřejná konfigurace akce je neplatná.');
   return {
     id,
+    pricing: mapPublicEventPricing(data.pricing),
+    ...(typeof data.description === 'string' ? { description: data.description } : {}),
+    ...(data.lifecycleStatus === undefined ? {} : { lifecycleStatus: lifecycleStatus(data.lifecycleStatus) }),
     title: text(data, 'title'),
     startsAt: date(data.startsAt, 'startsAt'),
     timeZone: text(data, 'timeZone'),

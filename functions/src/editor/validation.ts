@@ -96,8 +96,9 @@ export function validatePrintTemplate(value: unknown): PrintTemplate {
   if (Object.keys(normalized).length !== Object.keys(value).length) throw new QuizEditorError('invalid-argument', 'Print template is invalid.');
   return normalized;
 }
-export function validateQuizMetadata(value: unknown): { readonly title: string; readonly description: string; readonly printTemplate?: PrintTemplate; readonly defaultDesign?: SlideDesign; readonly resultTemplates?: ResultTemplates; readonly defaultAppearance?: { readonly backgroundImage: string; readonly backgroundOverlay: number; readonly imageLayout: 'split' | 'stacked' } } {
+export function validateQuizMetadata(value: unknown): { readonly title: string; readonly description: string; readonly status?: 'draft' | 'ready'; readonly printTemplate?: PrintTemplate; readonly defaultDesign?: SlideDesign; readonly resultTemplates?: ResultTemplates; readonly defaultAppearance?: { readonly backgroundImage: string; readonly backgroundOverlay: number; readonly imageLayout: 'split' | 'stacked' } } {
   if (!isObject(value)) throw new QuizEditorError('invalid-argument', 'Quiz metadata is required.');
+  if (value.status !== undefined && value.status !== 'draft' && value.status !== 'ready') throw new QuizEditorError('invalid-argument', 'Quiz status is invalid.');
   let defaultAppearance;
   if (value.defaultAppearance !== undefined) {
     const appearance = value.defaultAppearance;
@@ -107,6 +108,7 @@ export function validateQuizMetadata(value: unknown): { readonly title: string; 
     defaultAppearance = {backgroundImage:validateNormalizedImage(appearance.backgroundImage,'default background'),backgroundOverlay:overlay,imageLayout:appearance.imageLayout as 'split' | 'stacked'};
   }
   return {
+    ...(value.status === undefined ? {} : { status: value.status }),
     ...(value.printTemplate === undefined ? {} : { printTemplate: validatePrintTemplate(value.printTemplate) }),
     ...(value.defaultDesign === undefined ? {} : { defaultDesign: validateSlideDesign(value.defaultDesign) }),
     ...(value.resultTemplates === undefined ? {} : { resultTemplates: validateResultTemplates(value.resultTemplates) }),

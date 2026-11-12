@@ -64,20 +64,85 @@ function Assert-EventNightPath {
 function Assert-EventNightNoReparse {
   param([Parameter(Mandatory = $true)][string]$Path, [switch]$Recurse)
 
-  $current = [System.IO.Path]::GetFullPath($Path)
+  $current = [System.IO.Path]::GetFullPath((Get-EventNightLogicalPath $Path))
   while ($null -ne $current) {
-    $item = Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue
-    if ($null -ne $item) {
-      if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    $attributes = $null
+    try { $attributes = [System.IO.File]::GetAttributes((Get-EventNightNativePath $current)) }
+    catch [System.IO.FileNotFoundException] { }
+    catch [System.IO.DirectoryNotFoundException] { }
+    if ($null -ne $attributes) {
+      if (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
         Throw-QaError 'Event-night cesta obsahuje junction nebo symbolický odkaz.' 'Nepokračujte; ponechte data beze změny.'
       }
     }
     $current = [System.IO.Path]::GetDirectoryName($current)
     if ([string]::IsNullOrEmpty($current)) { break }
   }
-  if ($Recurse -and (Test-Path -LiteralPath $Path -PathType Container)) {
-    foreach ($child in Get-ChildItem -LiteralPath $Path -Force) {
-      Assert-EventNightNoReparse $child.FullName -Recurse
+  if ($Recurse -and [System.IO.Directory]::Exists((Get-EventNightNativePath $Path))) {
+    foreach ($child in [System.IO.Directory]::EnumerateFileSystemEntries((Get-EventNightNativePath $Path))) {
+      Assert-EventNightNoReparse (Get-EventNightLogicalPath $child) -Recurse
+    }
+  }
+}
+
+function Get-EventNightLogicalPath {
+  param([Parameter(Mandatory = $true)][string]$Path)
+  if ([System.IO.Path]::DirectorySeparatorChar -eq '\') {
+    if ($Path.StartsWith('\\?\UNC\')) { return '\\' + $Path.Substring(8) }
+    if ($Path.StartsWith('\\?\')) { return $Path.Substring(4) }
+  }
+  return $Path
+}
+
+function Get-EventNightNativePath {
+  param([Parameter(Mandatory = $true)][string]$Path)
+  $nativePath = [System.IO.Path]::GetFullPath((Get-EventNightLogicalPath $Path))
+  if ([System.IO.Path]::DirectorySeparatorChar -eq '\') {
+    $nativePath = if ($nativePath.StartsWith('\\')) { '\\?\UNC\' + $nativePath.Substring(2) } else { '\\?\' + $nativePath }
+  }
+  return $nativePath
+}
+
+function Get-EventNightFileSha256 {
+  param([Parameter(Mandatory = $true)][string]$Path)
+  Assert-EventNightNoReparse $Path
+  # WinPS5 Get-FileHash resolves provider paths with the legacy MAX_PATH limit.
+  # Hash the already checked literal file with a bounded, disposed .NET stream.
+  $nativePath = Get-EventNightNativePath $Path
+  if (([System.IO.File]::GetAttributes($nativePath) -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    Throw-QaError 'Event-night hash odmítl junction nebo symbolický odkaz.' 'Ponechte snapshot beze změny.'
+  }
+  $stream = $null
+  $algorithm = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    $stream = [System.IO.File]::OpenRead($nativePath)
+    return ([System.BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace('-', '').ToLowerInvariant()
+  } finally {
+    if ($null -ne $stream) { $stream.Dispose() }
+    $algorithm.Dispose()
+  }
+}
+
+function Copy-EventNightSnapshotDirectory {
+  param([string]$RepoRoot, [string]$Source, [string]$Destination)
+  Assert-EventNightPath $RepoRoot $Source
+  Assert-EventNightPath $RepoRoot $Destination
+  Assert-EventNightNoReparse $Source -Recurse
+  Assert-EventNightNoReparse $Destination
+  $nativeDestination = Get-EventNightNativePath $Destination
+  if ([System.IO.Directory]::Exists($nativeDestination) -or [System.IO.File]::Exists($nativeDestination)) {
+    Throw-QaError 'Snapshot copy target už existuje.' 'Ponechte všechny snapshoty beze změny.'
+  }
+  [System.IO.Directory]::CreateDirectory($nativeDestination) | Out-Null
+  foreach ($item in Get-ChildItem -LiteralPath (Get-EventNightNativePath $Source) -Force) {
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+      Throw-QaError 'Snapshot copy odmítl junction nebo symbolický odkaz.' 'Ponechte snapshot beze změny.'
+    }
+    $target = Join-Path $Destination $item.Name
+    if ($item.PSIsContainer) { Copy-EventNightSnapshotDirectory $RepoRoot (Get-EventNightLogicalPath $item.FullName) $target }
+    else {
+      Assert-EventNightPath $RepoRoot $target
+      [System.IO.File]::Copy((Get-EventNightNativePath $item.FullName), (Get-EventNightNativePath $target), $false)
     }
   }
 }
@@ -88,7 +153,7 @@ function Get-EventNightFileRecords {
     [string[]]$ExcludedNames = @()
   )
 
-  if (-not (Test-Path -LiteralPath $Root -PathType Container)) { return @() }
+  if (-not (Test-Path -LiteralPath (Get-EventNightNativePath $Root) -PathType Container)) { return @() }
   Assert-EventNightNoReparse $Root -Recurse
   $normalizedRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd(
     [System.IO.Path]::DirectorySeparatorChar,
@@ -96,18 +161,18 @@ function Get-EventNightFileRecords {
   )
   $rootPrefix = $normalizedRoot + [System.IO.Path]::DirectorySeparatorChar
   return @(
-    Get-ChildItem -LiteralPath $Root -File -Recurse |
+    Get-ChildItem -LiteralPath (Get-EventNightNativePath $Root) -File -Recurse |
       Where-Object { $_.Name -notin $ExcludedNames } |
       Sort-Object FullName |
       ForEach-Object {
-        $fullName = [System.IO.Path]::GetFullPath($_.FullName)
+        $fullName = [System.IO.Path]::GetFullPath((Get-EventNightLogicalPath $_.FullName))
         if (-not $fullName.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
           Throw-QaError "Soubor opustil kontrolovaný event-night adresář: $fullName" 'Nepokračujte a požádejte vývojáře o kontrolu launcheru.'
         }
         [ordered]@{
           path = $fullName.Substring($rootPrefix.Length).Replace('\', '/')
           bytes = $_.Length
-          sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          sha256 = Get-EventNightFileSha256 $fullName
         }
       }
   )
@@ -214,7 +279,7 @@ function New-EventNightSnapshotManifest {
     [Parameter(Mandatory = $true)][psobject]$Paths
   )
 
-  if (-not (Test-Path -LiteralPath (Join-Path $SnapshotDirectory 'firebase-export-metadata.json') -PathType Leaf)) {
+  if (-not (Test-Path -LiteralPath (Get-EventNightNativePath (Join-Path $SnapshotDirectory 'firebase-export-metadata.json')) -PathType Leaf)) {
     Throw-QaError 'Firebase emulator export neobsahuje metadata.' 'Ponechte poslední known-good snapshot a přípravu nebo backup zopakujte.'
   }
   $candidate = Get-EventNightCandidate $Paths
@@ -233,7 +298,7 @@ function New-EventNightSnapshotManifest {
     } }
     files = @(Get-EventNightFileRecords $SnapshotDirectory @('.event-night-manifest.json'))
   }
-  $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $SnapshotDirectory '.event-night-manifest.json') -Encoding UTF8
+  $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Get-EventNightNativePath (Join-Path $SnapshotDirectory '.event-night-manifest.json')) -Encoding UTF8
 }
 
 function Assert-EventNightSnapshot {
@@ -244,10 +309,10 @@ function Assert-EventNightSnapshot {
 
   $manifestPath = Join-Path $SnapshotDirectory '.event-night-manifest.json'
   Assert-EventNightNoReparse $SnapshotDirectory -Recurse
-  if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+  if (-not (Test-Path -LiteralPath (Get-EventNightNativePath $manifestPath) -PathType Leaf)) {
     Throw-QaError 'Persistentní snapshot nemá event-night manifest.' 'Nejdřív spusťte PREPARE_EVENT_NIGHT.cmd.'
   }
-  $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+  $manifest = Get-Content -LiteralPath (Get-EventNightNativePath $manifestPath) -Raw -Encoding UTF8 | ConvertFrom-Json
   $candidate = Get-EventNightCandidate $Paths
   if ([int]$manifest.schemaVersion -ne 1 -or
       [string]$manifest.projectId -ne $script:EventNightProjectId -or
@@ -272,7 +337,7 @@ function Backup-EventNightSnapshot {
   $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ')
   $target = Join-Path $Paths.BackupDirectory "$stamp-$Reason"
   Assert-EventNightPath $RepoRoot $target
-  Copy-Item -LiteralPath $Paths.SnapshotDirectory -Destination $target -Recurse
+  Copy-EventNightSnapshotDirectory $RepoRoot $Paths.SnapshotDirectory $target
   Assert-EventNightSnapshot $target $Paths | Out-Null
   return $target
 }
@@ -461,13 +526,40 @@ function Get-EventNightPromotionJournal {
   return $journal
 }
 
+function Move-EventNightSnapshotPath {
+  param([string]$RepoRoot, [string]$LiteralPath, [string]$Destination)
+  Assert-EventNightPath $RepoRoot $LiteralPath
+  Assert-EventNightPath $RepoRoot $Destination
+  Assert-EventNightNoReparse $LiteralPath -Recurse
+  $source = [System.IO.Path]::GetFullPath($LiteralPath)
+  $target = [System.IO.Path]::GetFullPath($Destination)
+  $comparison = if ([System.IO.Path]::DirectorySeparatorChar -eq '\') { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+  if (-not [System.IO.Path]::GetPathRoot($source).Equals([System.IO.Path]::GetPathRoot($target), $comparison)) {
+    Throw-QaError 'Snapshot rename must stay on the same volume.' 'Leave all snapshots unchanged.'
+  }
+  $nativeSource = Get-EventNightNativePath $source
+  $nativeTarget = Get-EventNightNativePath $target
+  if ([System.IO.File]::Exists($nativeTarget) -or [System.IO.Directory]::Exists($nativeTarget)) {
+    Throw-QaError 'Snapshot rename target already exists.' 'Leave all snapshots unchanged.'
+  }
+  # Native non-overwriting renames retain durable journal ordering beyond PS5 MAX_PATH.
+  if (([System.IO.File]::GetAttributes($nativeSource) -band [System.IO.FileAttributes]::Directory) -ne 0) {
+    [System.IO.Directory]::Move($nativeSource, $nativeTarget)
+  } else {
+    if (-not [System.IO.Path]::GetDirectoryName($source).Equals([System.IO.Path]::GetDirectoryName($target), $comparison)) {
+      Throw-QaError 'Journal rename must stay in the same directory.' 'Leave all snapshots unchanged.'
+    }
+    [System.IO.File]::Move($nativeSource, $nativeTarget)
+  }
+}
+
 function Promote-EventNightSnapshot {
   param([Parameter(Mandatory = $true)][string]$RepoRoot, [Parameter(Mandatory = $true)][psobject]$Paths, [switch]$Initial)
   Assert-EventNightPromotionClear $RepoRoot $Paths
   Assert-EventNightSnapshot $Paths.ExportStaging $Paths | Out-Null
-  if (-not (Test-Path -LiteralPath $Paths.SnapshotDirectory)) {
+  if (-not (Test-Path -LiteralPath (Get-EventNightNativePath $Paths.SnapshotDirectory))) {
     if (-not $Initial) { Throw-QaError 'Chybí canonical snapshot; export jej nesmí nově založit.' 'Použijte ověřenou recovery, nikdy nový seed.' }
-    Move-Item -LiteralPath $Paths.ExportStaging -Destination $Paths.SnapshotDirectory
+    Move-EventNightSnapshotPath $RepoRoot $Paths.ExportStaging $Paths.SnapshotDirectory
     Assert-EventNightSnapshot $Paths.SnapshotDirectory $Paths | Out-Null
     return $Paths.SnapshotDirectory
   }
@@ -478,18 +570,18 @@ function Promote-EventNightSnapshot {
   $temporaryJournal = Join-Path $Paths.DataDirectory ('promotion-journal-' + [Guid]::NewGuid().ToString('N') + '.tmp')
   Assert-EventNightPath $RepoRoot $previous
   Assert-EventNightPath $RepoRoot $temporaryJournal
-  if (Test-Path -LiteralPath $previous) { Throw-QaError 'Backup target už existuje.' 'Ponechte snapshoty beze změny.' }
+  if (Test-Path -LiteralPath (Get-EventNightNativePath $previous)) { Throw-QaError 'Backup target už existuje.' 'Ponechte snapshoty beze změny.' }
   $journal = [ordered]@{ schemaVersion = 1; projectId = $script:EventNightProjectId; previousBackup = $name;
-    previousManifestSha256 = (Get-FileHash -LiteralPath (Join-Path $Paths.SnapshotDirectory '.event-night-manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant() }
+    previousManifestSha256 = Get-EventNightFileSha256 (Join-Path $Paths.SnapshotDirectory '.event-night-manifest.json') }
   New-Item -ItemType Directory -Path $Paths.BackupDirectory -Force | Out-Null
   $encoding = New-Object System.Text.UTF8Encoding($true)
   $bytes = $encoding.GetPreamble() + $encoding.GetBytes(($journal | ConvertTo-Json -Depth 3))
-  $stream = [System.IO.File]::Open($temporaryJournal, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+  $stream = [System.IO.File]::Open((Get-EventNightNativePath $temporaryJournal), [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
   try { $stream.Write($bytes, 0, $bytes.Length); $stream.Flush($true) } finally { $stream.Dispose() }
-  Move-Item -LiteralPath $temporaryJournal -Destination $Paths.PromotionJournal
+  Move-EventNightSnapshotPath $RepoRoot $temporaryJournal $Paths.PromotionJournal
   # The journal is durable before either rename. An interruption leaves recovery evidence.
-  Move-Item -LiteralPath $Paths.SnapshotDirectory -Destination $previous
-  Move-Item -LiteralPath $Paths.ExportStaging -Destination $Paths.SnapshotDirectory
+  Move-EventNightSnapshotPath $RepoRoot $Paths.SnapshotDirectory $previous
+  Move-EventNightSnapshotPath $RepoRoot $Paths.ExportStaging $Paths.SnapshotDirectory
   Assert-EventNightSnapshot $Paths.SnapshotDirectory $Paths | Out-Null
   Remove-Item -LiteralPath $Paths.PromotionJournal
   return $Paths.SnapshotDirectory
@@ -498,7 +590,7 @@ function Promote-EventNightSnapshot {
 function Restore-EventNightSnapshot {
   param([Parameter(Mandatory = $true)][string]$RepoRoot, [Parameter(Mandatory = $true)][psobject]$Paths)
   foreach ($target in @($Paths.SnapshotDirectory, $Paths.PromotionJournal, $Paths.BackupDirectory)) { Assert-EventNightPath $RepoRoot $target }
-  $canonicalExists = Test-Path -LiteralPath $Paths.SnapshotDirectory
+  $canonicalExists = Test-Path -LiteralPath (Get-EventNightNativePath $Paths.SnapshotDirectory)
   if ($canonicalExists) { Assert-EventNightSnapshot $Paths.SnapshotDirectory $Paths | Out-Null }
   if (-not (Test-Path -LiteralPath $Paths.PromotionJournal)) {
     if (-not $canonicalExists) { Throw-QaError 'Chybí snapshot i přesný recovery journal.' 'Ponechte zálohy beze změny; nelze vybírat nejnovější ani seedovat.' }
@@ -506,23 +598,23 @@ function Restore-EventNightSnapshot {
   }
   $journal = Get-EventNightPromotionJournal $RepoRoot $Paths
   $previous = Join-Path $Paths.BackupDirectory $journal.previousBackup
-  if (Test-Path -LiteralPath $previous) {
+  if (Test-Path -LiteralPath (Get-EventNightNativePath $previous)) {
     Assert-EventNightSnapshot $previous $Paths | Out-Null
-    $priorHash = (Get-FileHash -LiteralPath (Join-Path $previous '.event-night-manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant()
+    $priorHash = Get-EventNightFileSha256 (Join-Path $previous '.event-night-manifest.json')
     if ($priorHash -ne $journal.previousManifestSha256) { Throw-QaError 'Backup manifest nesouhlasí s recovery journalem.' 'Ponechte snapshoty beze změny.' }
   } elseif ($canonicalExists -and
-      (Get-FileHash -LiteralPath (Join-Path $Paths.SnapshotDirectory '.event-night-manifest.json') -Algorithm SHA256).Hash.ToLowerInvariant() -eq $journal.previousManifestSha256) {
+      (Get-EventNightFileSha256 (Join-Path $Paths.SnapshotDirectory '.event-night-manifest.json')) -eq $journal.previousManifestSha256) {
     # Interrupted before the first rename: the exact prior is still canonical.
   } else { Throw-QaError 'Přesný backup z recovery journalu chybí.' 'Ponechte snapshoty beze změny.' }
   if (-not $canonicalExists) {
     $temporary = Join-Path $Paths.DataDirectory ('recovery-' + [Guid]::NewGuid().ToString('N'))
     Assert-EventNightPath $RepoRoot $temporary
-    if (Test-Path -LiteralPath $temporary) { Throw-QaError 'Recovery target už existuje.' 'Ponechte snapshoty beze změny.' }
-    Copy-Item -LiteralPath $previous -Destination $temporary -Recurse
+    if (Test-Path -LiteralPath (Get-EventNightNativePath $temporary)) { Throw-QaError 'Recovery target už existuje.' 'Ponechte snapshoty beze změny.' }
+    Copy-EventNightSnapshotDirectory $RepoRoot $previous $temporary
     Assert-EventNightSnapshot $temporary $Paths | Out-Null
     Assert-EventNightPath $RepoRoot $Paths.SnapshotDirectory
-    if (Test-Path -LiteralPath $Paths.SnapshotDirectory) { Throw-QaError 'Canonical snapshot vznikl během recovery.' 'Nepřepisujte jej; zopakujte bezpečný start.' }
-    Move-Item -LiteralPath $temporary -Destination $Paths.SnapshotDirectory
+    if (Test-Path -LiteralPath (Get-EventNightNativePath $Paths.SnapshotDirectory)) { Throw-QaError 'Canonical snapshot vznikl během recovery.' 'Nepřepisujte jej; zopakujte bezpečný start.' }
+    Move-EventNightSnapshotPath $RepoRoot $temporary $Paths.SnapshotDirectory
     Assert-EventNightSnapshot $Paths.SnapshotDirectory $Paths | Out-Null
   }
   Remove-Item -LiteralPath $Paths.PromotionJournal

@@ -53,7 +53,7 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
-          cache: pnpm
+          package-manager-cache: false
 
       - name: Set up JDK 21
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -67,10 +67,13 @@ jobs:
       - name: Typecheck, lint, and production build
         run: pnpm check
 
+      - name: Actual dependency API and CLI compatibility contracts
+        run: node --test tools/dependencies/security-compat.test.mjs
+
       - name: Staging guards, release inventory and synthetic email activation contracts (no cloud access)
         run: |
           node -e "require('node:fs').mkdirSync('.local-data', { recursive: true })"
-          node --test tests/staging-guard.test.mjs tests/restart-release-manifest.test.mjs tests/restart-build.test.mjs tools/email/oauth-connect.test.mjs tools/email/build-activation.test.mjs tests/restart-deploy-guard.test.mjs tests/restart-qa.test.mjs tests/access/pause-collaboration.test.mjs tests/access/enable-collaboration.test.mjs tools/email/activation-plan.test.mjs tools/email/activation-execution-policy.test.mjs tools/email/function-deployment-policy.test.mjs tools/event-night/restart-acceptance.test.mjs
+            node --test tests/ci-quality-gate.test.mjs tests/staging-guard.test.mjs tests/restart-release-manifest.test.mjs tests/restart-build.test.mjs tools/email/oauth-connect.test.mjs tools/email/build-activation.test.mjs tests/restart-deploy-guard.test.mjs tests/restart-qa.test.mjs tests/access/pause-collaboration.test.mjs tests/access/enable-collaboration.test.mjs tests/access/p1-hotfix-policy.test.mjs tools/email/activation-plan.test.mjs tools/email/activation-execution-policy.test.mjs tools/email/function-deployment-policy.test.mjs tools/event-night/restart-acceptance.test.mjs
 
       - name: Unit and synthetic migration regression tests
         run: pnpm test:unit
@@ -109,7 +112,7 @@ jobs:
           pnpm exec firebase emulators:exec
           --only auth,firestore,functions
           --project demo-filmovy-kviz-v2
-          "pnpm seed:auth && pnpm seed:quizzes && pnpm test:e2e:live && pnpm test:e2e:editor && pnpm test:e2e:events && pnpm test:e2e:registrations && node tools/local-emulator-environment.mjs full tests/e2e/registration-boundaries-emulator.mjs && node tools/local-emulator-environment.mjs full tests/e2e/event-team-tools-emulator.mjs && pnpm test:e2e:print"
+          "pnpm seed:auth && pnpm seed:quizzes && pnpm test:e2e:live && pnpm test:e2e:editor && pnpm test:e2e:events && pnpm test:e2e:registrations && node tools/local-emulator-environment.mjs full tests/e2e/registration-boundaries-emulator.mjs && node tools/local-emulator-environment.mjs full tests/e2e/registration-abuse-emulator.mjs && node tools/local-emulator-environment.mjs full tests/e2e/event-team-tools-emulator.mjs && pnpm test:e2e:print"
 
       - name: Print Center browser E2E
         run: >-
@@ -123,7 +126,7 @@ jobs:
           pnpm exec firebase emulators:exec
           --only auth,firestore,functions,hosting
           --project demo-filmovy-kviz-v2
-          "pnpm seed:auth && pnpm seed:quizzes && pnpm test:e2e:registrations-browser && pnpm exec playwright test --config tests/browser/event-team-tools.config.ts"
+          "pnpm seed:auth && pnpm seed:quizzes && pnpm test:e2e:registrations-browser && pnpm exec playwright test --config tests/browser/event-team-tools.config.ts && node tools/local-emulator-environment.mjs full node_modules/@playwright/test/cli.js test --config tests/browser/mobile-event-layout.config.ts"
 
       - name: Referee access contracts and browser E2E (local emulators only)
         run: >-
@@ -189,7 +192,7 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
-          cache: pnpm
+          package-manager-cache: false
 
       - name: Set up JDK 21
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -225,16 +228,24 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [quality-core, editor-media-acceptance]
+    needs: [quality-core, editor-media-acceptance, show-mode-acceptance, oauth-windows, restart-recovery-acceptance, dependency-security]
     if: ${{ always() }}
     steps:
-      - name: Require both acceptance jobs to succeed
+      - name: Require every acceptance job to succeed
         env:
           CORE_RESULT: ${{ needs.quality-core.result }}
           EDITOR_RESULT: ${{ needs.editor-media-acceptance.result }}
+          SHOW_RESULT: ${{ needs.show-mode-acceptance.result }}
+          OAUTH_RESULT: ${{ needs.oauth-windows.result }}
+          RECOVERY_RESULT: ${{ needs.restart-recovery-acceptance.result }}
+          SECURITY_RESULT: ${{ needs.dependency-security.result }}
         run: |
           test "$CORE_RESULT" = success
           test "$EDITOR_RESULT" = success
+          test "$SHOW_RESULT" = success
+          test "$OAUTH_RESULT" = success
+          test "$RECOVERY_RESULT" = success
+          test "$SECURITY_RESULT" = success
 
   show-mode-acceptance:
     name: SHOW MODE and whole evening acceptance
@@ -265,7 +276,7 @@ jobs:
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
-          cache: pnpm
+          package-manager-cache: false
 
       - name: Set up JDK 21
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
@@ -297,7 +308,7 @@ jobs:
       - name: SHOW engine, protected audio, actual browser and complete quiz evening
         run: >-
           pnpm exec firebase emulators:exec --only auth,firestore,functions,storage --project demo-filmovy-kviz-v2
-          "pnpm test:e2e:show-mode && pnpm test:e2e:show-audio && pnpm test:e2e:show-browser && pnpm test:e2e:whole-evening"
+          "pnpm test:e2e:show-mode && pnpm test:e2e:show-audio && node tools/local-emulator-environment.mjs full node_modules/@playwright/test/cli.js test --config tests/browser/extraordinary-stress.config.ts"
 
       - name: Product path through public registration, downloaded PDFs, SHOW and history
         run: >-
@@ -324,3 +335,69 @@ jobs:
         run: |
           node -e "require('node:fs').mkdirSync('.local-data', { recursive: true })"
           node --test tools/email/oauth-connect.test.mjs tools/email/build-activation.test.mjs
+          node --test tests/windows-preview-cleanup.test.mjs tests/event-night-long-path.test.mjs
+
+  restart-recovery-acceptance:
+    name: Isolated Windows persistence and recovery acceptance
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install pnpm from packageManager
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies and build emulator Functions
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @filmovy-kviz/functions... build
+
+      # The harness generates a demo-restart-* project, isolates CLI credentials,
+      # rejects non-loopback requests and owns ports distinct from normal QA.
+      - name: Cache emulator binaries before entering the loopback-only harness
+        run: |
+          pnpm exec firebase setup:emulators:firestore
+          pnpm exec firebase setup:emulators:storage
+
+      - name: Export, stop, import and recover synthetic Auth/Firestore/Storage data
+        shell: pwsh
+        run: node tools/event-night/restart-acceptance.mjs --powershell (Join-Path $PSHOME 'pwsh.exe')
+
+      - name: Print isolated recovery evidence without artifact storage
+        if: ${{ always() }}
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path .local-data/en-restart/*/acceptance-result.json -ErrorAction SilentlyContinue | ForEach-Object { Get-Content -LiteralPath $_.FullName }
+
+  dependency-security:
+    name: Dependency security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Install pnpm from packageManager
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+      - name: Set up Node.js 22
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Audit the exact frozen dependency graph
+        run: pnpm audit --audit-level low --json > security-audit.json
+      - name: Print actual security findings even on failure
+        if: ${{ always() }}
+        run: cat security-audit.json

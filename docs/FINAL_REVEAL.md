@@ -1,6 +1,29 @@
 # Finální vyhlášení
 
-## Ovládání
+## Automatický krok před závěrem (2026-10-19)
+
+V moderování akce je finále odvozeným předposledním krokem prezentace. Tlačítko
+Další před závěrečným slidem načte aktuální serverový náhled, ověří úplnost bodů
+a zahájí pevně nastavenou show. Kvíz ani jeho neměnný snapshot se nepřepisuje.
+U starého kvízu bez závěrečného slidu následuje finále po posledním obsahu a
+Další po konečné tabulce ukončí session. Knihovní zkouška bez akce body nemá.
+
+Moderátor už nevybírá styl, zvuk ani rozsah výsledků. Server vždy používá show
+vzhled; klient postupně odhalí skupiny od poslední k vítězům, projde všechny
+stránky remíz a zobrazí konečnou tabulku. Další během odhalování nepřeskočí
+zbývající týmy. Předchozí vrací na poslední otázku/rekapitulaci; po tabulce
+Další pokračuje na závěrečný slide. Neúplné body spuštění zablokují.
+
+Automatické časování vlastní pouze okno, které finále spustilo. Obnovení stránky
+ani cizí moderátor nespouští zvuk či odhalování; nabízí Pokračovat. Novější cizí
+příkaz nebo chyba spojení automatické pokračování zastaví. Každý krok vyžaduje
+serverové potvrzení revize. Fanfára vítězů používá stávající místní přehrávání
+a před spuštěním ověřuje aktuální session a zveřejněnou verzi.
+
+Ověření: `eventNightFlow.test.ts`, `eventNightControls.test.tsx`,
+`liveModeratorView.test.tsx` a scénáře `show-mode-emulator.mjs`.
+
+## Původní ruční kontrakt (zachovaný pro kompatibilitu)
 
 Akce → Otevřít moderování akce → `/admin/live/:sessionId` → **Finální vyhlášení**.
 Používá tutéž navázanou session a `/projector/:sessionId`. Po poslední otázce či
@@ -146,3 +169,13 @@ web, nové `previewFinalResults`/`controlFinalReveal`, změněné
 `reportMediaPlayback`, `cancelEvent` a `archiveEvent`. Jsou závislé na parseru
 nového pointeru, lifecycle a vzájemném vyloučení výstupů. Rules/indexy, role,
 secrets a závislosti se nemění; migrace ani cloudové credentials CI nejsou třeba.
+
+## Moderator navigation and event completion, 2026-10-20
+
+Finale remains an explicit reviewed publication inside an active event-bound presentation. It is entered before presentation END; END closes only that presentation and hides its public results. Event completion is a separate manual event-settings action, not a side effect of END. Scores, confirmed result versions and event publication survive presentation END. A new presentation of the same open event can review and start a new finale.
+
+An explicit goToSlide jump can dismiss a visible interim/finale in the same trusted transaction. It clears interim state/return intent/show cue, retains a hidden private final-version pointer, resets answers/recap/media, and publishes only the selected unrevealed snapshot slide. Invalid/stale/foreign jumps leave existing presentation unchanged. Adjacent next/previous commands still require the overlay to be hidden first.
+
+The moderator's question navigator groups private snapshot questions by round and includes a direct finale shortcut. Normal forward navigation enters the same virtual penultimate step. After its final table, Next goes to the closing slide (or the closed presentation when a legacy quiz has no closing slide), including when the finale was selected early. Missing scores remain an actionable error instead of fabricated final rankings.
+
+Every fresh rank reveal explicitly requests animation; the winner receives a trophy and bounded confetti respecting reduced motion. The initiating moderator mounts the visible official Queen YouTube player only after a fresh confirmed winner publication and server recheck, using the 1:00–1:42 chorus excerpt. Refreshing, another operator's snapshot, or a replayed command never starts music. The music may continue over the final table; leaving the finale, ending the session, or stopping it locally removes/stops playback. YouTube availability and browser autoplay permission remain external constraints; the player exposes manual play when blocked. This replaces the synthesized fanfare in the simplified event controls without changing question media or the optional advanced panel.

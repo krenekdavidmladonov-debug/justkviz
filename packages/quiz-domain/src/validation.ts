@@ -47,7 +47,7 @@ export function validateQuestion(slide: EditorSlide): readonly EditorValidationI
   if (!slide.isQuestion) return [];
   const type = semanticQuestionType(slide);
   const issues: EditorValidationIssue[] = [];
-  if (slide.authoringStatus === 'draft') issues.push(issue('QUESTION_DRAFT', 'STRUCTURE', 'authoringStatus', 'Nedokončený soukromý koncept. Dokončete jej před hraním.'));
+  if (slide.authoringStatus === 'draft') issues.push(issue('QUESTION_DRAFT', 'STRUCTURE', 'authoringStatus', 'Otázka je uložená jako koncept.'));
   if ((slide.answerMode === 'open' && slide.options.length > 0) || (slide.answerMode === 'choice' && slide.kind === 'free')) issues.push(issue('CHOICE_OPTIONS_INVALID', 'ANSWER', 'options', 'Režim odpovědi neodpovídá uloženým možnostem.'));
   const prompt = questionPrompt(slide).trim();
   if (prompt === '') issues.push(issue('QUESTION_PROMPT_MISSING', 'STRUCTURE', 'prompt', 'Chybí zadání otázky.'));
@@ -88,8 +88,8 @@ export function validateQuestion(slide: EditorSlide): readonly EditorValidationI
   if (type === 'audio' || type === 'video') {
     if (slide.mediaSource.trim() === '') {
       issues.push(issue('MEDIA_SOURCE_MISSING', 'MEDIA', 'mediaSource', 'Chybí zdroj ukázky.'));
-    } else if (youtubeVideoId(slide.mediaSource) === undefined && directMediaKind(slide.mediaSource) !== type && !(type === 'audio' && parseQuizAsset(slide.mediaSource))) {
-      issues.push(issue('MEDIA_SOURCE_INVALID', 'MEDIA', 'mediaSource', 'Zdroj není podporovaný audio/video odkaz ani připravené vlastní audio.'));
+    } else if (youtubeVideoId(slide.mediaSource) === undefined && directMediaKind(slide.mediaSource) !== type && !parseQuizAsset(slide.mediaSource)) {
+      issues.push(issue('MEDIA_SOURCE_INVALID', 'MEDIA', 'mediaSource', 'Zdroj není podporovaný audio/video odkaz ani připravené vlastní médium.'));
     }
     if (slide.clipStartSeconds === null) {
       issues.push(issue('CLIP_START_MISSING', 'TIMING', 'clipStartSeconds', 'Chybí začátek ukázky.'));

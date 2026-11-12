@@ -1,13 +1,14 @@
-import { FinalRevealPanel } from '../../features/final-reveal/FinalRevealPanel';
-import { InterimResultsPanel } from '../../features/leaderboard/InterimResultsPanel';
+import { EventNightControls, type EventNightNavigation } from '../../features/live/EventNightControls';
+import { visibleSlidePosition } from '@filmovy-kviz/quiz-domain';
 import { FirebaseError } from 'firebase/app';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { doc, runTransaction } from 'firebase/firestore';
 import { Link, useParams } from 'react-router-dom';
 
 import { SnapshotMediaContext } from '../../features/media/SnapshotMediaContext';
 import {
   endLiveSession,
+  goToSlide,
   revealAnswer,
   hideAnswer,
   nextSlide,
@@ -16,10 +17,10 @@ import {
   reportMediaPlayback,
   replayMedia,
   selectRecapQuestion,
-  startIntro,
   stopMedia,
 } from '../../features/live/liveApi';
 import { LiveModeratorView, type LivePendingAction } from '../../features/live/LiveModeratorView';
+import { LiveMutationQueue } from '../../features/live/mutationQueue';
 import { isAudioSlide, recapQuestionChoices } from '../../features/live/livePresentation';
 import { broadcastPublicState, openProjectorChannel, parseProjectorChannelMessage, type ProjectorChannel } from '../../features/live/projectorChannel';
 import { openOrFocusProjector, projectorPopupBlockedMessage } from '../../features/live/projectorWindow';
@@ -27,15 +28,12 @@ import { subscribeLiveControl, subscribeLiveControlSlides, subscribePublicLiveSt
 import type { LiveActionResponse, LiveControlSlide, LiveControlState, PublicLiveState } from '../../features/live/types';
 import { indexSlidesByPosition } from '../../features/presentation/performance';
 import { QuizLoading } from '../../features/quizzes/QuizLoading';
-import type { HumanErrorValue } from '../../ui/HumanError';
+import { HumanError, type HumanErrorValue } from '../../ui/HumanError';
 import { ShowCommandContext, type RevisionedResult, type ShowAudioCue } from '../../features/live/ShowCommandContext';
-import { ShowAudioPanel } from '../../features/show-audio/ShowAudioPanel';
 import type { ShowAudioController } from '../../features/show-audio/controller';
 import { getFirebaseFirestore } from '../../services/firebase/firestore';
 import { mapLiveControlState } from '../../features/live/liveMappers';
 import '../../features/live/show-control.css';
-import { useAuth } from '../../auth/AuthProvider';
-import type { ShowPreferences } from '@filmovy-kviz/quiz-domain';
 
 function technicalErrorCode(error: FirebaseError): string {
   return error.code.toUpperCase().replaceAll('/', '_').replaceAll('-', '_');
@@ -70,17 +68,18 @@ function loadingError(area: 'session' | 'slides'): HumanErrorValue {
 }
 
 export function LiveControlPage() {
-  const { can } = useAuth();
   const { sessionId } = useParams<{ sessionId: string }>();
   const [session, setSession] = useState<LiveControlState | null>(null);
   const [publicState, setPublicState] = useState<PublicLiveState | null>(null);
   const [slides, setSlides] = useState<readonly LiveControlSlide[]>([]);
+  const [loadedSlideSource, setLoadedSlideSource] = useState<string | null>(null);
+  const [slideReadAttempt, setSlideReadAttempt] = useState(0);
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState<LivePendingAction | null>(null);
   const [error, setError] = useState<HumanErrorValue | null>(null);
   const [projectorOpened, setProjectorOpened] = useState(false);
-  const [showEnabled, setShowEnabled] = useState(false);
-  const [showPreferences, setShowPreferences] = useState<ShowPreferences>();
+  const showEnabled = true;
+  const eventNavigation = useRef<EventNightNavigation | null>(null);
   const [queueCount, setQueueCount] = useState(0);
   const [audioSuppressed, setAudioSuppressed] = useState(false);
   const suppressedAudioGeneration = useRef<{ sessionId: string; generation: number } | null>(null);
@@ -89,33 +88,26 @@ export function LiveControlPage() {
   const audioRevision = useRef<number | null>(null);
   const remoteMediaActive = useRef(false);
   const automaticAudioPreparedAt = useRef(0);
-  const canPlayShowAudio = useCallback(() => {
-    const current = sessionRef.current;
-    const suppressed = suppressedAudioGeneration.current;
-    return Boolean(current && current.status !== 'ended' && navigator.onLine && !questionAudioPending.current
-      && ((suppressed?.sessionId === current.sessionId && suppressed.generation === current.mediaGeneration)
-        || !['preparing', 'playing', 'ready'].includes(current.mediaPlaybackState)));
-  }, []);
-  const connectAudio = useCallback((controller: ShowAudioController | null) => { audioController.current = controller; }, []);
   const sessionRef = useRef<LiveControlState | null>(null);
   const channelRef = useRef<ProjectorChannel | undefined>(undefined);
   const operationIdRef = useRef(0);
   const confirmedRevisionRef = useRef(-1);
-  const mutationQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const mutationQueueRef = useRef(new LiveMutationQueue());
   const accessGenerationRef = useRef(0);
+  const slideSource = session ? JSON.stringify([session.sessionId, session.quizId, session.snapshotId ?? null]) : null;
+  const slidesReady = slideSource !== null && loadedSlideSource === slideSource;
 
   useEffect(() => {
     const generation = ++accessGenerationRef.current;
-    let initialStyle = true;
     const invalidate = () => {
       audioController.current?.stopImmediate(); audioRevision.current = null;
       suppressedAudioGeneration.current = null; questionAudioPending.current = false;
       accessGenerationRef.current++; operationIdRef.current++; sessionRef.current = null;
-      confirmedRevisionRef.current = -1; mutationQueueRef.current = Promise.resolve();
+      confirmedRevisionRef.current = -1; mutationQueueRef.current = new LiveMutationQueue();
       setPublicState(null);
     };
     confirmedRevisionRef.current = -1;
-    mutationQueueRef.current = Promise.resolve();
+    mutationQueueRef.current = new LiveMutationQueue();
     sessionRef.current = null; setSession(null); setSlides([]); setPendingAction(null); setError(null); setLoading(true);
     if (!sessionId) { setLoading(false); return; }
     const unsubscribe = subscribeLiveControl(sessionId, (value) => {
@@ -125,10 +117,6 @@ export function LiveControlPage() {
       if (!value || suppressed?.sessionId !== value.sessionId || suppressed.generation !== value.mediaGeneration) {
         suppressedAudioGeneration.current = null; setAudioSuppressed(false);
         if (value && ['preparing', 'playing', 'ready'].includes(value.mediaPlaybackState)) stopShowAudio();
-      }
-      if (value && (initialStyle || value.interimResults || value.finalReveal?.visible)) {
-        setShowEnabled(value.interimResults?.presentationStyle === 'show' || value.finalReveal?.presentationStyle === 'show');
-        initialStyle = false;
       }
       if (value) confirmedRevisionRef.current = Math.max(confirmedRevisionRef.current, value.revision);
       else { invalidate(); setSlides([]); setPendingAction(null); }
@@ -143,10 +131,19 @@ export function LiveControlPage() {
   }, [sessionId]);
 
   useEffect(() => {
-    setSlides([]);
+    setSlides([]); setLoadedSlideSource(null);
     if (!session?.quizId) return;
-    return subscribeLiveControlSlides(session.quizId, setSlides, () => { setSlides([]); setError(loadingError('slides')); }, session.snapshotId);
-  }, [session?.quizId, session?.snapshotId]);
+    let active = true;
+    const source = JSON.stringify([session.sessionId, session.quizId, session.snapshotId ?? null]);
+    const unsubscribe = subscribeLiveControlSlides(session.quizId, value => {
+      if (!active) return;
+      setSlides(value); setLoadedSlideSource(source);
+    }, () => {
+      if (!active) return;
+      setSlides([]); setLoadedSlideSource(null); setError(loadingError('slides'));
+    }, session.snapshotId);
+    return () => { active = false; unsubscribe(); };
+  }, [session?.sessionId, session?.quizId, session?.snapshotId, slideReadAttempt]);
 
   useEffect(() => {
     if (!sessionId) return;
@@ -166,9 +163,7 @@ export function LiveControlPage() {
             technicalCode: 'PROJECTOR_MEDIA_PLAYBACK_FAILED',
           });
         }
-        void enqueueMutation((latest) => latest.mediaGeneration === message.mediaGeneration
-          ? reportMediaPlayback(latest.sessionId, message.mediaGeneration, message.playbackState)
-          : Promise.resolve(undefined)).catch((playbackError) => {
+        void enqueuePlaybackReport(message.mediaGeneration, message.playbackState).catch((playbackError) => {
           if (message.playbackState === 'error') setError(operationError(playbackError));
         });
       });
@@ -235,7 +230,7 @@ export function LiveControlPage() {
   ): Promise<T> {
     const generation = accessGenerationRef.current;
     setQueueCount(count => count + 1);
-    const execute = mutationQueueRef.current.catch(() => undefined).then(async () => {
+    const execute = mutationQueueRef.current.enqueueCommand(async () => {
       if (generation !== accessGenerationRef.current) throw new Error('Přístup se změnil.');
       const current = sessionRef.current;
       if (!current) throw new Error('Session není dostupná.');
@@ -243,8 +238,21 @@ export function LiveControlPage() {
       if (result && generation === accessGenerationRef.current) confirmedRevisionRef.current = Math.max(confirmedRevisionRef.current, result.revision);
       return result;
     });
-    mutationQueueRef.current = execute.then(() => undefined, () => undefined);
     return execute.finally(() => setQueueCount(count => Math.max(0, count - 1)));
+  }
+
+  function enqueuePlaybackReport(mediaGeneration: number, playbackState: 'ready' | 'playing' | 'error' | 'finished') {
+    const accessGeneration = accessGenerationRef.current;
+    const sessionId = sessionRef.current?.sessionId;
+    return mutationQueueRef.current.enqueueReport(`${sessionId}:${mediaGeneration}`, async () => {
+      const latest = sessionRef.current;
+      if (accessGeneration !== accessGenerationRef.current || !latest || latest.sessionId !== sessionId
+        || latest.status !== 'active' || latest.mediaGeneration !== mediaGeneration
+        || !['play', 'replay'].includes(latest.mediaCommand) || latest.mediaPlaybackState === playbackState) return undefined;
+      const result = await reportMediaPlayback(latest.sessionId, mediaGeneration, playbackState);
+      if (accessGeneration === accessGenerationRef.current) confirmedRevisionRef.current = Math.max(confirmedRevisionRef.current, result.revision);
+      return result;
+    });
   }
 
   async function run(
@@ -253,8 +261,7 @@ export function LiveControlPage() {
   ) {
     const current = sessionRef.current;
     if (!sessionId || !current) return;
-    const introTicket = actionName === 'intro' && showEnabled ? prepareShowAudio() : undefined;
-    if (introTicket === undefined) stopShowAudio();
+    stopShowAudio();
     if (actionName === 'play' || actionName === 'replay') {
       questionAudioPending.current = true; suppressedAudioGeneration.current = null; setAudioSuppressed(false);
     }
@@ -263,11 +270,10 @@ export function LiveControlPage() {
     setPendingAction(actionName);
     setError(null);
     try {
-      const result = await enqueueMutation((latest) => action(
+      await enqueueMutation((latest) => action(
         sessionId,
         Math.max(latest.revision, confirmedRevisionRef.current),
       ));
-      if (introTicket !== undefined) void playShowAudio('intro', result, introTicket);
     } catch (actionError) {
       if (operationIdRef.current === operationId) setError(operationError(actionError));
     } finally {
@@ -289,9 +295,7 @@ export function LiveControlPage() {
       });
     }
     try {
-      await enqueueMutation((latest) => latest.mediaGeneration === generation
-        ? reportMediaPlayback(latest.sessionId, generation, playbackState)
-        : Promise.resolve(undefined));
+      await enqueuePlaybackReport(generation, playbackState);
     } catch (playbackError) {
       if (playbackState === 'error') setError(operationError(playbackError));
     }
@@ -306,6 +310,17 @@ export function LiveControlPage() {
     setProjectorOpened(true);
   }
 
+  async function navigate(direction: 1 | -1) {
+    if (!slidesReady || pendingAction || queueCount > 0) return;
+    setPendingAction(direction === 1 ? 'next' : 'previous');
+    try {
+      if (!await eventNavigation.current?.navigate(direction)) {
+        if (direction === 1 && session?.eventId && visibleSlidePosition(slides, session.currentSlidePosition, 1) === undefined) await run(endLiveSession, 'end');
+        else await run(direction === 1 ? nextSlide : previousSlide, direction === 1 ? 'next' : 'previous');
+      }
+    } finally { setPendingAction(null); }
+  }
+
   if (loading) return <QuizLoading label="Načítám moderování…" />;
   if (!sessionId || !session) {
     return (
@@ -316,10 +331,19 @@ export function LiveControlPage() {
       </section>
     );
   }
+  // An empty array before the private read completes does not mean the show is
+  // over. Keep both pointer and keyboard navigation unavailable until confirmed.
+  if (!slidesReady) {
+    if (error?.technicalCode === 'LIVE_SLIDES_LOAD_FAILED') return <section className="focused-live-state">
+      <HumanError error={error} />
+      <button type="button" className="secondary-button" onClick={() => { setError(null); setSlideReadAttempt(attempt => attempt + 1); }}>Načíst obsah znovu</button>
+    </section>;
+    return <QuizLoading label="Načítám obsah kvízu…" />;
+  }
 
   return (
     <ShowCommandContext.Provider value={{
-      busy: queueCount > 0 || pendingAction !== null, enabled: showEnabled, preferences: showPreferences,
+      busy: queueCount > 0 || pendingAction !== null, enabled: showEnabled,
       execute: action => enqueueMutation(current => action(current, Math.max(current.revision, confirmedRevisionRef.current))),
       prepareAudio: prepareShowAudio, playAudio: playShowAudio, stopAudio: stopShowAudio,
     }}>
@@ -336,28 +360,23 @@ export function LiveControlPage() {
       error={error}
       projectorOpened={projectorOpened}
       onOpenProjector={openProjector}
-      onPrevious={() => void run(previousSlide, 'previous')}
-      onNext={() => void run(nextSlide, 'next')}
+      onPrevious={() => void navigate(-1)}
+      onNext={() => void navigate(1)}
       onReveal={() => void run(revealAnswer, 'reveal')}
       onHide={() => void run(hideAnswer, 'hide')}
-      onStartIntro={() => void run(startIntro, 'intro')}
+      onGoToSlide={position => { if (!pendingAction && queueCount === 0) void run((id, revision) => goToSlide(id, revision, position), 'jump'); }}
+      onFinale={session.eventId && session.snapshotId ? () => { if (!pendingAction && queueCount === 0) void eventNavigation.current?.openFinale(); } : undefined}
       onSelectRecap={(position) => void run((id, revision) => selectRecapQuestion(id, revision, position), 'recap')}
       onPlay={() => void run(playMedia, 'play')}
+      onPlayOriginal={() => void run((id, revision) => playMedia(id, revision, 'original'), 'play')}
       onStop={() => void run(stopMedia, 'stop')}
       onReplay={() => void run(replayMedia, 'replay')}
       onEnd={() => void run(endLiveSession, 'end')}
       onMediaFinished={(generation) => void reportPlayback(generation, 'finished')}
       onMediaError={(generation) => void reportPlayback(generation, 'error')}
       onMediaPlayback={(generation, playbackState) => void reportPlayback(generation, playbackState)}
+      eventControls={session.eventId && session.snapshotId ? <EventNightControls key={session.sessionId} session={session} slides={slides} navigation={eventNavigation} /> : undefined}
     />
-    {session.eventId && session.snapshotId && <section className="live-secondary-work show-control-desk" aria-label="Režie show">
-      <header className="show-control-heading"><div><h2>Režie večera</h2><p>{publicState?.finalReveal ? 'Publikum vidí finální vyhlášení.' : publicState?.interimResults ? 'Publikum vidí průběžné výsledky.' : publicState ? 'Publikum vidí aktuální slide.' : 'Aktuální veřejný stav není potvrzený.'}</p></div>
-        <label><input type="checkbox" checked={showEnabled} disabled={queueCount > 0 || Boolean(session.interimResults || session.finalReveal?.visible)} onChange={event => { stopShowAudio(); setShowEnabled(event.target.checked); }} /> SHOW MODE</label>
-      </header>
-      <p className="show-control-help">{showEnabled ? 'Šest týmů na stránce · ruční odhalování · pohyb lze kdykoli přeskočit.' : 'Klasické výsledky. SHOW MODE zapněte před potvrzením nové výsledkové verze.'} {publicState?.showCue?.motion === 'animate' ? 'Pro tento krok byl vydán animační pokyn; doběhnutí vzdáleného projektoru není potvrzené.' : 'Obraz je bez nového animačního pokynu.'}</p>
-      {showEnabled && <ShowAudioPanel key={session.eventId} eventId={session.eventId} quizId={session.quizId} canUpload={can('quiz.media.upload')} canAttach={can('quiz.read')} canPlay={canPlayShowAudio} onController={connectAudio} onPreferencesChange={setShowPreferences} />}
-      <div className="show-result-controls"><InterimResultsPanel key={session.sessionId} session={session} /><FinalRevealPanel key={session.sessionId} session={session} ending={pendingAction === 'end'} /></div>
-    </section>}
     </SnapshotMediaContext.Provider>
     </ShowCommandContext.Provider>
   );

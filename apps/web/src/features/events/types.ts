@@ -1,5 +1,9 @@
 export type RegistrationStatus = 'scheduled' | 'open' | 'paused' | 'full' | 'closed';
 export type EventLifecycleStatus = 'draft' | 'scheduled' | 'ready' | 'live' | 'finalizing' | 'completed' | 'cancelled' | 'archived';
+export type EventPricing = (
+  | { readonly mode: 'per-team' | 'per-event'; readonly amountCzk: number }
+  | { readonly mode: 'agreement'; readonly amountCzk: null }
+) & { readonly hidden?: boolean };
 
 export interface EventVenue {
   readonly name: string;
@@ -17,6 +21,7 @@ export interface EventQuizAssignment {
 }
 
 export interface EventRecord {
+  readonly pricing?: EventPricing;
   readonly disposition?: 'active' | 'archived' | 'trash' | 'deleting';
   readonly description?: string;
   readonly liveSessionId?: string;
@@ -43,6 +48,9 @@ export interface EventRecord {
 }
 
 export interface PublicEventRecord {
+  readonly pricing?: EventPricing;
+  readonly description?: string;
+  readonly lifecycleStatus?: EventLifecycleStatus;
   readonly cancelled?: boolean;
   readonly cancellationMessage?: string;
   readonly id: string;
@@ -90,6 +98,9 @@ export interface RegistrationMutationResponse {
 }
 
 export interface EventFormValues {
+  readonly pricingHidden?: boolean;
+  readonly pricingMode: EventPricing['mode'];
+  readonly pricingAmountCzk: number;
   readonly description?: string;
   readonly utcOffset?: string;
   readonly title: string;
@@ -110,8 +121,8 @@ export interface EventMutationResponse {
   readonly registrationStatus: RegistrationStatus;
   readonly snapshotId?: string;
   readonly preflight?: {
-    readonly status: 'READY' | 'READY_WITH_WARNINGS';
-    readonly blockerCount: 0;
+    readonly status: 'BLOCKED' | 'READY' | 'READY_WITH_WARNINGS';
+    readonly blockerCount: number;
     readonly warningCount: number;
   };
 }

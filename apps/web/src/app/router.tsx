@@ -1,8 +1,9 @@
+import { PrivacyPage } from '../routes/PrivacyPage';
 import { lazyAdminRoute } from './lazyAdminRoute';
 import { PermissionGate } from '../features/access/PermissionGate';
 import { RefereePage } from '../routes/referee/RefereePage';
 import { lazy, Suspense } from 'react';
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter } from 'react-router-dom';
 
 import { AdminPage } from '../routes/admin/AdminPage';
 import { AdminLoginPage } from '../routes/admin/AdminLoginPage';
@@ -15,9 +16,11 @@ import { ManageRegistrationPage } from '../routes/events/ManageRegistrationPage'
 import { NotFoundPage } from '../routes/NotFoundPage';
 import { AdminShell } from './AdminShell';
 import { AppLayout } from './AppLayout';
+import { RouteErrorPage } from './RouteErrorPage';
 import { AccountPage } from '../routes/AccountPage';
 import { UsersAccessPage } from '../routes/admin/UsersAccessPage';
 import { AdminSettingsPage } from '../routes/admin/AdminSettingsPage';
+import { DriveConnectionCallback } from '../features/drive/DriveConnectionCallback';
 import '../styles/access.css';
 
 const ProjectorPage = lazy(async () => {
@@ -30,12 +33,14 @@ function LazyProjectorRoute() {
 }
 
 export const router = createBrowserRouter([
-  { path: 'referee/:eventId', element: <RefereePage /> },
-  { path: 'projector', element: <LazyProjectorRoute /> },
-  { path: 'projector/:sessionId', element: <LazyProjectorRoute /> },
+  { path: 'admin/settings/drive/callback', element: <DriveConnectionCallback />, errorElement: <RouteErrorPage /> },
+  { path: 'referee/:eventId', element: <RefereePage />, errorElement: <RouteErrorPage /> },
+  { path: 'projector', element: <LazyProjectorRoute />, errorElement: <RouteErrorPage /> },
+  { path: 'projector/:sessionId', element: <LazyProjectorRoute />, errorElement: <RouteErrorPage /> },
   {
     path: 'admin',
     element: <RequireStaff />,
+    errorElement: <RouteErrorPage />,
     HydrateFallback: AdminLoading,
     children: [
       { path: 'live/:sessionId', lazy: lazyAdminRoute(() => import('../routes/admin/LiveControlPage').then(module => module.LiveControlPage), ['event.live']) },
@@ -65,12 +70,14 @@ export const router = createBrowserRouter([
   },
   {
     element: <AppLayout />,
+    errorElement: <RouteErrorPage />,
     children: [
-      { index: true, element: <Navigate to="/events" replace /> },
+      { index: true, element: <EventsPage /> },
       { path: 'admin/login', element: <AdminLoginPage /> },
       { path: 'admin/no-access', element: <AdminNoAccessPage /> },
       { path: 'account', element: <AccountPage /> },
       { path: 'invite/:inviteId', element: <AccountPage /> },
+      { path: 'privacy', element: <PrivacyPage /> },
       { path: 'events', element: <EventsPage /> },
       { path: 'events/:eventId', element: <PublicEventPage /> },
       { path: 'events/:eventId/registration/manage', element: <ManageRegistrationPage /> },

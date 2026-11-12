@@ -363,6 +363,7 @@ export const updateQuizMetadata = securedOnCall('updateQuizMetadata', callableOp
     const metadata = validateQuizMetadata(request.data.quiz);
     return await runAccessTransaction(db, async (transaction) => {
       const state = await loadQuizState(transaction, quizId, revision);
+      if (metadata.status !== undefined && state.quiz.status === 'archived') throw new QuizEditorError('failed-precondition', 'Archivovaný kvíz nelze změnou stavu obnovit.');
       if (metadata.defaultAppearance) {
         protectPrivateMedia(state.slides, [metadata.defaultAppearance]);
         if (!currentMembership().permissions.includes('quiz.media.attach') && metadata.defaultAppearance.backgroundImage !== (state.quiz.defaultAppearance as { backgroundImage?: string } | undefined)?.backgroundImage) throw new HttpsError('permission-denied', 'Změna pozadí vyžaduje připojování médií.');

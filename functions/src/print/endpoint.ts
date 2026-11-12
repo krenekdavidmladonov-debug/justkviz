@@ -64,7 +64,7 @@ async function acceptedTeams(eventId: string): Promise<PrintTeam[]> {
 }
 
 async function resolvePrintOptions(eventId: string, request: PrintRequestOptions): Promise<PrintOptions> {
-  if (request.artifactType === 'answer-key') return request;
+  if (request.artifactType === 'answer-key' || request.artifactType === 'organizer-sheets') return request;
   if (request.artifactType === 'team-sheets' && request.mode === 'generic') {
     return { ...request, teams: [] };
   }
@@ -107,7 +107,15 @@ export const generatePrintArtifact = onRequest(
       const token = await getAuth().verifyIdToken(bearerToken(request.header('authorization')), true);
       const auth = { uid: token.uid, token };
       await freshIdentity(auth);
-      const assertAccess = async () => { const member = await authorize(auth, requestedOptions.artifactType === 'answer-key' ? ['event.export', 'event.answers.read', 'event.answers.export'] : ['event.export'], { kind: 'event', id: eventId }); const current = (await getFirestore().doc(`events/${eventId}`).get()).data(); assertEventReadable(current, member); return current; };
+      const assertAccess = async () => {
+        const includesAnswers = requestedOptions.artifactType === 'answer-key' || requestedOptions.artifactType === 'organizer-sheets';
+        const member = await authorize(auth, includesAnswers
+          ? ['event.export', 'event.answers.read', 'event.answers.export']
+          : ['event.export'], { kind: 'event', id: eventId });
+        const current = (await getFirestore().doc(`events/${eventId}`).get()).data();
+        assertEventReadable(current, member);
+        return current;
+      };
       await assertAccess();
       const options = await resolvePrintOptions(eventId, requestedOptions);
 
@@ -139,7 +147,9 @@ export const generatePrintArtifact = onRequest(
         rounds.docs.map((document) => ({ id: document.id, data: record(document.data()) })),
         slides.docs.map((document) => ({ id: document.id, data: record(document.data()) })),
       );
-      const showLogo = requestedOptions.showLogo ?? printEvent.quiz.printTemplate?.showLogo ?? true;
+      // Grayscale uses the vector wordmark, so it needs no raster asset read.
+      const showLogo = requestedOptions.colorMode !== 'grayscale'
+        && (requestedOptions.showLogo ?? printEvent.quiz.printTemplate?.showLogo ?? true);
       const logoReference = showLogo ? printEvent.quiz.printTemplate?.logoImage : undefined;
       if (logoReference) {
         const parsed = parseQuizAsset(logoReference);

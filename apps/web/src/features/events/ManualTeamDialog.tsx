@@ -7,6 +7,7 @@ export function ManualTeamDialog({ event, team, onClose, onSaved }: {
   event: EventRecord; team?: RegistrationRecord;
   onClose: () => void; onSaved: (id: string, name: string) => Promise<void>;
 }) {
+  const maximumMembers = Math.min(4, event.teamSizeMax);
   const dialog = useRef<HTMLDialogElement>(null);
   const busy = useRef(false);
   const [requestId] = useState(() => crypto.randomUUID());
@@ -36,11 +37,11 @@ export function ManualTeamDialog({ event, team, onClose, onSaved }: {
   };
   return <dialog ref={dialog} className="team-tool-dialog" aria-labelledby="manual-team-title" onCancel={(e) => { e.preventDefault(); if (!busy.current) onClose(); }}>
     <h2 id="manual-team-title">{team ? 'Upravit tým' : 'Přidat tým'}</h2>
-    <p>{event.title} · {event.teamSizeMin}–{event.teamSizeMax} členů</p>
+    <p>{event.title} · {event.teamSizeMin}–{maximumMembers} členů</p>
     <form onSubmit={(e) => { e.preventDefault(); void submit(); }}>
       <fieldset disabled={pending} className="manual-team-fields">
         <label className="form-field"><span>Název týmu</span><input autoFocus required minLength={2} maxLength={80} value={teamName} onChange={(e) => setTeamName(e.target.value)} /></label>
-        <label className="form-field"><span>Počet členů</span><input required type="number" min={event.teamSizeMin} max={event.teamSizeMax} step={1} value={memberCount} onChange={(e) => setMemberCount(e.target.value)} /></label>
+        <label className="form-field"><span>Počet členů</span><input required type="number" min={event.teamSizeMin} max={maximumMembers} step={1} value={memberCount} onChange={(e) => setMemberCount(e.target.value)} /></label>
         <details open={Boolean(team?.contactEmail)}><summary>E-mail (volitelné)</summary><label className="form-field"><span>E-mail</span><input type="email" maxLength={254} value={contactEmail} onChange={(e) => setContactEmail(e.target.value)} /></label></details>
       </fieldset>
       {error && <p role="alert" className="round-editor-error">{error}</p>}

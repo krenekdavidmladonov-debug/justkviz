@@ -10,3 +10,41 @@
 .show-next-cue { padding: .75rem; border-left: 3px solid var(--color-accent); background: var(--color-surface-elevated); }
 @media (max-width: 1050px) { .show-result-controls { grid-template-columns: 1fr; } }
 @media (max-width: 600px) { .show-control-desk { padding: .75rem; } .show-control-heading { align-items: flex-start; flex-direction: column; } }
+
+/* The live workspace is the control desk; results are an action, not another page of settings. */
+.event-night-controls { display: grid; gap: .5rem; }
+.event-night-controls > button { width: 100%; }
+.moderator-context-details > summary { cursor: pointer; font-size: .8rem; padding-top: .5rem; color: var(--color-text-muted); }
+.moderator-audio-player.moderator-native-audio { height: auto; min-height: 0; background: transparent; }
+.moderator-native-audio > div { display: none; }
+.focused-live-shell:has(.event-night-controls) .media-controls p { margin: .25rem 0; }
+.focused-live-shell:has(.event-night-controls) .media-button-row button { padding: .5rem; white-space: nowrap; font-size: .85rem; }
+.focused-live-shell:has(.event-night-controls) .recap-question-buttons { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.event-night-controls p { margin: 0; font-size: .82rem; line-height: 1.35; }
+.event-finale-status { display: flex; gap: .5rem; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: .65rem; border: 1px solid var(--color-accent); border-radius: 10px; }
+.event-finale-status span { font-size: .8rem; color: var(--color-text-muted); }
+.winner-music { display: grid; gap: .4rem; min-width: 0; }
+.winner-music > strong { font-size: .8rem; }
+.winner-youtube-player { display: grid; gap: .4rem; width: 100%; min-width: 0; }
+.winner-youtube-player .youtube-player-host { height: auto; min-height: 200px; aspect-ratio: 16 / 9; }
+.winner-youtube-player .projector-media-error { position: static; margin: 0; }
+.winner-youtube-player iframe { width: 100%; height: 100%; min-height: 200px; border: 0; }
+.focused-live-shell { align-content: start; padding-bottom: 1rem; }
+.live-actions details.live-danger-area { display: block; padding-top: .5rem; }
+.live-danger-area > summary { cursor: pointer; color: var(--color-text-muted); font-size: .8rem; min-height: 28px; }
+.live-danger-area[open] > button { width: 100%; margin-top: .5rem; }
+.focused-live-shell:has(.event-night-controls) .moderator-info-panel { padding: .65rem .8rem; }
+.focused-live-shell:has(.event-night-controls) .moderator-answer { padding: .4rem .6rem; margin-top: .3rem; }
+.focused-live-shell:has(.event-night-controls) .live-next-step { padding-top: .4rem; margin-top: .4rem; }
+.focused-live-shell:has(.event-night-controls) .live-next-step p { margin: .2rem 0; font-size: .8rem; }
+.focused-live-shell:has(.event-night-controls) .moderator-info-panel > p { margin: .35rem 0; }
+.focused-live-shell:has(.event-night-controls) .live-actions { gap: .5rem; padding: .65rem; }
+.focused-live-shell:has(.event-night-controls) .media-controls,
+.focused-live-shell:has(.event-night-controls) .recap-controls { padding: .5rem; }
+@media (min-width: 841px) {
+  .focused-live-shell:has(.event-night-controls) .live-preview-stage { max-height: calc(100dvh - 160px); }
+}
+@media (max-width: 600px) {
+  .focused-live-shell:has(.event-night-controls) .media-button-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .focused-live-shell:has(.event-night-controls) .media-button-row button { padding-inline: .25rem; font-size: .8rem; }
+}

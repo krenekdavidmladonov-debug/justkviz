@@ -1,8 +1,35 @@
 # Initial Firestore data model
 
+Existing imported-image provenance derives original HTTPS sources without
+rewriting quiz or event snapshot records. Backups remain retained; see
+[ORIGINAL_IMAGE_SOURCES.md](ORIGINAL_IMAGE_SOURCES.md).
+
 This is a first design, not a migration contract. Fields should be introduced only with validation, rules, and indexes required by an implemented feature.
 
 ## Private operational data
+
+### `driveConnections/{uid}` and `driveOAuthStates/{stateHash}`
+
+Server-only connection metadata, encrypted OAuth credentials and expiring,
+single-use authorization state for the owner-directed Drive connection. Direct
+client reads and writes remain denied by the existing default-deny Rules. Only
+allowlisted connection status is returned through freshly authorized callables.
+No Drive credentials or folder details enter quiz snapshots or public projections.
+See [GOOGLE_DRIVE_CONNECTION.md](GOOGLE_DRIVE_CONNECTION.md) for lifecycle and
+activation requirements. The separately gated media pipeline adds
+`driveMediaJobs/{jobId}` (server-only source fingerprint, connection/account/member
+binding, lease, reserved Drive file ID, output digest, status), Drive-backed ready
+`quizzes/{quizId}/mediaAssets/{assetId}` records and private per-field
+`slides/{slideId}.driveImportProvenance`. Their exact contract and retention are
+in [GOOGLE_DRIVE_MEDIA.md](GOOGLE_DRIVE_MEDIA.md). No new browser write access is granted.
+
+Optional local preparation adds server-only `driveMediaCompanions/{deviceId}`
+(one owner-bound device, token digest, revocation/expiry, current authority and
+connection binding, active claim) and `driveMediaPairings/{codeHash}` (five-minute,
+single-use pairing). `driveMediaJobs.execution: local` separates YouTube device
+claims from cloud photo work; missing execution retains historical cloud mode.
+No capability secret, device record or source provenance enters public data.
+See [LOCAL_MEDIA_COMPANION.md](LOCAL_MEDIA_COMPANION.md).
 
 ### `users/{uid}`
 
@@ -11,6 +38,8 @@ Legacy profile documents are no longer authority and are denied to clients. Pers
 ### `quizzes/{quizId}`
 
 Quiz metadata: `title`, `description`, `status` (`draft`, `ready`, `archived`), ownership/audit fields, and timestamps.
+
+Reversible library deletion adds an independent `disposition: active | trash` overlay (missing means active), revision-checked trash/restore and trusted trash/restore actor timestamps on this same root. It never deletes nested content or changes the original status. See [QUIZ_TRASH.md](QUIZ_TRASH.md).
 
 Current required fields:
 
@@ -25,7 +54,7 @@ The admin-only `createQuiz` workflow creates an empty private root with `schemaV
 
 V1-migrated drafts may additionally contain private `legacy: { source, metadata }`. Version-2 imports retain only explicitly allowlisted compatibility metadata and extend the same legacy object with source project/collection/ID and export/content fingerprints. It is never copied into a public projection. See tools/migration-v1/CLOUD_IMPORT.md.
 
-Quiz readiness is intentionally not stored on this document. `PreflightResult` is derived from the current bounded private quiz model so it cannot become a stale duplicate truth such as `isQuizValid: true`.
+The existing `status` is an explicit organizational choice: metadata updates accept `draft` or `ready`, preserve it when omitted, and cannot restore `archived`. It is independent of content validation and grants no publication authority. Quiz readiness is intentionally not stored on this document. `PreflightResult` is derived from the current bounded private quiz model so it cannot become a stale duplicate truth such as `isQuizValid: true`.
 
 ### `quizzes/{quizId}/slides/{slideId}`
 
@@ -55,9 +84,25 @@ The local seed uses stable quiz, round, and question IDs. It is development data
 
 ### `events/{eventId}`
 
-Authoritative event record implemented by Events Foundation: `schemaVersion`, title/start/time zone, private venue configuration, separate team/people capacities, accepted team/people counters, per-event team-size bounds, registration window/publication/status, lifecycle status, nullable immutable quiz assignment, fixed-point scoring foundation (`unitScale: 2`, `rankingMode: dense`, server-owned `started`), monotonic revision, and trusted audit fields. Staff may read the root; every client write is denied and mutations use trusted Functions.
+Authoritative event record implemented by Events Foundation: `schemaVersion`, title/start/time zone, private venue configuration, team capacity, retained legacy people capacity, accepted team/people counters, per-event team-size bounds (up to four for new settings and new/edited registrations), registration window/publication/status, lifecycle status, nullable immutable quiz assignment, fixed-point scoring foundation (`unitScale: 2`, `rankingMode: dense`, server-owned `started`), monotonic revision, and trusted audit fields. Staff may read the root; every client write is denied and mutations use trusted Functions.
+
+Event `pricing` is `{ mode: 'per-team' | 'per-event' | 'agreement', amountCzk, hidden? }`.
+Numeric modes require integer CZK from 0 to 1,000,000; agreement requires null.
+Absent historical pricing means 350 CZK per team. Creates persist that default;
+an update omitting pricing preserves the current authoritative value. Missing
+`hidden` means visible; older updates omitting the flag preserve current visibility,
+even when they supply a price. Explicit false unhides it. Hidden prices retain
+their actual mode and amount privately; public projections contain only
+`{ mode: 'agreement', amountCzk: null, hidden: true }`. This benign redaction remains
+readable by cached older clients. The current public UI omits the price entirely.
+Registration and lifecycle rebuilds preserve this boundary; registrations cannot
+set pricing or visibility.
 
 ### `quizSnapshots/{snapshotId}`
+
+Frozen YouTube prompt clips can be rendered through an exact matching completed
+Drive import without changing this document tree. No binding collection or data
+migration is introduced; see [SNAPSHOT_DRIVE_CLIPS.md](SNAPSHOT_DRIVE_CLIPS.md).
 
 The PDF Print Center reads this existing immutable document tree through a trusted Function. Its registration adapter resolves accepted records server-side into transient `PrintTeam { id, name }` values.
 
@@ -66,6 +111,16 @@ The PDF Print Center reads this existing immutable document tree through a trust
 Private accepted/cancelled registration with normalized team name, member count, contact email, management-token hash, timestamps, and cancellation audit metadata. Staff reads are allowed; all browser writes are denied.
 
 Manual team records use this same collection with server-owned `source: manual`, nullable `contactEmail`, null `managementTokenHash`, actor fields, revision and immutable request fingerprint. The deterministic ID reserves the add request per event/staff UID, even after cancellation. Missing source means legacy online; no migration is needed. See `EVENT_TEAM_TOOLS.md`.
+
+### Organizer intents in `events/{eventId}/emailIntents/{intentId}`
+
+Organizer notifications reuse server-only `events/{eventId}/emailIntents` with
+deterministic ID `owner_{registrationId}` and type
+`registration-organizer-notification`. The intent contains the explicit runtime
+recipient/owner UID, public-create provenance and creation timestamp, minimal
+event/team/count snapshot and its independent delivery state. It contains no team
+contact or management token and does not change the registration's participant
+delivery summary. See [TRANSACTIONAL_EMAIL.md](TRANSACTIONAL_EMAIL.md).
 
 ### `events/{eventId}/registrationNames/{nameHash}`
 
@@ -193,8 +248,19 @@ Admin-only preview/confirmation creates an immutable emailCampaigns record and r
 Media authoring extends the shared picker/gateway/renderer to question, private answer and background roles. Explicit empty fields detach without deleting legacy data or snapshot assets. See MEDIA_AUTHORING_RELEASE.md for the complete contract and deployment scope.
 
 
-Complete editor extends the same private ordered stream with explicit draft/ready authoring, independent answer mode, default appearance, atomic round/recap creation and private in-memory rehearsal. Drafts block preflight, snapshot lock and live publication. See [COMPLETE_EDITOR_RELEASE.md](COMPLETE_EDITOR_RELEASE.md) for field compatibility, authorization, verification and the integrated deployment manifest.
+Complete editor extends the same private ordered stream with explicit draft/ready authoring, independent answer mode, default appearance, atomic round/recap creation and private in-memory rehearsal. Drafts remain editorial findings in optional preflight; saved drafts can be used for rehearsal and event snapshots through the same sanitized publication boundary. See [COMPLETE_EDITOR_RELEASE.md](COMPLETE_EDITOR_RELEASE.md) for field compatibility, authorization, verification and the integrated deployment manifest.
 
 ## Event management extension
 
+Event publication reuses `events.registrationPublished`, independently of quiz
+readiness and lifecycle. The public projection may additionally contain the safe
+`description` and `lifecycleStatus` fields. Existing projections without these
+optional fields remain compatible. See [EVENT_PUBLICATION.md](EVENT_PUBLICATION.md).
+
 See [EVENT_MANAGEMENT.md](EVENT_MANAGEMENT.md) for the independent disposition overlay, scoped permission mapping, shared transactional guards, capability revocation and exact server-side deletion ownership/allowlist. No content backfill or Storage cleanup is introduced. Cloud team email remains disabled.
+
+Manual completion uses existing events roots and eventOperations/eventAudit receipts. The optional private completion object contains trusted at/by/reason; capabilityVersion and revision advance together. Ending one sessions document does not mutate its event root. Existing scores/history and confirmed result versions remain intact after either presentation END or event completion.
+
+### Server-only registration create budget
+
+`events/{eventId}/registrationAbuse/{contactHash}` holds only numeric `tokens` and `updatedAtMillis`. The SHA-256 document ID is domain-separated and binds the event ID and normalized contact. It is pseudonymous data, not anonymization or proof that the address belongs to the caller. Raw contacts and client/IP tokens are not stored in this collection. Separate documents avoid shared-contact exhaustion. A successful new online create debits within the existing create transaction after replay/window/name/capacity validation. Failed requests and replays leave state unchanged; cancellation never refunds. Active state persists with the event and is removed by the existing explicit permanent event deletion. No automatic TTL, indexes, backfill or client permission is added.

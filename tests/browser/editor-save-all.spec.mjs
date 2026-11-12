@@ -6,6 +6,7 @@ import { mediaSlide } from '../e2e/media-fixture.mjs';
 async function fixture(page) {
   const identity = await editorIdentity();
   const id = 'save-all-' + randomUUID(), root = identity.db.doc('quizzes/' + id);
+  try {
   const batch = identity.db.batch();
   batch.set(root, { title: 'Společné ukládání', description: '', status: 'draft', revision: 0, slideCount: 4, roundCount: 1, questionCount: 2,
     createdAt: new Date(), updatedAt: new Date(), createdBy: 'synthetic', updatedBy: 'synthetic' });
@@ -21,10 +22,12 @@ async function fixture(page) {
   await page.context().route('**/*', r => ['127.0.0.1','localhost'].includes(new URL(r.request().url()).hostname) ? r.continue() : r.abort());
   await page.goto('/admin/login'); await page.getByLabel('E-mail').fill(identity.email); await page.getByLabel('Heslo').fill(identity.password);
   await page.getByRole('button', { name: 'Přihlásit se', exact: true }).click(); await page.locator('.admin-dashboard').waitFor();
-  await page.goto('/admin/quizzes/' + id + '/edit'); await page.locator('.outline-question').nth(1).waitFor();
+  await page.goto('/admin/quizzes/' + id + '/edit'); await page.getByRole('button', {name:'Rozbalit kolo Kolo', exact:true}).click(); await page.locator('.outline-question').nth(1).waitFor();
+  const dispose = identity.dispose; identity.dispose = async () => { await identity.db.recursiveDelete(root); await dispose(); };
   return { identity, root };
+  } catch (error) { await identity.db.recursiveDelete(root); await identity.dispose(); throw error; }
 }
-const select = (page, index) => page.locator('.outline-question').nth(index).click();
+const select = async (page, index) => { await page.locator('.outline-round').first().waitFor(); while (await page.locator('.outline-collapse[aria-expanded=false]').count()) await page.locator('.outline-collapse[aria-expanded=false]').first().click(); await page.locator('.outline-question').nth(index).click(); };
 const prompt = page => page.getByRole('textbox', { name: 'Otázka *', exact: true });
 const save = page => page.getByRole('button', { name: 'Uložit vše', exact: true }).click();
 
@@ -33,7 +36,7 @@ test('multiple questions retain work during navigation; Ctrl+S saves both and le
   try {
     await select(page, 0); await prompt(page).fill('a edited'); await select(page, 1); await prompt(page).fill('b edited');
     await select(page, 0); await expect(prompt(page)).toHaveValue('a edited'); await expect(page.getByRole('dialog')).toHaveCount(0);
-    await page.screenshot({ path: '.local-data/editor-save-all/working-copy-desktop.png', fullPage: true });
+
     expect((await f.root.collection('slides').doc('a').get()).data().text).toBe('a');
     await page.keyboard.press('Control+s'); await expect(page.locator('.save-state')).toHaveText('Uloženo');
     expect((await f.root.collection('slides').doc('a').get()).data().text).toBe('a edited');
@@ -130,7 +133,7 @@ test('failed authoritative reload preserves drafts, unlocks navigation and permi
   let editorReads = 0, writesAfterConflict = 0;
   try {
     await select(page, 0); await prompt(page).fill('Question draft kept after failed reload');
-    await page.getByRole('button', { name: 'Základní údaje', exact: true }).click();
+    await page.getByRole('button', { name: 'Název a nastavení kvízu', exact: true }).click();
     await page.getByLabel('Název kvízu *', { exact: true }).fill('Metadata draft kept after failed reload');
     await select(page, 0);
     const batch = f.identity.db.batch();
@@ -162,7 +165,7 @@ test('failed authoritative reload preserves drafts, unlocks navigation and permi
     await expect(page.getByRole('button', { name: 'Uložit vše', exact: true })).toBeEnabled();
     await select(page, 1); await expect(prompt(page)).toHaveValue('b');
     await select(page, 0); await expect(prompt(page)).toHaveValue('Question draft kept after failed reload');
-    await page.getByRole('button', { name: 'Základní údaje', exact: true }).click();
+    await page.getByRole('button', { name: 'Název a nastavení kvízu', exact: true }).click();
     await expect(page.getByLabel('Název kvízu *', { exact: true })).toHaveValue('Metadata draft kept after failed reload');
     expect(writesAfterConflict).toBe(0);
     expect((await f.root.get()).data().revision).toBe(1);
@@ -183,9 +186,9 @@ test('quiz metadata and round title survive selection, and invalid inactive cont
     await save(page); await expect(page.locator('.round-editor-error')).toContainText('Před uložením');
     expect((await f.root.get()).data().revision).toBe(0); await expect(prompt(page)).toHaveValue('');
     await prompt(page).fill('a repaired'); await select(page, 1); await expect(prompt(page)).toHaveValue('b edited');
-    await page.getByRole('button', { name: 'Základní údaje', exact: true }).click();
+    await page.getByRole('button', { name: 'Název a nastavení kvízu', exact: true }).click();
     await page.getByLabel('Název kvízu *', { exact: true }).fill('Nový název');
-    await page.getByRole('button', { name: 'Úvod a vzhled kola', exact: true }).click();
+    await page.locator('.outline-round-select').click();
     await page.getByLabel('Název kola *', { exact: true }).fill('Nové kolo');
     await select(page, 0); await save(page); await expect(page.locator('.save-state')).toHaveText('Uloženo');
     expect((await f.root.get()).data().title).toBe('Nový název');
@@ -198,7 +201,6 @@ test('discarding a new question from the header removes the temporary draft', as
   const f = await fixture(page);
   try {
     await page.getByRole('button', { name: '+ Přidat otázku', exact: true }).click();
-    await page.getByRole('dialog', { name: /Typ otázky/ }).getByRole('button', { name: 'Volná odpověď', exact: true }).click();
     await prompt(page).fill('Temporary question');
     await page.getByRole('button', { name: 'Zahodit změny…', exact: true }).click();
     await page.getByRole('button', { name: 'Pokračovat bez uložení' }).click();

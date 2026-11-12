@@ -1,0 +1,62 @@
+.admin-dashboard.dashboard-compact { gap: 36px; }
+.dashboard-compact .dashboard-heading { margin-bottom: 4px; }
+.dashboard-compact .dashboard-heading h1 { font-size: clamp(1.8rem, 3vw, 2.25rem); }
+.dashboard-compact .dashboard-actions { width: auto; display: flex; }
+.dashboard-event-list { display: grid; gap: 20px; min-width: 0; }
+.dashboard-event-summary { display: grid; gap: 24px; min-width: 0; padding: 28px; border: 1px solid var(--color-border); border-top: 3px solid var(--color-accent); border-radius: var(--radius-lg); background: var(--color-surface); }
+.dashboard-event-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.dashboard-event-heading > div { display: grid; gap: 10px; min-width: 0; }
+.dashboard-event-heading h2 { margin: 0; font-size: clamp(1.4rem, 2.5vw, 1.85rem); line-height: 1.25; overflow-wrap: anywhere; }
+.dashboard-event-heading time { color: var(--color-text-muted); font-size: .86rem; }
+.dashboard-event-heading > a { flex-shrink: 0; }
+.dashboard-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 0; padding-top: 22px; border-top: 1px solid var(--color-border); }
+.dashboard-stats > div { min-width: 0; }
+.dashboard-stats > div + div { padding-left: 24px; border-left: 1px solid var(--color-border); }
+.dashboard-stats dt { color: var(--color-text-muted); font-size: .85rem; font-weight: 550; }
+.dashboard-stats dd { margin: 10px 0 0; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.dashboard-stats dd strong { font-size: clamp(1.8rem, 3.5vw, 2.8rem); font-weight: 750; letter-spacing: -.04em; }
+.dashboard-stats dd small { font-size: .9rem; font-weight: 550; letter-spacing: normal; }
+.dashboard-stat-limit { color: var(--color-text-subtle); font-size: 1.15rem; white-space: nowrap; }
+.dashboard-team-occupancy { display: block; width: 100%; height: 4px; margin-top: 16px; overflow: hidden; border: 0; border-radius: var(--radius-pill); background: var(--color-surface-subtle); accent-color: var(--color-accent); }
+.dashboard-team-occupancy::-webkit-progress-bar { background: var(--color-surface-subtle); border-radius: var(--radius-pill); }
+.dashboard-team-occupancy::-webkit-progress-value { background: var(--color-accent); border-radius: var(--radius-pill); }
+.dashboard-team-occupancy::-moz-progress-bar { background: var(--color-accent); border-radius: var(--radius-pill); }
+.dashboard-stat-detail { display: block; margin-top: 10px; color: var(--color-text-muted); font-size: .85rem; line-height: 1.4; }
+.dashboard-stat-availability.has-space dd strong { color: var(--color-success); }
+.dashboard-stat-countdown dd strong { font-size: clamp(1.4rem, 2.8vw, 2.25rem); letter-spacing: -.025em; overflow-wrap: anywhere; }
+.dashboard-drafts { display: grid; gap: 18px; padding-top: 8px; }
+.dashboard-drafts-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.dashboard-drafts-heading h2 { margin: 0; font-size: 1.1rem; line-height: 1.4; }
+.dashboard-drafts-heading > a { color: var(--color-text-muted); font-size: .82rem; white-space: nowrap; }
+.dashboard-draft-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.dashboard-draft-card { min-width: 0; display: grid; align-content: start; gap: 10px; padding: 20px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
+.dashboard-draft-card h3 { margin: 0; color: var(--color-text); font-size: .98rem; font-weight: 650; line-height: 1.45; overflow-wrap: anywhere; }
+.dashboard-draft-card .card-meta { margin: 0; font-size: .72rem; }
+.dashboard-draft-card > a { width: fit-content; padding-block: 7px; margin-bottom: -7px; font-size: .8rem; font-weight: 600; text-decoration: none; }
+.dashboard-draft-card > a:hover { text-decoration: underline; }
+.dashboard-draft-card > a span { margin-left: 8px; }
+.dashboard-drafts-empty, .dashboard-access-note { margin: 0; color: var(--color-text-muted); font-size: .9rem; }
+.dashboard-compact-empty { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; padding: 24px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface); }
+.dashboard-compact-empty p { margin: 0; font-size: 1rem; }
+.dashboard-inline-error { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 16px 20px; border: 1px solid var(--color-error-border); border-radius: var(--radius-md); color: var(--color-text); background: var(--color-error-surface); font-size: .9rem; }
+.dashboard-refresh { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-top: 16px; border-top: 1px solid var(--color-border); }
+.dashboard-refresh .card-meta { margin: 0; font-size: .7rem; }
+.dashboard-refresh button { font-size: .75rem; }
+@media (max-width: 1100px) { .dashboard-draft-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 780px) { .dashboard-event-heading { align-items: flex-start; } .dashboard-stats { gap: 16px; } .dashboard-stats > div + div { padding-left: 16px; } }
+@media (max-width: 540px) {
+  .admin-dashboard.dashboard-compact { gap: 28px; }
+  .dashboard-event-summary { padding: 20px; gap: 20px; }
+  .dashboard-event-heading { display: grid; gap: 14px; }
+  .dashboard-event-heading > a { justify-self: start; }
+  .dashboard-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 16px; }
+  .dashboard-stats .dashboard-stat-countdown { grid-column: 1 / -1; }
+  .dashboard-stats .dashboard-stat-availability { padding-left: 0; border-left: 0; }
+  .dashboard-stats dd strong { font-size: 2rem; }
+  .dashboard-stat-countdown dd { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 12px; }
+  .dashboard-stat-countdown .dashboard-stat-detail { margin-top: 0; }
+  .dashboard-stat-limit { font-size: 1rem; }
+  .dashboard-draft-grid { grid-template-columns: minmax(0, 1fr); }
+  .dashboard-drafts-heading h2 { font-size: 1rem; }
+  .dashboard-drafts-heading > a { font-size: .75rem; }
+}

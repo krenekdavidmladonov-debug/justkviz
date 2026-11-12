@@ -27,7 +27,7 @@ const client = new ActualClient({ urlPrefix: 'https://cloudfunctions.googleapis.
 const patch = s => ({ method: 'PATCH', path: `projects/${policy.PROJECT}/locations/${policy.REGION}/functions/updateEventRegistration`, body: actualGcf.functionFromEndpoint({ ...makeEndpoint('updateEventRegistration'), source: { storageSource: structuredClone(s.storageSource) } }) });
 
 test('pinned CLI real planner produces exactly 70 existing safe updates and excludes health', async () => {
-  assert.equal(require('firebase-tools/package.json').version, '15.28.2');
+  assert.equal(require('firebase-tools/package.json').version, '15.34.2');
   const args = makeArgs(), plan = await actualPlanner.createDeploymentPlan(args);
   policy.plan(plan, names, actualBackend.allEndpoints);
   const updates = Object.values(plan.regionalChangesets).flatMap(c => c.endpointsToUpdate);
@@ -211,7 +211,7 @@ test('real Fabricator applies all 70 updates through real GCF conversion and gua
     const fab = new h.Fabricator({ projectId: policy.PROJECT, projectNumber: policy.NUMBER, sources: { default: { storage: h.state.storageSource } }, executor: directExecutor, functionExecutor: directExecutor, runFunctionExecutor: directExecutor });
     const plan = await h.modules['deploy/functions/release/planner'].createDeploymentPlan(args);
     const summary = await fab.applyPlan({ default: plan });
-    assert.equal(summary.results.length, 70); assert(summary.results.every(result => !result.error));
+    assert.equal(summary.results.length, 70); assert(summary.results.every(result => !result.error), summary.results.filter(result => result.error).map(result => result.error.message).join('; '));
     const patches = h.writes.filter(req => req.method === 'PATCH');
     assert.equal(patches.length, 70); assert.equal(polls, 70); assert.equal(sourceTokenReads, 0); assert.equal(iamWrites, 0);
     for (const req of patches) {
@@ -226,7 +226,7 @@ test('real Fabricator applies all 70 updates through real GCF conversion and gua
     // it before transport. Neither the token value nor body enters diagnostics.
     actualExperiments.isEnabled = name => name === 'functionsv2deployoptimizations' || savedExperiment(name);
     logger.error = () => {};
-    await assert.rejects(fab.updateV2Function(makeEndpoint('updateEventRegistration'), { getToken: async () => 'synthetic-only-do-not-log', abort: () => {}, poller: () => {} }), /Failed to update function updateEventRegistration/u);
+    await assert.rejects(descriptors.updateV2Function.value.call(fab, makeEndpoint('updateEventRegistration'), { withToken: work => work('synthetic-only-do-not-log'), abort: () => {}, poller: () => {} }), /Failed to update function updateEventRegistration/u);
     assert(h.logs.some(row => row.event === 'blocked' && /Unexpected update field in buildConfig: sourceToken/u.test(row.fields.reason)));
     assert.equal(h.writes.filter(req => req.method === 'PATCH').length, 70);
     assert(!JSON.stringify(h.logs).includes('synthetic-only-do-not-log'));

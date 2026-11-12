@@ -7,7 +7,7 @@ import { expectedRevision, requiredId } from './validation.js';
 import { operationHash } from './management.js';
 
 /** Exact server-owned schema. Library quizzes, Storage, identities and global limiters are never targets. */
-export const eventDeletionCollections = ['registrations', 'registrationNames', 'registrationOperations', 'scores', 'scoreOperations', 'refereeAccess', 'emailIntents', 'emailSecrets', 'emailCampaigns', 'eventOperations'] as const;
+export const eventDeletionCollections = ['registrations', 'registrationNames', 'registrationAbuse', 'registrationOperations', 'scores', 'scoreOperations', 'refereeAccess', 'emailIntents', 'emailSecrets', 'emailCampaigns', 'eventOperations'] as const;
 export const sessionDeletionCollections = ['interimVersions', 'interimOperations', 'finalVersions', 'finalOperations'] as const;
 const snapshotCollections = ['slides', 'rounds'] as const;
 type Target = { path: string; kind: 'collection' | 'scores' | 'document' };

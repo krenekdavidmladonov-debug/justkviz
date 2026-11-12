@@ -1,10 +1,11 @@
 import { Timestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { getFirebaseServices } from '../../services/firebase/client';
+import { quizMediaBlobCache } from '../media/mediaBlobCache';
 
 let epoch = 0;
 const stops = new Set<() => void>();
-export function invalidatePrivateAccess() { epoch++; stops.forEach(stop => stop()); stops.clear(); }
+export function invalidatePrivateAccess() { epoch++; quizMediaBlobCache.clear(); stops.forEach(stop => stop()); stops.clear(); }
 function decode(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(decode);
   if (value && typeof value === 'object') {
@@ -16,9 +17,18 @@ function decode(value: unknown): unknown {
 }
 export async function accessCall<T>(name: string, data: Record<string, unknown> = {}): Promise<T> {
   const current = epoch;
-  const result = await httpsCallable<Record<string, unknown>, T>(getFirebaseServices().functions, name)(data);
-  if (current !== epoch) throw new Error('Přihlášení nebo oprávnění se změnilo.');
-  return decode(result.data) as T;
+  try {
+    const result = await httpsCallable<Record<string, unknown>, T>(getFirebaseServices().functions, name)(data);
+    if (current !== epoch) throw new Error('Přihlášení nebo oprávnění se změnilo.');
+    return decode(result.data) as T;
+  } catch (failure) {
+    const code = failure && typeof failure === 'object' && 'code' in failure && typeof failure.code === 'string' ? failure.code : 'unknown';
+    if (failure instanceof Error) {
+      failure.message = `${failure.message} (${name}: ${code})`;
+      throw failure;
+    }
+    throw Object.assign(new Error(`Požadavek nelze dokončit. (${name}: ${code})`, { cause: failure }), { code });
+  }
 }
 export const privateRead = <T,>(operation: string, data: Record<string, unknown> = {}) => accessCall<T>('readAccessData', { operation, ...data });
 export interface PrivateDocument { id: string; data: Record<string, unknown> }

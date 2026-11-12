@@ -1,5 +1,6 @@
+import { useEffect, useRef, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { visibleSlidePosition } from '@filmovy-kviz/quiz-domain';
+import { directMediaKind, originalYoutubeSource, parseQuizAsset, visibleSlidePosition } from '@filmovy-kviz/quiz-domain';
 
 import { SlideRenderer } from '../presentation/SlideRenderer';
 import { ShowModeRenderer } from '../show-mode/ShowModeRenderer';
@@ -12,15 +13,18 @@ import {
   currentRoundLabel,
   humanSlideLabel,
   isAudioSlide,
-  isIntroSlide,
   isMediaSlide,
   liveMediaSource,
   liveStatusLabel,
   type RecapQuestionChoice,
 } from './livePresentation';
 import type { LiveControlSlide, LiveControlState, PublicLiveState } from './types';
+import { liveNavigationDirection } from './navigationKeys';
+import { entersFinale } from './eventNightFlow';
+import { nextPrivateLiveMediaReferences, usePrivateMediaReferencesPrefetch } from '../media/usePrivateMediaPrefetch';
+import { LiveQuestionNavigator } from './LiveQuestionNavigator';
 
-export type LivePendingAction = 'previous' | 'next' | 'intro' | 'recap' | 'reveal' | 'hide' | 'play' | 'stop' | 'replay' | 'end' | 'show';
+export type LivePendingAction = 'previous' | 'next' | 'jump' | 'recap' | 'reveal' | 'hide' | 'play' | 'stop' | 'replay' | 'end' | 'show';
 
 interface LiveModeratorViewProps {
   readonly session: LiveControlState;
@@ -33,14 +37,17 @@ interface LiveModeratorViewProps {
   readonly error: HumanErrorValue | null;
   readonly projectorOpened: boolean;
   readonly audioSuppressed?: boolean;
+  readonly eventControls?: ReactNode;
   readonly onOpenProjector: () => void;
   readonly onPrevious: () => void;
   readonly onNext: () => void;
   readonly onReveal?: () => void;
   readonly onHide?: () => void;
-  readonly onStartIntro: () => void;
+  readonly onGoToSlide: (position: number) => void;
+  readonly onFinale?: () => void;
   readonly onSelectRecap: (position: number) => void;
   readonly onPlay: () => void;
+  readonly onPlayOriginal?: () => void;
   readonly onStop: () => void;
   readonly onReplay: () => void;
   readonly onEnd: () => void;
@@ -51,12 +58,12 @@ interface LiveModeratorViewProps {
 
 function pendingLabel(action: LivePendingAction | null, key: LivePendingAction, idle: string): string {
   if (action !== key) return idle;
-  if (key === 'play' || key === 'replay' || key === 'intro') return 'Spouštím…';
+  if (key === 'play' || key === 'replay') return 'Spouštím…';
   if (key === 'stop') return 'Zastavuji…';
   if (key === 'end') return 'Ukončuji…';
   if (key === 'reveal') return 'Odhaluji…';
   if (key === 'hide') return 'Skrývám…';
-  return 'Přecházím…';
+  return idle;
 }
 
 export function LiveModeratorView({
@@ -70,14 +77,17 @@ export function LiveModeratorView({
   error,
   projectorOpened,
   audioSuppressed = false,
+  eventControls,
   onOpenProjector,
   onPrevious,
   onNext,
   onReveal,
   onHide,
-  onStartIntro,
+  onGoToSlide,
+  onFinale,
   onSelectRecap,
   onPlay,
+  onPlayOriginal,
   onStop,
   onReplay,
   onEnd,
@@ -85,17 +95,50 @@ export function LiveModeratorView({
   onMediaError,
   onMediaPlayback,
 }: LiveModeratorViewProps) {
-  const pending = pendingAction !== null || session.interimResults !== undefined || session.finalReveal?.visible === true;
+  const pending = pendingAction !== null || session.interimResults !== undefined || (session.finalReveal?.visible === true && !eventControls);
+  const finalActive = session.finalReveal?.visible === true;
+  const nextBlocked = finalActive && session.finalReveal?.mode !== 'table';
   const ended = session.status === 'ended';
+  usePrivateMediaReferencesPrefetch(
+    currentSlide ? nextPrivateLiveMediaReferences(session.quizId, slides, currentSlide.id) : [],
+    !ended && !session.interimResults && !finalActive,
+    session.sessionId,
+  );
   const source = session.interimResults || session.finalReveal?.visible ? undefined : liveMediaSource(presentedSlide);
   const roundLabel = currentRoundLabel(currentSlide);
   const questionLabel = currentQuestionLabel(session, currentSlide, presentedSlide, slides);
   const recapTitle = currentSlide?.roundTitle?.trim() || 'Aktuální kolo';
+  const navigationSourceAvailable = slides.length > 0 && (session.currentSlidePosition === 0
+    || slides.some(slide => slide.position === session.currentSlidePosition));
   const nextPosition = visibleSlidePosition(slides, session.currentSlidePosition, 1);
+  const canNext = navigationSourceAvailable && (nextPosition !== undefined || (Boolean(eventControls) && (currentSlide?.kind.toLowerCase() !== 'end' || finalActive)));
   const previousPosition = visibleSlidePosition(slides, session.currentSlidePosition, -1);
+  const canPrevious = navigationSourceAvailable && (previousPosition !== undefined || (Boolean(eventControls) && finalActive));
   const nextSlide = slides.find(slide => slide.position === nextPosition);
+  const finaleNext = Boolean(eventControls) && !finalActive && entersFinale(slides, session.currentSlidePosition, 1);
   const nextRecap = recapChoices.find(choice => choice.slide.position > (session.recapQuestionPosition ?? 0));
   const mediaLabels = { idle: 'Připraveno ke spuštění', preparing: 'Načítá se', ready: 'Připraveno', playing: 'Přehrává se', finished: 'Dohrálo', error: 'Přehrávání se nezdařilo' };
+  const navigationRequested = useRef(false);
+
+  useEffect(() => {
+    navigationRequested.current = false;
+  }, [pendingAction, session.revision, session.sessionId]);
+
+  useEffect(() => {
+    const navigate = (event: KeyboardEvent) => {
+      const direction = liveNavigationDirection(event);
+      if (direction === undefined) return;
+      event.preventDefault();
+      if (pending || ended || navigationRequested.current || (direction === 1 && nextBlocked)
+        || (direction === -1 ? !canPrevious : !canNext)) return;
+      // Block a second key event before React has rendered the pending state.
+      navigationRequested.current = true;
+      if (direction === -1) onPrevious();
+      else onNext();
+    };
+    document.addEventListener('keydown', navigate);
+    return () => document.removeEventListener('keydown', navigate);
+  }, [pending, ended, canPrevious, canNext, nextBlocked, onPrevious, onNext]);
 
   return (
     <article
@@ -113,14 +156,9 @@ export function LiveModeratorView({
           <span>{liveStatusLabel(session.status)}</span>
           <strong>{questionLabel}</strong>
         </div>
-        <div className="projector-pill" aria-label="Stav projektoru">
-          <span>Projektor</span>
-          <strong>{projectorOpened ? 'Okno bylo otevřeno' : 'Stav nelze ověřit'}</strong>
-        </div>
       </header>
 
       {error && <HumanError error={error} />}
-      {pendingAction && <p className="operation-status" role="status" aria-live="polite">{pendingLabel(pendingAction, pendingAction, '')}</p>}
 
       <section className="live-workspace">
         <section className="moderator-info-panel" aria-labelledby="moderator-info-title">
@@ -133,44 +171,39 @@ export function LiveModeratorView({
           ) : (
             <p className="moderator-empty">Správná odpověď se zobrazí u otázky.</p>
           )}
+          <details className="moderator-context-details" open={eventControls ? undefined : true}>
+          <summary>Poznámky a další obsah</summary>
           {presentedSlide?.moderatorNote && (
             <div className="moderator-note"><span>Poznámka moderátora</span><p>{presentedSlide.moderatorNote}</p></div>
           )}
-          <div className="live-next-step"><span className="panel-label">Následuje</span><strong>{nextSlide ? humanSlideLabel(nextSlide) : 'Konec prezentace'}</strong><p>{nextSlide?.title || nextSlide?.text || 'Po posledním slidu můžete přejít k vyhlášení.'}</p></div>
+          <div className="live-next-step"><span className="panel-label">Následuje</span><strong>{finaleNext ? 'Finální vyhlášení' : nextSlide ? humanSlideLabel(nextSlide) : 'Konec prezentace'}</strong><p>{finaleNext ? 'Automatické odhalení pořadí a vítězů.' : nextSlide?.title || nextSlide?.text || 'Konec kvízu.'}</p></div>
           {session.eventId && <p><Link className="secondary-link" to={`/admin/events/${session.eventId}/scoring`} target="_blank" rel="noreferrer">Týmy a bodování ↗</Link></p>}
+          </details>
         </section>
 
         <aside className="live-actions" aria-label="Ovládání kvízu">
-          <section className="projector-status-card">
-            <div><span>Projektor</span><strong>{projectorOpened ? 'Okno bylo otevřeno' : 'Stav nelze ověřit'}</strong></div>
-            <p>Připojení ani celou obrazovku současná verze neumí spolehlivě potvrdit.</p>
-            <button className="secondary-button" type="button" onClick={onOpenProjector}>
-              {projectorOpened ? 'Aktivovat okno' : 'Otevřít projektor'}
-            </button>
-          </section>
+          <button className="secondary-button live-wide-action" type="button" onClick={onOpenProjector}>
+            {projectorOpened ? 'Aktivovat okno' : 'Otevřít projektor'}
+          </button>
 
           <div className="live-button-row primary-live-controls">
-            <button className="secondary-button" type="button" disabled={pending || ended || previousPosition === undefined} onClick={onPrevious}>
-              {pendingLabel(pendingAction, 'previous', '← Předchozí')}
+            <button className="secondary-button" type="button" title="Předchozí (←)" disabled={pending || ended || !canPrevious} onClick={onPrevious}>
+              ← Předchozí
             </button>
-            <button className="primary-button" type="button" disabled={pending || ended || nextPosition === undefined} onClick={onNext}>
-              {pendingLabel(pendingAction, 'next', 'Další →')}
+            <button className="primary-button" type="button" title="Další (→ nebo mezerník)" disabled={pending || ended || nextBlocked || !canNext} onClick={onNext}>
+              Další →
             </button>
           </div>
 
-          {session.presentationMode === 'slide' && presentedSlide?.isQuestion && onReveal && onHide && (
+          <LiveQuestionNavigator slides={slides} currentPosition={session.currentSlidePosition} disabled={pendingAction !== null || ended} onSelect={onGoToSlide} onFinale={onFinale} />
+
+          {!finalActive && session.presentationMode === 'slide' && presentedSlide?.isQuestion && onReveal && onHide && (
             <button className="primary-button live-wide-action" type="button" disabled={pending || ended || !presentedSlide.correctAnswer} onClick={session.answerRevealed ? onHide : onReveal}>
               {session.answerRevealed ? pendingLabel(pendingAction, 'hide', 'Skrýt odpověď') : pendingLabel(pendingAction, 'reveal', 'Odhalit odpověď')}
             </button>
           )}
 
-          {isIntroSlide(currentSlide) && (
-            <button className="primary-button live-wide-action" type="button" disabled={pending || ended} onClick={onStartIntro}>
-              {pendingLabel(pendingAction, 'intro', 'Spustit intro')}
-            </button>
-          )}
-
-          {!session.interimResults && session.presentationMode === 'recap' && (
+          {!finalActive && !session.interimResults && session.presentationMode === 'recap' && (
             <section className="recap-controls" aria-labelledby="recap-controls-title">
               <div><span className="panel-label">Rekapitulace</span><strong id="recap-controls-title">{recapTitle}</strong></div>
               <button className="primary-button live-wide-action" type="button" disabled={pending || ended || !nextRecap?.slide.correctAnswer} onClick={() => { if (nextRecap) onSelectRecap(nextRecap.slide.position); }}>Odhalit další odpověď</button>
@@ -203,15 +236,16 @@ export function LiveModeratorView({
                 <button className="secondary-button" type="button" disabled={pending || ended} onClick={onStop}>{pendingLabel(pendingAction, 'stop', 'Stop')}</button>
                 <button className="secondary-button" type="button" disabled={pending || ended} onClick={onReplay}>{pendingLabel(pendingAction, 'replay', 'Pustit znovu')}</button>
               </div>
-              <p className="youtube-limitation">Při přehrávání z YouTube se mohou zobrazit jeho vlastní prvky.</p>
-              {isAudioSlide(presentedSlide) && session.presentationMode === 'slide' && !audioSuppressed && (
+              {session.answerRevealed && originalYoutubeSource(presentedSlide) && onPlayOriginal && <button type="button" className="secondary-button" disabled={pending || ended} onClick={onPlayOriginal}>Přehrát celé původní video z YouTube</button>}
+              {session.mediaPlaybackMode === 'original' && <p className="field-help">Celé původní video · přetáčení je dostupné přímo v přehrávači projektoru. Play spustí znovu připravenou ukázku.</p>}
+              {isAudioSlide(presentedSlide) && session.presentationMode === 'slide' && session.mediaPlaybackMode !== 'original' && !audioSuppressed && (
                 <MediaPlayer
                   source={source}
                   command={session.mediaCommand}
                   generation={session.mediaGeneration}
                   startSeconds={presentedSlide.clipStartSeconds ?? presentedSlide.presentation.videoStart ?? 0}
                   endSeconds={presentedSlide.clipEndSeconds ?? presentedSlide.presentation.videoEnd ?? undefined}
-                  className="youtube-player-shell moderator-audio-player"
+                  className={`youtube-player-shell moderator-audio-player${parseQuizAsset(source) || directMediaKind(source) ? ' moderator-native-audio' : ''}`}
                   onFinished={onMediaFinished}
                   onError={onMediaError}
                   onPlaybackState={onMediaPlayback}
@@ -219,16 +253,18 @@ export function LiveModeratorView({
               )}
             </section>
           )}
-          {isMediaSlide(presentedSlide) && !source && (
+          {isMediaSlide(presentedSlide) && !source && !finalActive && !session.interimResults && (
             <p className="media-warning" role="status">Médium nemá zdroj. Otázka zůstává zobrazená bez přehrávání.</p>
           )}
 
-          <section className="live-danger-area" aria-labelledby="live-danger-title">
-            <div><span className="panel-label">Ukončení</span><strong id="live-danger-title">Další možnosti</strong></div>
+          {eventControls}
+
+          <details className="live-danger-area">
+            <summary>Další možnosti</summary>
             <button className="danger-button" type="button" disabled={pendingAction !== null || ended} onClick={onEnd}>
               {pendingLabel(pendingAction, 'end', 'Ukončit kvíz')}
             </button>
-          </section>
+          </details>
 
           <TechnicalDetails>
             <dl className="technical-data-list">

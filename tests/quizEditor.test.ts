@@ -37,6 +37,14 @@ function slideInput(overrides: Record<string, unknown> = {}) {
   };
 }
 
+describe('organizational quiz status', () => {
+  test('accepts explicit draft/ready independently of content review and preserves omission', () => {
+    for (const status of ['draft', 'ready'] as const) expect(validateQuizMetadata({ title: 'Quiz', description: '', status }).status).toBe(status);
+    expect(validateQuizMetadata({ title: 'Quiz', description: '' })).not.toHaveProperty('status');
+    for (const status of ['archived', '', null, true, {}, 'READY']) expect(() => validateQuizMetadata({ title: 'Quiz', description: '', status })).toThrow();
+  });
+});
+
 describe('bounded slide design authoring', () => {
   test('legacy defaults agree across preview and publication; reset clears known overrides only', () => {
     const defaults = { backgroundImage: 'https://example.test/quiz.png', backgroundOverlay: 40, imageLayout: 'split' };

@@ -20,19 +20,31 @@ describe('JustKvíz presentation boundaries', () => {
   ])('keeps private route values out of the title for %s', (path, expected) => {
     expect(pageTitle(path)).toBe(expected);
   });
-  test('typographic logo has no author, and existing content retains its title', () => {
-    expect(renderToStaticMarkup(<Brand />)).toBe('<span class="brand-wordmark">Just<span class="brand-wordmark-accent">Kvíz</span></span>');
+  test('outlined logo is accessible without fonts, and existing content retains its title', () => {
+    const logo = renderToStaticMarkup(<Brand />);
+    expect(logo).toContain('role="img" aria-label="JustKvíz"');
+    expect(logo).toContain('<path');
+    expect(logo).not.toMatch(/<text|<image|<script|href=|font-family/);
     const html = renderToStaticMarkup(<SlideRenderer quizTitle="Filmový kvíz – září" slide={{kind:'intro',title:'Filmový kvíz – září',text:'Původní obsah',options:[],media:[]}} />);
     expect(html).toContain('Filmový kvíz – září');
     expect(html).toContain('Původní obsah');
     expect(html.replace(/<[^>]+>/g, '')).toContain('JustKvíz');
     expect(html).not.toContain(productConfig.author);
   });
-  test('HTML starts with the same public metadata and a temporary JK icon', () => {
+  test('HTML starts with the same public metadata and the permanent vector icon', () => {
     const html = readFileSync('apps/web/index.html','utf8');
     expect(html).toContain(`<title>${productConfig.name}</title>`);
     expect(html).toContain(`content="${productConfig.description}"`);
-    expect(html).toContain('justkviz-jk-temporary.svg');
+    expect(html).toContain('/brand/justkviz-icon.svg');
+    expect(productConfig.icon).toBe('/brand/justkviz-icon.svg');
+    const icon = readFileSync('apps/web/public/brand/justkviz-icon.svg', 'utf8');
+    expect(icon).toContain('<path');
+    expect(icon).not.toMatch(/<text|<image|<script|href=/);
     expect(html).not.toContain(productConfig.author);
+  });
+  test('hiding a presentation logo preserves the organizer choice', () => {
+    const html = renderToStaticMarkup(<SlideRenderer quizTitle="Vlastní večer" slide={{ kind: 'intro', title: 'Vítejte', text: '', options: [], media: [], design: { showLogo: false } }} />);
+    expect(html).not.toContain('brand-wordmark');
+    expect(html).toContain('Vlastní večer');
   });
 });

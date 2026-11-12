@@ -211,7 +211,7 @@ export function applyKnownSlideUpdate(
   const timed = ['audio', 'music', 'video', 'youtube'].includes(input.kind);
   if (timed && input.mediaSource !== '' && mapped.mediaSource !== input.mediaSource && youtubeVideoId(input.mediaSource) === undefined
       && directMediaKind(input.mediaSource) !== (['audio', 'music'].includes(input.kind) ? 'audio' : 'video')
-      && !(['audio', 'music'].includes(input.kind) && parseQuizAsset(input.mediaSource))) {
+      && !parseQuizAsset(input.mediaSource)) {
     throw new QuizEditorError('invalid-argument', 'Nepodporovaný zdroj ukázky.');
   }
   if (input.authoringStatus !== 'draft' && timed && input.mediaSource !== '' && mapped.mediaSource !== input.mediaSource

@@ -76,7 +76,7 @@ service cloud.firestore {
       }
     }
     match /publicSessions/{sessionId} { allow get: if true; allow list, write: if false; }
-    match /publicEvents/{eventId} { allow read: if true; allow write: if false; }
+    match /publicEvents/{eventId} { allow read: if resource.data.registrationPublished == true; allow write: if false; }
     match /{document=**} { allow read, write: if false; }
   }
 }

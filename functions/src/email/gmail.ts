@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { brand } from '@filmovy-kviz/quiz-domain';
 
 import type { EmailMessage, EmailTransport } from './delivery.js';
 import { EmailDeliveryError } from './errors.js';
@@ -35,7 +36,7 @@ export function validateGmailConfiguration(config: GmailConfiguration): void {
   if (config.replyTo) mailbox(config.replyTo);
 }
 
-function encodedSubject(subject: string): string {
+function encodedHeader(subject: string): string {
   if (!subject.trim() || subject.length > 1000 || /[\r\n\0]/u.test(subject)) throw new EmailDeliveryError('configuration-invalid', false);
   const chunks: string[] = [];
   let chunk = '';
@@ -52,13 +53,15 @@ export function gmailRawMessage(message: EmailMessage, config: GmailConfiguratio
   const to = mailbox(message.to);
   if (!message.idempotencyKey || message.idempotencyKey.length > 1000 || message.text.length + message.html.length > 500_000) throw new EmailDeliveryError('configuration-invalid', false);
   const hash = createHash('sha256').update(config.projectId + ':' + message.idempotencyKey).digest('hex');
-  const boundary = 'justkviz_' + hash;
+  // RFC 2046 limits a multipart boundary to 70 characters (excluding --).
+  // Retain 240 bits of the deterministic digest within that limit.
+  const boundary = 'justkviz_' + hash.slice(0, 60);
   const date = new Date(message.createdAtMillis ?? 0);
   if (!Number.isFinite(date.getTime())) throw new EmailDeliveryError('configuration-invalid', false);
   const base64 = (text: string) => Buffer.from(text.replace(/\r?\n/gu, '\r\n'), 'utf8').toString('base64').match(/.{1,76}/gu)?.join('\r\n') ?? '';
   const lines = [
-    'From: ' + config.sender, 'To: ' + to, ...(config.replyTo ? ['Reply-To: ' + config.replyTo] : []),
-    'Subject: ' + encodedSubject(message.subject), 'Date: ' + date.toUTCString(),
+    'From: ' + encodedHeader(brand.name) + ' <' + config.sender + '>', 'To: ' + to, ...(config.replyTo ? ['Reply-To: ' + config.replyTo] : []),
+    'Subject: ' + encodedHeader(message.subject), 'Date: ' + date.toUTCString(),
     'Message-ID: <' + hash + '@' + config.sender.split('@')[1] + '>', 'MIME-Version: 1.0',
     'Content-Type: multipart/alternative; boundary="' + boundary + '"', '',
     '--' + boundary, 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', base64(message.text),

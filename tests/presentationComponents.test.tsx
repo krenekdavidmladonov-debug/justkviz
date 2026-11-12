@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 import { SlideRenderer } from '../apps/web/src/features/presentation/SlideRenderer';
 import { YouTubePlayer } from '../apps/web/src/features/presentation/YouTubePlayer';
+import { WinnerMusic } from '../apps/web/src/features/final-reveal/WinnerMusic';
+import { QuestionForm } from '../apps/web/src/features/editor/EditorForms';
+import type { EditorSlide } from '../apps/web/src/features/editor/types';
 import {
   openOrFocusProjector,
   projectorFullscreenFailureMessage,
@@ -30,6 +33,14 @@ class FakePlayer {
   readonly playVideo = vi.fn();
   readonly pauseVideo = vi.fn();
   readonly seekTo = vi.fn();
+  readonly setVolume = vi.fn();
+  readonly unMute = vi.fn();
+  readonly addEventListener = vi.fn((event: string, listener: string) => {
+    Object.assign(this.events, { [event]: Reflect.get(window, listener) as unknown });
+  });
+  readonly removeEventListener = vi.fn((event: string) => {
+    Object.assign(this.events, { [event]: () => {} });
+  });
 
   constructor(_element: HTMLElement, options: { readonly events: FakePlayerEvents }) {
     this.events = options.events;
@@ -41,6 +52,20 @@ class DomReplacingFakePlayer extends FakePlayer {
   constructor(element: HTMLElement, options: { readonly events: FakePlayerEvents }) {
     super(element, options);
     element.replaceWith(document.createElement('iframe'));
+  }
+}
+
+class MissingRemovalFakePlayer extends DomReplacingFakePlayer {
+  constructor(element: HTMLElement, options: { readonly events: FakePlayerEvents }) {
+    super(element, options);
+    Object.defineProperty(this, 'removeEventListener', { value: undefined });
+  }
+}
+
+class ImmediateReadyFakePlayer extends MissingRemovalFakePlayer {
+  constructor(element: HTMLElement, options: { readonly events: FakePlayerEvents }) {
+    super(element, options);
+    options.events.onReady();
   }
 }
 
@@ -85,6 +110,30 @@ function AudioLifecycleHarness() {
   );
 }
 
+function EditorManualPlayHarness({ onPlayRequest, onFinished }: {
+  readonly onPlayRequest: () => void;
+  readonly onFinished: (generation: number) => void;
+}) {
+  const [playback, setPlayback] = useState<{ command: 'idle' | 'play' | 'stop'; generation: number }>({ command: 'idle', generation: 1 });
+  return (
+    <>
+      <YouTubePlayer
+        source="abcdefghijk"
+        command={playback.command}
+        generation={playback.generation}
+        startSeconds={3}
+        endSeconds={9}
+        onPlayRequest={() => {
+          onPlayRequest();
+          setPlayback(previous => ({ command: 'play', generation: previous.generation + 1 }));
+        }}
+        onFinished={onFinished}
+      />
+      <button type="button" onClick={() => setPlayback(previous => ({ command: 'stop', generation: previous.generation + 1 }))}>Stop preview</button>
+    </>
+  );
+}
+
 beforeEach(() => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   FakePlayer.instances = [];
@@ -93,12 +142,274 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   document.body.replaceChildren();
   document.head.querySelectorAll('script[data-filmovy-kviz-youtube-api]').forEach((script) => script.remove());
 });
 
 describe('mounted media lifecycle regressions', () => {
+  test('winner music starts at 30s without an end bound and fades over three seconds of PLAYING only', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+    const view = await mounted(<WinnerMusic />);
+    const player = FakePlayer.instances[0]!;
+    await act(async () => { player.events.onReady(); });
+    expect(player.loadVideoById).toHaveBeenCalledExactlyOnceWith({ videoId: '04854XqcfCY', startSeconds: 30 });
+    expect(player.setVolume).toHaveBeenLastCalledWith(0);
+    expect(player.unMute).toHaveBeenCalledOnce();
+    expect(player.setVolume.mock.invocationCallOrder[0]).toBeLessThan(player.unMute.mock.invocationCallOrder[0]!);
+    expect(player.unMute.mock.invocationCallOrder[0]).toBeLessThan(player.loadVideoById.mock.invocationCallOrder[0]!);
+    await act(async () => { vi.advanceTimersByTime(10000); });
+    expect(player.setVolume).toHaveBeenCalledTimes(1);
+    await act(async () => { player.events.onStateChange({ data: 1 }); vi.advanceTimersByTime(1000); });
+    expect(player.setVolume).toHaveBeenLastCalledWith(33);
+    await act(async () => { player.events.onStateChange({ data: 2 }); });
+    let calls = player.setVolume.mock.calls.length;
+    await act(async () => { vi.advanceTimersByTime(10000); });
+    expect(player.setVolume).toHaveBeenCalledTimes(calls);
+    await act(async () => { player.events.onStateChange({ data: 1 }); vi.advanceTimersByTime(1000); });
+    expect(player.setVolume).toHaveBeenLastCalledWith(67);
+    await act(async () => { player.events.onStateChange({ data: 3 }); });
+    calls = player.setVolume.mock.calls.length;
+    await act(async () => { vi.advanceTimersByTime(10000); });
+    expect(player.setVolume).toHaveBeenCalledTimes(calls);
+    await act(async () => { player.events.onStateChange({ data: 1 }); vi.advanceTimersByTime(1000); });
+    expect(player.setVolume).toHaveBeenLastCalledWith(100);
+    calls = player.setVolume.mock.calls.length;
+    await act(async () => { vi.advanceTimersByTime(120000); });
+    expect(player.setVolume).toHaveBeenCalledTimes(calls);
+    expect(view.host.textContent).toContain('Zastavit hudbu');
+    await act(async () => { player.events.onStateChange({ data: 0 }); });
+    expect(view.host.textContent).toContain('Spustit hudbu');
+    await act(async () => { view.root.unmount(); });
+  });
+
+  test('blocked winner playback waits for actual PLAYING; errors and replay reset the fade and invalidate old callbacks', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+    const view = await mounted(<WinnerMusic />);
+    const player = FakePlayer.instances[0]!;
+    await act(async () => { player.events.onReady(); player.events.onAutoplayBlocked?.(); });
+    const manual = [...view.host.querySelectorAll('button')].find(button => button.textContent === 'Spustit video ručně')!;
+    await act(async () => { manual.click(); vi.advanceTimersByTime(10000); });
+    expect(player.playVideo).toHaveBeenCalledOnce();
+    expect(player.setVolume).toHaveBeenCalledExactlyOnceWith(0);
+    await act(async () => { player.events.onStateChange({ data: 1 }); vi.advanceTimersByTime(1000); });
+    const oldState = player.events.onStateChange;
+    await act(async () => { player.events.onError(); });
+    const errorCalls = player.setVolume.mock.calls.length;
+    await act(async () => { vi.advanceTimersByTime(10000); });
+    expect(player.setVolume).toHaveBeenCalledTimes(errorCalls);
+    await act(async () => { [...view.host.querySelectorAll('button')].find(button => button.textContent === 'Spustit hudbu')!.click(); });
+    expect(player.setVolume).toHaveBeenLastCalledWith(0);
+    expect(player.seekTo).toHaveBeenLastCalledWith(30, true);
+    const restartedCalls = player.setVolume.mock.calls.length;
+    await act(async () => { oldState({ data: 1 }); vi.advanceTimersByTime(1000); });
+    expect(player.setVolume).toHaveBeenCalledTimes(restartedCalls);
+    await act(async () => { player.events.onStateChange({ data: 1 }); vi.advanceTimersByTime(3000); });
+    expect(player.setVolume).toHaveBeenLastCalledWith(100);
+    await act(async () => { view.root.unmount(); });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  test.each(['stop', 'unmount'] as const)('winner fade timers stop on %s', async action => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+    const view = await mounted(<WinnerMusic />);
+    const player = FakePlayer.instances[0]!;
+    await act(async () => { player.events.onReady(); player.events.onStateChange({ data: 1 }); vi.advanceTimersByTime(500); });
+    const stale = player.events.onStateChange;
+    if (action === 'stop') await act(async () => { [...view.host.querySelectorAll('button')].find(button => button.textContent === 'Zastavit hudbu')!.click(); });
+    else await act(async () => { view.root.unmount(); });
+    const calls = player.setVolume.mock.calls.length;
+    await act(async () => { stale({ data: 1 }); vi.advanceTimersByTime(10000); });
+    expect(player.setVolume).toHaveBeenCalledTimes(calls);
+    expect(vi.getTimerCount()).toBe(0);
+    if (action === 'stop') await act(async () => { view.root.unmount(); });
+  });
+
+  test('ordinary quiz YouTube playback does not set volume or start a fade timer', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'performance'] });
+    const view = await mounted(<YouTubePlayer source="abcdefghijk" command="play" generation={1} startSeconds={3} endSeconds={9} />);
+    const player = FakePlayer.instances[0]!;
+    await act(async () => { player.events.onReady(); player.events.onStateChange({ data: 1 }); vi.advanceTimersByTime(10000); });
+    expect(player.setVolume).not.toHaveBeenCalled();
+    expect(player.unMute).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(player.loadVideoById).toHaveBeenCalledExactlyOnceWith({ videoId: 'abcdefghijk', startSeconds: 3, endSeconds: 9 });
+    await act(async () => { view.root.unmount(); });
+  });
+
+  test('recap playback, command changes and navigation work when the SDK has no removeEventListener', async () => {
+    Object.assign(window.YT!, { Player: MissingRemovalFakePlayer });
+    const finished = vi.fn(), failed = vi.fn(), state = vi.fn();
+    const props = { source: 'abcdefghijk', startSeconds: 0, onFinished: finished, onError: failed, onPlaybackState: state };
+    const view = await mounted(<YouTubePlayer {...props} command="play" generation={1} />);
+    const original = FakePlayer.instances[0]!;
+    expect(original.addEventListener).not.toHaveBeenCalled();
+    expect(original.loadVideoById).not.toHaveBeenCalled();
+    await act(async () => { original.events.onReady(); original.events.onStateChange({ data: 1 }); });
+    expect(state).toHaveBeenLastCalledWith(1, 'playing');
+    await act(async () => { view.root.render(<YouTubePlayer {...props} command="replay" generation={2} />); });
+    await act(async () => { original.events.onStateChange({ data: 0 }); });
+    expect(finished).not.toHaveBeenCalled();
+    await act(async () => { original.events.onStateChange({ data: 1 }); original.events.onStateChange({ data: 0 }); });
+    expect(finished).toHaveBeenCalledExactlyOnceWith(2);
+    await act(async () => { view.root.render(<YouTubePlayer {...props} command="play" generation={3} source="lmnopqrstuv" />); });
+    expect(original.destroy).toHaveBeenCalledOnce();
+    const next = FakePlayer.instances.at(-1)!;
+    await act(async () => { next.events.onReady(); next.events.onStateChange({ data: 1 }); });
+    state.mockClear();
+    await act(async () => { original.events.onReady(); original.events.onError(); original.events.onStateChange({ data: 0 }); });
+    expect(state).not.toHaveBeenCalled(); expect(failed).not.toHaveBeenCalled();
+    expect(finished).toHaveBeenCalledTimes(1);
+    await act(async () => { view.root.unmount(); });
+    expect(next.destroy).toHaveBeenCalledOnce();
+    expect(window.__FILMOVY_KVIZ_MEDIA_DEBUG__?.activePlayers).toBe(0);
+  });
+
+  test('constructor-synchronous readiness applies the latest command exactly once', async () => {
+    Object.assign(window.YT!, { Player: ImmediateReadyFakePlayer });
+    const state = vi.fn();
+    const view = await mounted(<YouTubePlayer source="abcdefghijk" command="play" generation={1} startSeconds={3} endSeconds={9} onPlaybackState={state} />);
+    const player = FakePlayer.instances[0]!;
+    expect(player.loadVideoById).toHaveBeenCalledExactlyOnceWith({ videoId: 'abcdefghijk', startSeconds: 3, endSeconds: 9 });
+    expect(state).toHaveBeenCalledExactlyOnceWith(1, 'ready');
+    await act(async () => { player.events.onReady(); });
+    expect(player.loadVideoById).toHaveBeenCalledTimes(1);
+    await act(async () => { view.root.unmount(); });
+  });
+
+  test('late readiness honors STOP and cannot start an unmounted player without dynamic removal', async () => {
+    Object.assign(window.YT!, { Player: MissingRemovalFakePlayer });
+    const view = await mounted(<YouTubePlayer source="abcdefghijk" command="play" generation={1} startSeconds={0} />);
+    const player = FakePlayer.instances[0]!;
+    await act(async () => { view.root.render(<YouTubePlayer source="abcdefghijk" command="stop" generation={2} startSeconds={0} />); });
+    await act(async () => { player.events.onReady(); });
+    expect(player.loadVideoById).not.toHaveBeenCalled(); expect(player.playVideo).not.toHaveBeenCalled();
+    expect(player.pauseVideo).toHaveBeenCalledOnce();
+    await act(async () => { view.root.unmount(); player.events.onReady(); player.events.onStateChange({ data: 1 }); });
+    expect(player.loadVideoById).not.toHaveBeenCalled(); expect(player.playVideo).not.toHaveBeenCalled();
+    expect(player.destroy).toHaveBeenCalledOnce();
+  });
+
+  test('throwing SDK removal still clears global callbacks and destroys the player', async () => {
+    const view = await mounted(<YouTubePlayer source="abcdefghijk" command="play" generation={1} startSeconds={0} />);
+    const player = FakePlayer.instances[0]!;
+    player.removeEventListener.mockImplementation(() => { throw new Error('SDK removal unavailable'); });
+    await act(async () => { view.root.unmount(); });
+    expect(player.destroy).toHaveBeenCalledOnce();
+    expect(Object.keys(window).filter(key => key.startsWith('__filmovyKvizYouTubeListener'))).toEqual([]);
+  });
+
+  test('replays bounded YouTube clips with their end bound on the same iframe instead of dropping it through seekTo', async () => {
+    const view = await mounted(<YouTubePlayer source="abcdefghijk" command="idle" generation={1} startSeconds={3} endSeconds={9} />);
+    const player = FakePlayer.instances[0]!;
+    await act(async () => { player.events.onReady(); });
+    expect(player.cueVideoById).toHaveBeenLastCalledWith({ videoId: 'abcdefghijk', startSeconds: 3, endSeconds: 9 });
+    await act(async () => { view.root.render(<YouTubePlayer source="abcdefghijk" command="play" generation={2} startSeconds={3} endSeconds={9} />); });
+    await act(async () => { view.root.render(<YouTubePlayer source="abcdefghijk" command="replay" generation={3} startSeconds={3} endSeconds={9} />); });
+    expect(player.loadVideoById).toHaveBeenCalledTimes(2);
+    expect(player.loadVideoById).toHaveBeenLastCalledWith({ videoId: 'abcdefghijk', startSeconds: 3, endSeconds: 9 });
+    expect(player.seekTo).not.toHaveBeenCalled(); expect(player.destroy).not.toHaveBeenCalled();
+    await act(async () => { view.root.render(<YouTubePlayer source="abcdefghijk" command="play" generation={4} startSeconds={0} />); });
+    expect(player.loadVideoById).toHaveBeenLastCalledWith({ videoId: 'abcdefghijk', startSeconds: 0 });
+    await act(async () => { view.root.unmount(); });
+  });
+
+  test('editor iframe gestures start fresh bounded playback from idle, after ending and after stop', async () => {
+    const requested = vi.fn(), finished = vi.fn();
+    const view = await mounted(<EditorManualPlayHarness onPlayRequest={requested} onFinished={finished} />);
+    const player = FakePlayer.instances[0]!;
+    const clip = { videoId: 'abcdefghijk', startSeconds: 3, endSeconds: 9 };
+    await act(async () => { player.events.onReady(); });
+    expect(player.cueVideoById).toHaveBeenCalledExactlyOnceWith(clip);
+
+    await act(async () => { player.events.onStateChange({ data: 1 }); });
+    expect(requested).toHaveBeenCalledTimes(1);
+    expect(player.pauseVideo).toHaveBeenCalledTimes(1);
+    expect(player.loadVideoById).toHaveBeenCalledExactlyOnceWith(clip);
+    await act(async () => { player.events.onStateChange({ data: 1 }); });
+    expect(player.pauseVideo).toHaveBeenCalledTimes(1);
+    expect(requested).toHaveBeenCalledTimes(1);
+    expect(view.host.querySelector('[data-media-lifecycle="PLAYING"]')).not.toBeNull();
+    await act(async () => { player.events.onStateChange({ data: 0 }); });
+    expect(finished).toHaveBeenCalledExactlyOnceWith(2);
+
+    await act(async () => { player.events.onStateChange({ data: 1 }); });
+    expect(requested).toHaveBeenCalledTimes(2);
+    expect(player.pauseVideo).toHaveBeenCalledTimes(2);
+    expect(player.loadVideoById).toHaveBeenCalledTimes(2);
+    expect(player.loadVideoById).toHaveBeenLastCalledWith(clip);
+    await act(async () => { player.events.onStateChange({ data: 1 }); });
+    expect(player.pauseVideo).toHaveBeenCalledTimes(2);
+    await act(async () => { player.events.onStateChange({ data: 0 }); });
+    expect(finished).toHaveBeenLastCalledWith(3);
+    expect(finished).toHaveBeenCalledTimes(2);
+
+    await act(async () => { view.host.querySelector('button')!.click(); });
+    expect(player.pauseVideo).toHaveBeenCalledTimes(3);
+    await act(async () => { player.events.onStateChange({ data: 1 }); });
+    expect(requested).toHaveBeenCalledTimes(3);
+    expect(player.pauseVideo).toHaveBeenCalledTimes(4);
+    expect(player.loadVideoById).toHaveBeenCalledTimes(3);
+    expect(player.loadVideoById).toHaveBeenLastCalledWith(clip);
+    await act(async () => { player.events.onStateChange({ data: 1 }); });
+    expect(player.pauseVideo).toHaveBeenCalledTimes(4);
+    expect(requested).toHaveBeenCalledTimes(3);
+    expect(view.host.querySelector('[data-media-lifecycle="PLAYING"]')).not.toBeNull();
+    await act(async () => { player.events.onStateChange({ data: 0 }); });
+    expect(finished).toHaveBeenLastCalledWith(5);
+    expect(finished).toHaveBeenCalledTimes(3);
+    expect(player.seekTo).not.toHaveBeenCalled();
+    expect(player.destroy).not.toHaveBeenCalled();
+    await act(async () => { view.root.unmount(); });
+  });
+
+  test.each(['idle', 'stop'] as const)('iframe gestures remain paused in %s without an editor play request callback', async command => {
+    const state = vi.fn();
+    const view = await mounted(<YouTubePlayer source="abcdefghijk" command={command} generation={1} startSeconds={3} endSeconds={9} onPlaybackState={state} />);
+    const player = FakePlayer.instances[0]!;
+    await act(async () => { player.events.onReady(); });
+    const pauses = player.pauseVideo.mock.calls.length;
+    await act(async () => { player.events.onStateChange({ data: 1 }); });
+    expect(player.pauseVideo).toHaveBeenCalledTimes(pauses + 1);
+    expect(player.loadVideoById).not.toHaveBeenCalled();
+    expect(player.playVideo).not.toHaveBeenCalled();
+    expect(state.mock.calls.some(call => call[1] === 'playing')).toBe(false);
+    expect(view.host.querySelector('[data-media-lifecycle="PLAYING"]')).toBeNull();
+    await act(async () => { view.root.unmount(); });
+  });
+
+  test('question form accepts native YouTube play and keeps the authored clip bounds', async () => {
+    const slide: EditorSlide = {
+      id: 'manual-video-preview', position: 1, kind: 'video', storedKind: 'video', isQuestion: true,
+      title: '', text: 'Video otázka', options: [], correctAnswer: 'Odpověď', moderatorNote: '',
+      media: [], hasLegacyData: false, backgroundImage: '', questionImage: '', answerImage: '',
+      mediaSource: 'https://www.youtube.com/watch?v=abcdefghijk', backgroundOverlay: null,
+      clipStartSeconds: 3, clipEndSeconds: 9,
+      presentation: { videoStart: null, videoEnd: null, audioTrigger: null, backgroundOverlay: null, answerOverlay: null, sourceQuestionNumber: null },
+    };
+    const changed = vi.fn(), touched = vi.fn();
+    const view = await mounted(<QuestionForm slide={slide} number={1} disabled={false} showAllIssues={false} touched={new Set()} onTouch={touched} onChange={changed} />);
+    const player = FakePlayer.instances[0]!;
+    const clip = { videoId: 'abcdefghijk', startSeconds: 3, endSeconds: 9 };
+    await act(async () => { player.events.onReady(); });
+    expect(player.cueVideoById).toHaveBeenCalledExactlyOnceWith(clip);
+    await act(async () => { player.events.onStateChange({ data: 1 }); });
+    expect(player.pauseVideo).toHaveBeenCalledOnce();
+    expect(player.loadVideoById).toHaveBeenCalledExactlyOnceWith(clip);
+    expect(touched).toHaveBeenCalledWith('mediaSource');
+    expect(touched).toHaveBeenCalledWith('clipStartSeconds');
+    expect(touched).toHaveBeenCalledWith('clipEndSeconds');
+    await act(async () => { player.events.onStateChange({ data: 1 }); });
+    expect(player.pauseVideo).toHaveBeenCalledOnce();
+    expect(view.host.querySelector('.editor-test-player[data-media-lifecycle="PLAYING"]')).not.toBeNull();
+    expect(view.host.textContent).toContain('Ukázka se přehrává.');
+    await act(async () => { player.events.onStateChange({ data: 0 }); });
+    expect(view.host.textContent).toContain('Ukázka dohrála.');
+    expect(changed).not.toHaveBeenCalled();
+    await act(async () => { view.root.unmount(); });
+  });
+
   test('blocked projector video keeps its iframe and resumes only on a local manual gesture', async () => {
     Object.assign(window.YT!, { Player: DomReplacingFakePlayer });
     const report = vi.fn();
@@ -158,7 +469,8 @@ describe('mounted media lifecycle regressions', () => {
     await act(async () => { manual.click(); old.events.onAutoplayBlocked?.(); old.events.onStateChange({ data: 1 }); });
     expect(old.playVideo).not.toHaveBeenCalled();
     expect(report).not.toHaveBeenCalled();
-    expect(view.host.querySelector('[data-media-lifecycle]')).toBeNull();
+    expect(view.host.querySelector('[data-media-lifecycle]')).not.toBeNull();
+    expect(view.host.querySelector('.video-media-frame')?.getAttribute('aria-hidden')).toBe('true');
     await act(async () => { view.root.render(<SlideRenderer quizTitle="Kvíz" mediaCommand="finished" mediaGeneration={10} slide={video} />); });
     expect(view.host.textContent).not.toContain('Spustit video ručně');
     expect(view.host.querySelector('[role="status"]')).toBeNull();
@@ -307,9 +619,10 @@ describe('mounted media lifecycle regressions', () => {
     }
     expect(operations).toBe(300);
     expect(window.__FILMOVY_KVIZ_MEDIA_DEBUG__).toEqual({
-      activePlayers: 0, peakPlayers: 1, createdPlayers: 200, destroyedPlayers: 200,
+      activePlayers: 1, peakPlayers: 1, createdPlayers: 1, destroyedPlayers: 0,
     });
     await act(async () => { view.root.unmount(); });
+    expect(window.__FILMOVY_KVIZ_MEDIA_DEBUG__?.activePlayers).toBe(0);
   });
 
   test('a failed API load can be retried by a new explicit generation', async () => {
@@ -355,6 +668,7 @@ describe('mounted media lifecycle regressions', () => {
     );
     const first = FakePlayer.instances[0]!;
     await act(async () => { first.events.onReady(); first.events.onStateChange({ data: 1 }); });
+    const staleError = first.events.onError;
     await act(async () => { first.events.onError(); });
     expect(failed).toHaveBeenCalledTimes(1);
     expect(view.host.querySelector('[data-media-lifecycle]')?.getAttribute('data-media-lifecycle')).toBe('ERROR');
@@ -366,7 +680,7 @@ describe('mounted media lifecycle regressions', () => {
     });
     const recovered = FakePlayer.instances.at(-1)!;
     await act(async () => { recovered.events.onReady(); recovered.events.onStateChange({ data: 1 }); });
-    await act(async () => { first.events.onError(); });
+    await act(async () => { staleError(); });
     expect(failed).toHaveBeenCalledTimes(1);
     expect(view.host.querySelector('[data-media-lifecycle]')?.getAttribute('data-media-lifecycle')).toBe('PLAYING');
     await act(async () => { view.root.unmount(); });

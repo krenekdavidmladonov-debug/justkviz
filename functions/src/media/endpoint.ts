@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
@@ -6,9 +7,14 @@ import { assetPath, mediaByteRange, mediaId, publicMediaAllowed } from './model.
 import { mediaBucket } from './storage.js';
 import { freshIdentity, type AuthIdentity } from '../access/authorization.js';
 import { authorizePrivateMedia, authorizeEventShowMedia } from '../access/media.js';
+import { driveRuntimeSecrets } from '../drive/runtime.js';
+import { readDriveAsset, verifyDriveAsset } from '../drive/media-read.js';
 
-export const readQuizMedia = onRequest({ region: 'europe-west1', cors: true, maxInstances: 10, timeoutSeconds: 60 }, async (request, response) => {
-  response.set('Cache-Control', 'no-store').set('X-Content-Type-Options', 'nosniff');
+export const readQuizMedia = onRequest({ region: 'europe-west1', cors: true, maxInstances: 10, timeoutSeconds: 60,
+  memory: '512MiB', cpu: 1, concurrency: 2,
+  ...(driveRuntimeSecrets.length ? { secrets: driveRuntimeSecrets } : {}) }, async (request, response) => {
+  const started = performance.now();
+  response.set('Cache-Control', 'no-store').set('X-Content-Type-Options', 'nosniff').set('Access-Control-Expose-Headers', 'ETag, Server-Timing');
   if (request.method !== 'GET') { response.status(405).end(); return; }
   const reference = request.query.reference, parsed = parseQuizAsset(reference);
   if (!parsed || typeof reference !== 'string' || Object.keys(request.query).some(key => !['reference','sessionId','snapshotId','eventId'].includes(key)) || ['sessionId','snapshotId','eventId'].filter(key => request.query[key] !== undefined).length > 1) { response.status(400).end(); return; }
@@ -39,8 +45,23 @@ export const readQuizMedia = onRequest({ region: 'europe-west1', cors: true, max
     let range;
     try { range = mediaByteRange(request.get('range'), size); }
     catch { response.status(416).set('Content-Range', 'bytes */' + size).end(); return; }
-    const file = mediaBucket().file(assetPath(parsed.quizId, parsed.assetId), { generation: asset.generation });
-    const [bytes] = await file.download(range ?? {});
+    const etag = '"' + createHash('sha256').update(JSON.stringify([reference, asset.generation, asset.contentType, size])).digest('hex') + '"';
+    const unchanged = !range && request.get('if-none-match') === etag;
+    const isDrive = asset.drive !== undefined || asset.generation.startsWith('drive:');
+    const authorizedAt = performance.now();
+    let bytes: Buffer = Buffer.alloc(0);
+    if (unchanged && isDrive) {
+      await verifyDriveAsset(asset, parsed.quizId);
+    } else if (unchanged) {
+      await mediaBucket().file(assetPath(parsed.quizId, parsed.assetId), { generation: asset.generation }).getMetadata();
+    } else if (!unchanged && isDrive) {
+      const full = await readDriveAsset(asset, parsed.quizId);
+      bytes = range ? full.subarray(range.start, range.end + 1) : full;
+    } else if (!unchanged) {
+      const file = mediaBucket().file(assetPath(parsed.quizId, parsed.assetId), { generation: asset.generation });
+      [bytes] = await file.download(range ?? {});
+    }
+    const mediaFinishedAt = performance.now();
     // Recheck current authority after IO; an unrelated reveal must not break an allowed image.
     if (publicRef && !publicMediaAllowed((await publicRef.get()).data(), reference, asset.kind)) { response.status(404).end(); return; }
     if (!publicRef) {
@@ -49,6 +70,12 @@ export const readQuizMedia = onRequest({ region: 'europe-west1', cors: true, max
         if (await authorizeEventShowMedia(auth, eventId, reference) !== asset.generation) { response.status(404).end(); return; }
       } else await authorizePrivateMedia(auth, reference, snapshotId);
     }
+    const finishedAt = performance.now();
+    response.set('Server-Timing', 'authorization;dur=' + (authorizedAt - started).toFixed(1)
+      + ', media;dur=' + (mediaFinishedAt - authorizedAt).toFixed(1)
+      + ', reauthorization;dur=' + (finishedAt - mediaFinishedAt).toFixed(1)
+      + ', total;dur=' + (finishedAt - started).toFixed(1)).set('ETag', etag);
+    if (unchanged) { response.status(304).end(); return; }
     response.set('Content-Type', asset.contentType as string).set('Accept-Ranges', 'bytes').set('Content-Length', String(bytes.length));
     if (range) response.status(206).set('Content-Range', 'bytes ' + range.start + '-' + range.end + '/' + size);
     response.send(bytes);

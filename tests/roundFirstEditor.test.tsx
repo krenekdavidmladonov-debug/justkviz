@@ -172,7 +172,8 @@ describe('type-specific question forms and validation', () => {
     const html = renderQuestion(choiceImage);
     expect(html).toContain('Obrázek otázky');
     expect(html).toContain('ABCD – jedna možnost');
-    expect(html).toContain('Obrázek odpovědi (soukromý)');
+    expect(html).toContain('Odpověď po odhalení · fotografie přidána');
+    expect(html).not.toContain('https://images.example.test/answer.jpg');
   });
 
   test('validates required audio/video timing and parses human time', () => {

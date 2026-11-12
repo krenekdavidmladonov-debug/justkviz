@@ -16,7 +16,7 @@ The typed model is `PrintEvent`, `PrintQuiz`, `PrintRound`, `PrintQuestion`, `Pr
 
 The renderer uses `pdf-lib` with `@pdf-lib/fontkit`. Noto Sans Latin Extended regular/bold WOFF files are embedded and subsetted for repeatable Czech Unicode output. Noto Sans is licensed under SIL Open Font License 1.1. Fixed metadata, stable sorting, explicit A4 dimensions, deterministic wrapping, and fixed pagination produce stable bytes for equal input.
 
-- Team sheets: generic, one synthetic team, or 1–30 teams in one PDF; no answers or private content.
+- Team sheets: generic, one team, or 1–30 accepted teams in one PDF; no answers or private content. A landscape A4 holds two A5 panels. Each round stays wholly on one side, using adaptive rows, fonts of at least 8 points, and two columns when needed. The all-team PDF adds exactly one universal blank-name reserve panel with a writable round number and enough numbered answer lines for the largest round; spare half-pages remain blank. Generic and single-team modes retain duplicate panels. Organizer panels omit Team/Table fields. Impossible single-side layouts return a layout-limit error.
 - Answer key: question number and canonical answer; Choice adds the option letter.
 - Score table: 1–30 teams, half-point guidance, repeated headers, landscape beyond five rounds, and horizontal/vertical pagination.
 

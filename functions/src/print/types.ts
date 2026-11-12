@@ -1,6 +1,6 @@
 import type { PrintTemplate } from '@filmovy-kviz/quiz-domain';
 
-export type PrintArtifactType = 'team-sheets' | 'answer-key' | 'score-table';
+export type PrintArtifactType = 'team-sheets' | 'organizer-sheets' | 'answer-key' | 'score-table';
 
 export type PrintQuestionKind =
   | 'choice'
@@ -13,6 +13,9 @@ export type PrintQuestionKind =
 export interface PrintQuestion {
   number: number;
   kind: PrintQuestionKind;
+  /** Response semantics are independent of the question's media kind. */
+  answerMode: 'open' | 'choice' | 'true-false';
+  choiceCount?: 2 | 3 | 4 | 5 | 6;
   answer: string;
   choiceLabel?: string;
 }
@@ -45,6 +48,7 @@ export type TeamSheetMode = 'generic' | 'single' | 'all';
 
 export interface PrintPresentationOptions {
   layout?: 'compact' | 'spacious';
+  colorMode?: 'color' | 'grayscale';
   showLogo?: boolean;
   showInstructions?: boolean;
 }
@@ -61,6 +65,10 @@ export type PrintOptions = PrintPresentationOptions & (
       disposition: PrintDisposition;
     }
   | {
+      artifactType: 'organizer-sheets';
+      disposition: PrintDisposition;
+    }
+  | {
       artifactType: 'score-table';
       disposition: PrintDisposition;
       teams: PrintTeam[];
@@ -70,6 +78,7 @@ export type PrintRequestOptions = PrintPresentationOptions & (
   | { artifactType: 'team-sheets'; disposition: PrintDisposition; mode: 'generic' | 'all' }
   | { artifactType: 'team-sheets'; disposition: PrintDisposition; mode: 'single'; teamId: string }
   | { artifactType: 'answer-key'; disposition: PrintDisposition }
+  | { artifactType: 'organizer-sheets'; disposition: PrintDisposition }
   | { artifactType: 'score-table'; disposition: PrintDisposition });
 
 export interface RenderedPrintArtifact {

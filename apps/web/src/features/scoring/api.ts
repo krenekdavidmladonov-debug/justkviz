@@ -9,6 +9,14 @@ export interface ScoreRequest {
   eventId: string; snapshotId: string; teamId: string; roundId: string; requestId: string;
   expectedRevision: number; halfPoints: number | null; reason: string;
 }
+export interface RoundScoreRequest {
+  eventId: string; snapshotId: string; roundId: string; requestId: string;
+  scores: { teamId: string; expectedRevision: number; halfPoints: number | null; reason: string }[];
+}
+export interface RoundScoreResponse { scores: (Score & { teamId: string })[] }
+export async function saveRoundScores(request: RoundScoreRequest): Promise<RoundScoreResponse> {
+  return (await httpsCallable<RoundScoreRequest, RoundScoreResponse>(getFirebaseServices().functions, 'saveEventScore')(request)).data;
+}
 export async function saveScore(request: ScoreRequest): Promise<Score> {
   return (await httpsCallable<ScoreRequest, Score>(getFirebaseServices().functions, 'saveEventScore')(request)).data;
 }

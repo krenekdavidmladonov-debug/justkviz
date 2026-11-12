@@ -11,6 +11,39 @@ export interface RegistrationEmailActivation {
   readonly recipientPolicy?: 'future-public-registration';
 }
 
+export interface RegistrationOwnerNotificationActivation {
+  readonly activatedAtMillis: number;
+  readonly recipient: string;
+  readonly ownerUid: string;
+}
+
+/** Independent, default-off opt-in; malformed notification config never blocks registration. */
+export function registrationOwnerNotificationActivation(environment: NodeJS.ProcessEnv = process.env): RegistrationOwnerNotificationActivation | null {
+  const mode = environment.REGISTRATION_OWNER_NOTIFICATION_MODE;
+  if (mode === undefined || mode === 'off') return null;
+  try {
+    if (mode === 'emulator') {
+      const project = requireEmailEmulator(environment);
+      if ([environment.GCLOUD_PROJECT, environment.GOOGLE_CLOUD_PROJECT].some(value => value !== undefined && value !== project)) return null;
+      if (environment.FIREBASE_CONFIG !== undefined && (JSON.parse(environment.FIREBASE_CONFIG) as { projectId?: unknown }).projectId !== project) return null;
+    } else if (mode !== 'staging' || !registrationEmailActivation(environment)) return null;
+    const cutoff = environment.REGISTRATION_OWNER_NOTIFICATION_ACTIVATED_AT ?? '';
+    const ownerUid = environment.REGISTRATION_OWNER_NOTIFICATION_OWNER_UID ?? '';
+    if (!/^[a-zA-Z0-9_-]{1,128}$/u.test(ownerUid)
+      || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(cutoff)
+      || !Number.isFinite(Date.parse(cutoff)) || new Date(cutoff).toISOString() !== cutoff) return null;
+    return { recipient: mailbox(environment.REGISTRATION_OWNER_NOTIFICATION_RECIPIENT ?? ''), ownerUid, activatedAtMillis: Date.parse(cutoff) };
+  } catch { return null; }
+}
+
+/** This allowlist never widens the participant recipient policy. */
+export function allowedRegistrationOwnerNotificationIntent(intent: Record<string, unknown>, activation: RegistrationOwnerNotificationActivation): boolean {
+  const createdAt = timestampMillis(intent.createdAt), registrationCreatedAt = timestampMillis(intent.registrationCreatedAt);
+  return intent.type === 'registration-organizer-notification' && intent.recipientPolicy === 'future-public-registration-owner'
+    && intent.provenance === 'public-registration-create' && intent.ownerUid === activation.ownerUid && intent.recipient === activation.recipient
+    && createdAt !== undefined && createdAt >= activation.activatedAtMillis && registrationCreatedAt === createdAt;
+}
+
 // No parameter declarations or secret reads during Functions discovery.
 export function emailEmulatorRuntime(environment: NodeJS.ProcessEnv = process.env): boolean {
   return environment.FUNCTIONS_EMULATOR === 'true' || Boolean(environment.FIRESTORE_EMULATOR_HOST)

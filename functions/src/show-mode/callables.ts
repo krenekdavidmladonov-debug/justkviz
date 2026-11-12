@@ -3,6 +3,7 @@ import { HttpsError } from 'firebase-functions/v2/https';
 import { normalizeShowPreferences, parseQuizAsset, showAudioCues, mapEditorSlide } from '@filmovy-kviz/quiz-domain';
 import { authorize, freshIdentity, runAccessTransaction, securedOnCall } from '../access/authorization.js';
 import { assertEventOperational } from '../events/guards.js';
+import { assertQuizActive } from '../quizzes/guards.js';
 import { mediaId, mediaInput } from '../media/model.js';
 import { readyShowAudio, requestedShowPreferences, type ShowAudioBindings } from './audio-model.js';
 
@@ -38,6 +39,7 @@ export const configureEventShow = securedOnCall('configureEventShow', options, a
         const member = await authorize(request.auth, ['quiz.read'], { kind: 'quiz', id: parsed.quizId }, tx);
         const quiz = await tx.get(db.doc('quizzes/' + parsed.quizId));
         if (!quiz.exists) throw new HttpsError('permission-denied', 'Zdrojový kvíz není dostupný.');
+        assertQuizActive(quiz.data());
         const slides = await tx.get(db.collection('quizzes/' + parsed.quizId + '/slides').limit(401));
         if (slides.size > 400) throw new HttpsError('failed-precondition', 'Zdrojový kvíz je příliš velký.');
         const mapped = slides.docs.map(d => mapEditorSlide(d.id, d.data()));

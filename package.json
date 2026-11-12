@@ -76,9 +76,9 @@
     "cross-env": "^10.1.0",
     "eslint": "^10.9.1",
     "firebase": "^12.2.1",
-    "firebase-tools": "^15.28.2",
+    "firebase-tools": "15.34.2",
     "globals": "^17.11.0",
-    "happy-dom": "^20.12.0",
+    "happy-dom": "^21.0.4",
     "jsqr": "1.4.0",
     "pdf-lib": "^1.17.1",
     "pngjs": "7.0.0",
@@ -87,6 +87,6 @@
     "react-router-dom": "^7.8.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.68.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }
