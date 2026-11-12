@@ -35,6 +35,25 @@ function Write-FixtureFile {
   param([string]$Path, [string]$Text)
   [System.IO.File]::WriteAllText((Get-EventNightNativePath $Path), ($Text + [Environment]::NewLine), (New-Object System.Text.UTF8Encoding($true)))
 }
+function Assert-FixtureLink {
+  param([string]$Link, [string]$Target, [string]$Marker, [string]$Expected, [string]$Label)
+  $prefix = [System.IO.Path]::GetFullPath($script:FixtureRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+  $targetMarker = Join-Path $Target $Marker
+  $linkedMarker = Join-Path $Link $Marker
+  foreach ($path in @($Link, $targetMarker, $linkedMarker)) {
+    if (-not [System.IO.Path]::GetFullPath($path).StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { throw 'Fixture link validation escaped its isolated root' }
+  }
+  $attributes = [System.IO.File]::GetAttributes((Get-EventNightNativePath $Link))
+  Check (($attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) "$Label fixture link has the reparse attribute"
+  Assert-EventNightNoReparse $targetMarker
+  Check ([System.IO.File]::ReadAllText((Get-EventNightNativePath $targetMarker)).TrimEnd() -ceq $Expected) "$Label fixture target contains the known marker"
+  try {
+    $linkedText = [System.IO.File]::ReadAllText((Get-EventNightNativePath $linkedMarker))
+  } catch {
+    throw "Assertion: $Label fixture marker is readable through the link. $($_.Exception.Message)"
+  }
+  Check ($linkedText.TrimEnd() -ceq $Expected) "$Label fixture link reaches the known target marker"
+}
 function Move-FixturePath {
   param([string]$LiteralPath, [string]$Destination)
   $prefix = [System.IO.Path]::GetFullPath($script:FixtureRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
@@ -253,6 +272,7 @@ Fails { Promote-EventNightSnapshot $case.Repo $case.Paths } 'outside canonical t
 Check (-not (Test-Path -LiteralPath $case.Paths.SnapshotDirectory)) 'outside canonical target not created'
 
 # Junctions need no administrator privilege on Windows; CI uses symbolic links.
+# Use extended Windows paths for the links and ordinary absolute junction targets.
 # Preserve these unique synthetic directories for audit rather than recursively
 # deleting link-bearing fixtures. No operator data or existing temp directory used.
 $linkType = if ([System.IO.Path]::DirectorySeparatorChar -eq '\') { 'Junction' } else { 'SymbolicLink' }
@@ -263,18 +283,23 @@ foreach ($kind in @('backup-link', 'backup-child-link', 'data-ancestor-link')) {
   $outside = Join-Path $script:FixtureRoot ($kind + '-outside')
   if ($kind -eq 'backup-link') {
     Move-FixturePath -LiteralPath $prior -Destination $outside
-    New-Item -ItemType $linkType -Path (Get-EventNightNativePath $prior) -Target (Get-EventNightNativePath $outside) | Out-Null
+    New-Item -ItemType $linkType -Path (Get-EventNightNativePath $prior) -Target $outside | Out-Null
+    Assert-FixtureLink $prior $outside 'payload.json' 'previous' $kind
   } elseif ($kind -eq 'data-ancestor-link') {
     Move-FixturePath -LiteralPath $case.Paths.DataDirectory -Destination $outside
-    New-Item -ItemType $linkType -Path (Get-EventNightNativePath $case.Paths.DataDirectory) -Target (Get-EventNightNativePath $outside) | Out-Null
+    New-Item -ItemType $linkType -Path (Get-EventNightNativePath $case.Paths.DataDirectory) -Target $outside | Out-Null
+    $backupMarker = Join-Path 'backups' (Join-Path $journal.previousBackup 'payload.json')
+    Assert-FixtureLink $case.Paths.DataDirectory $outside $backupMarker 'previous' $kind
   } else {
     New-Item -ItemType Directory -Path $outside | Out-Null
     'synthetic-outside' | Set-Content -LiteralPath (Join-Path $outside 'payload.json') -Encoding UTF8
-    New-Item -ItemType $linkType -Path (Get-EventNightNativePath (Join-Path $prior 'child-link')) -Target (Get-EventNightNativePath $outside) | Out-Null
+    New-Item -ItemType $linkType -Path (Get-EventNightNativePath (Join-Path $prior 'child-link')) -Target $outside | Out-Null
+    Assert-FixtureLink (Join-Path $prior 'child-link') $outside 'payload.json' 'synthetic-outside' $kind
   }
   # Hash outside with the actual native file enumeration (never through the link).
   $outsideBefore = @(Get-ChildItem -LiteralPath (Get-EventNightNativePath $outside) -File -Recurse -Force | ForEach-Object { (Get-EventNightFileSha256 $_.FullName) }) -join ','
   Fails { Restore-EventNightSnapshot $case.Repo $case.Paths } "reparse escape rejected: $kind"
+  Check ($script:LastFailure -like '*junction nebo symbolický odkaz*') "recovery reports the reparse point: $kind"
   $outsideAfter = @(Get-ChildItem -LiteralPath (Get-EventNightNativePath $outside) -File -Recurse -Force | ForEach-Object { (Get-EventNightFileSha256 $_.FullName) }) -join ','
   Check ($outsideBefore -eq $outsideAfter) "reparse target bytes unchanged: $kind"
 }
@@ -305,9 +330,12 @@ $sentinel = Join-Path $outside 'sentinel.json'
 Write-FixtureFile $sentinel 'outside sentinel retained'
 $sentinelHash = Get-EventNightFileSha256 $sentinel
 $link = Join-Path $case.Paths.DataDirectory 'linked-parent'
-New-Item -ItemType $linkType -Path (Get-EventNightNativePath $link) -Target (Get-EventNightNativePath $outside) | Out-Null
+New-Item -ItemType $linkType -Path (Get-EventNightNativePath $link) -Target $outside | Out-Null
+Assert-FixtureLink $link $outside 'sentinel.json' 'outside sentinel retained' 'rename link'
 Fails { Move-EventNightSnapshotPath $case.Repo $link $destination } 'rename refuses reparse source'
+Check ($script:LastFailure -like '*junction nebo symbolický odkaz*') 'rename reports the reparse source'
 Fails { Move-EventNightSnapshotPath $case.Repo $case.Paths.SnapshotDirectory (Join-Path $link 'escape') } 'rename refuses reparse destination ancestor'
+Check ($script:LastFailure -like '*junction nebo symbolický odkaz*') 'rename reports the reparse destination ancestor'
 Check (-not [System.IO.Directory]::Exists((Get-EventNightNativePath $destination))) 'reparse source creates no destination'
 Check (-not [System.IO.Directory]::Exists((Get-EventNightNativePath (Join-Path $outside 'escape')))) 'reparse ancestor creates no outside destination'
 Check ((Get-EventNightFileSha256 $sentinel) -eq $sentinelHash) 'reparse refusals preserve outside sentinel'
