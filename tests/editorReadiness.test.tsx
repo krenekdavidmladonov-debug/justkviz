@@ -521,6 +521,30 @@ async function addQuestion() {
 const questionField = (field: string) => host.querySelector<HTMLTextAreaElement>(`[data-preflight-field="${field}"] textarea`)!;
 async function releaseFocusFrame(frame: FrameRequestCallback) { await act(async () => frame(0)); }
 
+it('does not discard a new question while its first save is pending', async () => {
+  let finishSave!: (value: Awaited<ReturnType<typeof createQuizSlide>>) => void;
+  vi.mocked(createQuizSlide).mockImplementationOnce(() => new Promise(resolve => { finishSave = resolve; }));
+  await render();
+  await addQuestion();
+  await setText('prompt', 'Rozpracovaná nová otázka');
+  await setText('correctAnswer', 'Správná odpověď');
+  const save = [...host.querySelectorAll('button')].find(button => button.textContent === 'Uložit vše')!;
+  await act(async () => save.click());
+  expect(createQuizSlide).toHaveBeenCalledOnce();
+
+  const cancel = [...host.querySelectorAll('button')].find(button => button.textContent === 'Zrušit novou otázku')!;
+  const cancelWasDisabled = cancel.disabled;
+  await act(async () => cancel.click());
+  const textWhilePending = questionField('prompt')?.value;
+
+  const persisted = { ...question('new-question', 3), text: 'Rozpracovaná nová otázka' };
+  vi.mocked(getEditorQuiz).mockResolvedValue({ ...quiz, slides: [...quiz.slides, persisted], slideCount: 3, questionCount: 3, revision: 2 });
+  await act(async () => finishSave({ quizId: quiz.id, revision: 2, slideCount: 3, questionCount: 3, roundCount: 1, selectedSlideId: persisted.id }));
+  expect(questionField('prompt').value).toBe(persisted.text);
+  expect(textWhilePending).toBe(persisted.text);
+  expect(cancelWasDisabled).toBe(true);
+});
+
 it('deferred question autofocus preserves normal initial prompt focus', async () => {
   await render(); const frames = holdQuestionFocusFrames();
   await addQuestion(); expect(frames).toHaveLength(1);

@@ -944,7 +944,10 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
                   )}
                 </div></details>
               )}
-              {isLocalQuestion && <button type="button" disabled={uploading} className="text-button" onClick={() => { discardDraft(); setSelectedKey(`round:${selectedRound?.id ?? ''}`); }}>Zrušit novou otázku</button>}
+              {isLocalQuestion && <button type="button" disabled={saving || uploading} className="text-button" onClick={() => {
+                if (savePending.current || uploadPending.current) return;
+                discardDraft(); setSelectedKey(`round:${selectedRound?.id ?? ''}`);
+              }}>Zrušit novou otázku</button>}
             </>
           )}
           {draft !== null && !draft.isQuestion && !selectedKey.startsWith('system:') && !selectedKey.startsWith('round:') && (
