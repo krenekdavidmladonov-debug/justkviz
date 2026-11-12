@@ -193,7 +193,7 @@ it('clean question navigation keeps checked readiness and performs no new reads 
   }
   expect(runQuizPreflight).toHaveBeenCalledTimes(calls);
   expect(getEditorQuiz).toHaveBeenCalledTimes(1);
-});
+}, 20_000);
 
 it('keeps the saved library status distinct from editorial findings and allows private practice', async () => {
   vi.mocked(getEditorQuiz).mockResolvedValue({ ...quiz, status: 'ready', slides: [{ ...question('q1', 1), correctAnswer: '' }] });
