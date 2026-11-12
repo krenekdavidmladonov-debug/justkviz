@@ -31,6 +31,111 @@ const select = async (page, index) => { await page.locator('.outline-round').fir
 const prompt = page => page.getByRole('textbox', { name: 'Otázka *', exact: true });
 const save = page => page.getByRole('button', { name: 'Uložit vše', exact: true }).click();
 
+async function dropRefreshAfterQuestionWrite(page) {
+  const state = { writes: [], editorReads: 0, allowRefresh: false };
+  await page.route('**/updateQuizSlide', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    const { slideId, expectedRevision } = route.request().postDataJSON().data;
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    state.writes.push({ slideId, expectedRevision });
+    await route.fulfill({ response });
+  });
+  await page.route('**/readAccessData', route => {
+    if (!state.writes.length || route.request().method() !== 'POST' || route.request().postDataJSON().data.operation !== 'editor') return route.continue();
+    state.editorReads++;
+    return state.allowRefresh ? route.continue() : route.abort('failed');
+  });
+  return state;
+}
+
+test('browser offline before saving keeps the draft and reconnect writes it once', async ({ page }) => {
+  const f = await fixture(page);
+  const connectedWrites = [];
+  let retrying = false;
+  page.on('request', request => {
+    if (!retrying || request.method() !== 'POST' || !new URL(request.url()).pathname.endsWith('/updateQuizSlide')) return;
+    const { slideId, expectedRevision } = request.postDataJSON().data;
+    connectedWrites.push({ slideId, expectedRevision });
+  });
+  try {
+    await select(page, 0);
+    await prompt(page).fill('Draft kept during browser offline');
+    await page.context().setOffline(true);
+    expect(await page.evaluate(() => navigator.onLine)).toBe(false);
+    await save(page);
+    await expect(page.locator('.save-state')).toHaveText('Uložení se nezdařilo');
+    await expect(prompt(page)).toHaveValue('Draft kept during browser offline');
+    expect((await f.root.get()).data().revision).toBe(0);
+    expect((await f.root.collection('slides').doc('a').get()).data().text).toBe('a');
+
+    await page.context().setOffline(false);
+    retrying = true;
+    await save(page);
+    await expect(page.locator('.save-state')).toHaveText('Uloženo');
+    expect(connectedWrites).toEqual([{ slideId: 'a', expectedRevision: 0 }]);
+    expect((await f.root.get()).data().revision).toBe(1);
+    expect((await f.root.collection('slides').doc('a').get()).data().text).toBe('Draft kept during browser offline');
+  } finally {
+    await page.context().setOffline(false);
+    await f.identity.dispose();
+  }
+});
+
+test('an acknowledged save offers a read-only refresh retry after the editor read drops', async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    await select(page, 0);
+    await prompt(page).fill('Acknowledged before refresh failed');
+    const network = await dropRefreshAfterQuestionWrite(page);
+    await save(page);
+    const warning = page.locator('.round-editor-error');
+    await expect(warning).toContainText('Změny jsou uložené');
+    await expect(prompt(page)).toHaveValue('Acknowledged before refresh failed');
+    await expect(page.getByRole('button', { name: 'Uložit vše', exact: true })).toBeDisabled();
+    expect(network.editorReads).toBe(1);
+    expect((await f.root.get()).data().revision).toBe(1);
+
+    const retry = page.getByRole('button', { name: 'Zkusit načíst znovu', exact: true });
+    await expect(retry).toBeEnabled();
+    await retry.click();
+    await expect.poll(() => network.editorReads).toBe(2);
+    await expect(retry).toBeEnabled();
+    await expect(prompt(page)).toHaveValue('Acknowledged before refresh failed');
+    network.allowRefresh = true;
+    await retry.click();
+    await expect(warning).toHaveCount(0);
+    await expect(prompt(page)).toHaveValue('Acknowledged before refresh failed');
+    expect(network.editorReads).toBe(3);
+    expect(network.writes).toEqual([{ slideId: 'a', expectedRevision: 0 }]);
+    expect((await f.root.get()).data().revision).toBe(1);
+    expect((await f.root.collection('slides').doc('a').get()).data().text).toBe('Acknowledged before refresh failed');
+  } finally { await f.identity.dispose(); }
+});
+
+test('save and next keeps the new draft safe when the acknowledged write refresh drops', async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    await select(page, 0);
+    await prompt(page).fill('Acknowledged before the next draft');
+    const network = await dropRefreshAfterQuestionWrite(page);
+    await page.getByRole('button', { name: 'Uložit a přidat další', exact: true }).click();
+    const warning = page.locator('.round-editor-error');
+    await expect(warning).toContainText('Změny jsou uložené');
+    await expect(page.locator('#outline-question-a')).toContainText('Acknowledged before the next draft');
+    await expect(page.getByRole('button', { name: 'Zrušit novou otázku', exact: true })).toBeVisible();
+    await prompt(page).fill('New draft after the acknowledged save');
+    await expect(prompt(page)).toHaveValue('New draft after the acknowledged save');
+    expect(network.editorReads).toBe(1);
+    expect(network.writes).toEqual([{ slideId: 'a', expectedRevision: 0 }]);
+    expect((await f.root.get()).data()).toMatchObject({ revision: 1, slideCount: 4 });
+    expect((await f.root.collection('slides').doc('a').get()).data().text).toBe('Acknowledged before the next draft');
+    expect(await warning.textContent()).not.toContain('Obnovte stránku');
+    const retry = page.getByRole('button', { name: 'Zkusit načíst znovu', exact: true });
+    if (await retry.count()) await expect(retry).toBeDisabled();
+  } finally { await f.identity.dispose(); }
+});
+
 test('multiple questions retain work during navigation; Ctrl+S saves both and leaving offers discard', async ({ page }) => {
   const f = await fixture(page);
   try {

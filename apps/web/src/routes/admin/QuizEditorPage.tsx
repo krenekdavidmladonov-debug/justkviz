@@ -262,6 +262,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const uploadPending = useRef(false);
   const onUploadPending = useCallback((pending: boolean) => { uploadPending.current = pending; setUploading(pending); }, []);
   const [saveFailed, setSaveFailed] = useState(false);
+  const [savedRefreshFailed, setSavedRefreshFailed] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   useEffect(() => { setLastSavedAt(null); }, [quizId, readOnly]);
   const [error, setError] = useState<string | null>(null);
@@ -357,6 +358,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
       setShowReadiness(false);
       setPreflightOpen(false);
       setSaveFailed(false);
+      setSavedRefreshFailed(false);
       setError(null);
       return loaded;
     } catch (loadError) {
@@ -516,7 +518,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
       }
     }
     if (dirtyQuiz && title.trim() === '') { setError('Název kvízu nesmí být prázdný.'); return null; }
-    savePending.current = true; setSaving(true); setError(null); setSaveFailed(false);
+    savePending.current = true; setSaving(true); setError(null); setSaveFailed(false); setSavedRefreshFailed(false);
     try {
       const operations = {
         updateSlide: updateQuizSlide, createSlide: createQuizSlide,
@@ -571,7 +573,10 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
       const createdId = result.created[selectedKey];
       const key = pendingCreate?.semanticKey ?? afterKey;
       const refreshed = await reload(key, pendingCreate?.semanticKey.startsWith('system:') ? undefined : createdId);
-      if (refreshed === null) setError('Změny jsou uložené, ale nový náhled se nepodařilo načíst. Obnovte stránku.');
+      if (refreshed === null && result.acknowledged > 0) {
+        setError(null);
+        setSavedRefreshFailed(true);
+      }
       // A partial save retains acknowledged slides for the next successful retry;
       // background attachment must not add revision conflicts to a failed save.
       driveImports.queueSavedSlides([...deferredDriveSlides.current.values()]);
@@ -625,6 +630,18 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
     } catch (loadError) {
       setSaveFailed(true);
       setError(safeErrorMessage(loadError));
+    } finally {
+      savePending.current = false;
+      setSaving(false);
+    }
+  }
+
+  async function retrySavedRefresh() {
+    if (!savedRefreshFailed || dirty || leaving || uploadPending.current || savePending.current) return;
+    savePending.current = true;
+    setSaving(true);
+    try {
+      if (await reload(selectedKey) === null) setError(null);
     } finally {
       savePending.current = false;
       setSaving(false);
@@ -834,6 +851,15 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
       </header>
 
       {error && <div ref={errorRef} tabIndex={-1} className="round-editor-error"><HumanError error={{ title: 'Změnu nelze dokončit', message: error, technicalCode: saveFailed ? 'EDITOR_SAVE_FAILED' : 'EDITOR_ACTION_FAILED' }} onRetry={saveFailed ? () => void saveAll() : undefined} /></div>}
+      {!error && savedRefreshFailed && <div className="round-editor-error">
+        <div className="human-error" role="status">
+          <div>
+            <strong>Změny jsou uložené.</strong>
+            <p>Nový náhled se nepodařilo načíst.{dirty ? ' Znovu ho můžete načíst po uložení rozepsaných změn.' : ''}</p>
+          </div>
+          <button type="button" className="secondary-button" disabled={dirty || saving || uploading} onClick={() => void retrySavedRefresh()}>Zkusit načíst znovu</button>
+        </div>
+      </div>}
       {saveFailed && <button type="button" className="secondary-button" disabled={saving || uploading} onClick={() => void discardAndReload()}>Zahodit rozepsané změny a načíst aktuální verzi</button>}
 
       {preflightOpen && (
