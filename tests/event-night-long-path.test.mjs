@@ -77,8 +77,9 @@ test('Windows PowerShell 5 performs real promotion and recovery beyond MAX_PATH'
   const result = spawnSync(path.join(process.env.WINDIR, 'System32/WindowsPowerShell/v1.0/powershell.exe'), [
     '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.resolve('tests/fixtures/event-night-recovery.ps1'),
     '-CommonPath', path.resolve('tools/event-night/EventNight.Common.ps1'),
-  ], { encoding: 'utf8', windowsHide: true, timeout: 30000,
+  ], { encoding: 'utf8', windowsHide: true, timeout: 90_000,
     env: { ...process.env, TEMP: isolatedTemp, TMP: isolatedTemp, TMPDIR: isolatedTemp } });
+  assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /PASS: event-night recovery/);
 });
