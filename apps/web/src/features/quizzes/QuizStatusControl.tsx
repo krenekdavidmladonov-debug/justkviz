@@ -7,10 +7,11 @@ import type { QuizStatus } from './types';
 import './quizControls.css';
 
 /** The author's library label is independent of the optional content check. */
-export function QuizStatusControl({ quiz, disabled = false, onChanged }: {
+export function QuizStatusControl({ quiz, disabled = false, onChanged, runChange }: {
   readonly quiz: { readonly id: string; readonly title: string; readonly description: string; readonly revision?: number; readonly status?: QuizStatus };
   readonly disabled?: boolean;
   readonly onChanged: () => void | Promise<unknown>;
+  readonly runChange?: (change: () => Promise<void>) => Promise<void>;
 }) {
   const { can } = useAuth();
   const busy = useRef(false);
@@ -22,8 +23,11 @@ export function QuizStatusControl({ quiz, disabled = false, onChanged }: {
     if (busy.current || disabled || !can('quiz.edit') || status === 'archived') return;
     busy.current = true; setPending(true); setError(null);
     try {
-      await updateQuizMetadata(quiz.id, quiz.revision ?? 0, quiz.title, quiz.description, undefined, undefined, undefined, undefined, status === 'ready' ? 'draft' : 'ready');
-      await onChanged();
+      const change = async () => {
+        await updateQuizMetadata(quiz.id, quiz.revision ?? 0, quiz.title, quiz.description, undefined, undefined, undefined, undefined, status === 'ready' ? 'draft' : 'ready');
+        await onChanged();
+      };
+      await (runChange ? runChange(change) : change());
     } catch {
       setError('Stav se nepodařilo změnit. Načtěte aktuální kvíz a zkuste to znovu.');
     } finally { busy.current = false; setPending(false); }

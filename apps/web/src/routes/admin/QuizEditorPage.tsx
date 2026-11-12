@@ -654,6 +654,18 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
     select(selectionKey);
   }
 
+  async function runStatusChange(change: () => Promise<void>): Promise<void> {
+    if (readOnly || dirty || uploadPending.current || savePending.current) return;
+    savePending.current = true;
+    setSaving(true);
+    try {
+      await change();
+    } finally {
+      savePending.current = false;
+      setSaving(false);
+    }
+  }
+
   async function mutate(action: (current: EditorQuiz) => Promise<{ readonly selectedSlideId?: string }>, preferredKey?: string, saveWorkingCopy = false): Promise<boolean> {
     if (quiz === null || readOnly || (dirty && !saveWorkingCopy) || uploadPending.current || savePending.current) return false;
     const current = dirty ? await saveAll() : quiz;
@@ -800,7 +812,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
         </div>
         <div className="round-editor-save">
           {readOnly && <span className="read-only-badge">Pouze pro čtení</span>}
-          <QuizStatusControl quiz={quiz} disabled={dirty || saving || uploading} onChanged={() => reload()} />
+          <QuizStatusControl quiz={quiz} disabled={dirty || saving || uploading} onChanged={() => reload()} runChange={runStatusChange} />
           <span className={`save-state ${dirty ? 'dirty' : ''} ${saveFailed ? 'failed' : ''}`} role="status" aria-live="polite">{saveLabel}</span>
           {!dirty && !saving && !saveFailed && lastSavedAt && <time className="working-copy-count" dateTime={lastSavedAt.toISOString()}>Vše uloženo v {lastSavedAt.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}</time>}
           {dirty && <span className="working-copy-count">Rozpracované položky: {new Set([...Object.keys(parked), ...(dirtySlide || dirtyRound ? [selectedKey] : []), ...(dirtyQuiz ? ['quiz'] : [])]).size}</span>}

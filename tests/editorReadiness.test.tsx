@@ -5,7 +5,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { QuizEditorPage } from '../apps/web/src/routes/admin/QuizEditorPage';
 import { getEditorQuiz } from '../apps/web/src/features/editor/editorRepository';
-import { createQuizRound, createQuizSlide, deleteQuizSlide, removeQuizRound, updateQuizSlide } from '../apps/web/src/features/editor/editorApi';
+import { createQuizRound, createQuizSlide, deleteQuizSlide, removeQuizRound, updateQuizMetadata, updateQuizSlide } from '../apps/web/src/features/editor/editorApi';
 import { runQuizPreflight } from '../apps/web/src/features/preflight/validation';
 import { QuizPractice } from '../apps/web/src/features/editor/QuizPractice';
 import { SlideRenderer } from '../apps/web/src/features/presentation/SlideRenderer';
@@ -39,6 +39,7 @@ beforeEach(() => {
   vi.useFakeTimers(); vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.mocked(getEditorQuiz).mockReset().mockResolvedValue(quiz); vi.mocked(runQuizPreflight).mockClear();
   vi.mocked(createQuizRound).mockReset(); vi.mocked(createQuizSlide).mockReset(); vi.mocked(updateQuizSlide).mockReset();
+  vi.mocked(updateQuizMetadata).mockReset();
   vi.mocked(deleteQuizSlide).mockReset(); vi.mocked(removeQuizRound).mockReset(); access.denied = [];
   vi.mocked(SlideRenderer).mockClear();
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
@@ -204,6 +205,106 @@ it('keeps the saved library status distinct from editorial findings and allows p
   expect(host.querySelector<HTMLButtonElement>('.practice-button')?.disabled).toBe(false);
   await act(async () => host.querySelector<HTMLButtonElement>('.practice-button')!.click());
   expect(host.querySelector('dialog[aria-label="Soukromá zkouška kvízu"]')).not.toBeNull();
+});
+
+function deferQuizStatusChange() {
+  let resolve!: (value: Awaited<ReturnType<typeof updateQuizMetadata>>) => void;
+  let reject!: (error: Error) => void;
+  vi.mocked(updateQuizMetadata).mockImplementationOnce(() => new Promise((accept, decline) => {
+    resolve = accept;
+    reject = decline;
+  }));
+  return {
+    succeed: () => resolve({ quizId: quiz.id, revision: 2, slideCount: 2, questionCount: 2, roundCount: 1 }),
+    fail: () => reject(new Error('Synthetic status update failed')),
+  };
+}
+
+const quizStatusButton = () => host.querySelector<HTMLButtonElement>('.quiz-status-control button')!;
+
+it('blocks editing and saving a newer draft while a library status change reloads the quiz', async () => {
+  const change = deferQuizStatusChange();
+  await render();
+  expect(quizStatusButton().textContent).toBe('Označit jako připravený');
+  await act(async () => quizStatusButton().click());
+  expect(updateQuizMetadata).toHaveBeenCalledExactlyOnceWith(quiz.id, 1, quiz.title, quiz.description, undefined, undefined, undefined, undefined, 'ready');
+
+  const fieldWasDisabled = questionField('prompt').disabled;
+  if (!fieldWasDisabled) await setText('prompt', 'Novější rozepsané zadání');
+  const save = [...host.querySelectorAll('button')].find(button => button.textContent === 'Uložit vše')!;
+  if (!save.disabled) {
+    vi.mocked(updateQuizSlide).mockRejectedValueOnce(new Error('Concurrent revision'));
+    await act(async () => save.click());
+  }
+
+  const draftDuringStatus = questionField('prompt').value;
+  let finishReload!: (value: EditorQuiz) => void;
+  vi.mocked(getEditorQuiz).mockImplementationOnce(() => new Promise(resolve => { finishReload = resolve; }));
+  await act(async () => change.succeed());
+  const fieldWasDisabledDuringReload = questionField('prompt').disabled;
+  const readyQuiz: EditorQuiz = { ...quiz, status: 'ready', revision: 2 };
+  await act(async () => finishReload(readyQuiz));
+  expect(host.querySelector('.quiz-status')?.textContent).toBe('Připravený');
+  await act(async () => host.querySelector<HTMLButtonElement>('.outline-question')!.click());
+  expect({
+    draftDuringStatus,
+    draftAfterReload: questionField('prompt').value,
+    fieldWasDisabled,
+    fieldWasDisabledDuringReload,
+    concurrentWriteRevisions: vi.mocked(updateQuizSlide).mock.calls.map(([, revision]) => revision),
+  }).toEqual({
+    draftDuringStatus: 'Zadání q1',
+    draftAfterReload: 'Zadání q1',
+    fieldWasDisabled: true,
+    fieldWasDisabledDuringReload: true,
+    concurrentWriteRevisions: [],
+  });
+  expect(questionField('prompt').disabled).toBe(false);
+  await setText('prompt', 'Zadání po uložení stavu');
+  expect(questionField('prompt').value).toBe('Zadání po uložení stavu');
+  vi.mocked(updateQuizSlide).mockResolvedValue({ quizId: quiz.id, revision: 3, slideCount: 2, questionCount: 2, roundCount: 1 });
+  vi.mocked(getEditorQuiz).mockResolvedValue({ ...readyQuiz, revision: 3, slides: [{ ...quiz.slides[0]!, text: 'Zadání po uložení stavu' }, quiz.slides[1]!] });
+  await act(async () => save.click());
+  expect(updateQuizSlide).toHaveBeenCalledExactlyOnceWith(quiz.id, 2, expect.objectContaining({ text: 'Zadání po uložení stavu' }));
+});
+
+it('admits only the status write when status and draft save are triggered in the same batch', async () => {
+  const change = deferQuizStatusChange();
+  vi.mocked(updateQuizSlide).mockRejectedValueOnce(new Error('Concurrent revision'));
+  await render();
+  const draftSave = host.querySelector<HTMLButtonElement>('.draft-save-button')!;
+  expect(draftSave.disabled).toBe(false);
+  await act(async () => {
+    quizStatusButton().click();
+    draftSave.click();
+  });
+  expect(updateQuizMetadata).toHaveBeenCalledOnce();
+  expect(updateQuizSlide).not.toHaveBeenCalled();
+
+  await act(async () => change.fail());
+  expect(host.querySelector('.quiz-status-control [role="alert"]')?.textContent).toContain('Stav se nepodařilo změnit');
+  expect(quizStatusButton().disabled).toBe(false);
+  expect(draftSave.disabled).toBe(false);
+});
+
+it('keeps navigation on the active quiz until the status write settles', async () => {
+  const change = deferQuizStatusChange();
+  const otherQuiz = { ...quiz, id: 'other', title: 'Druhý filmový večer' };
+  const router = await render();
+  await act(async () => quizStatusButton().click());
+  vi.mocked(getEditorQuiz).mockImplementation(async id => id === otherQuiz.id ? otherQuiz : { ...quiz, status: 'ready', revision: 2 });
+
+  await act(async () => router.navigate('/admin/quizzes/other/edit'));
+  expect(router.state.location.pathname).toBe('/admin/quizzes/quiz/edit');
+  expect(getEditorQuiz).not.toHaveBeenCalledWith(otherQuiz.id);
+  const discard = [...host.querySelectorAll<HTMLButtonElement>('dialog button')].find(button => button.textContent === 'Pokračovat bez uložení')!;
+  expect(discard.disabled).toBe(true);
+
+  await act(async () => change.succeed());
+  expect(discard.disabled).toBe(false);
+  await act(async () => discard.click());
+  expect(router.state.location.pathname).toBe('/admin/quizzes/other/edit');
+  expect(host.textContent).toContain(otherQuiz.title);
 });
 
 it('does not allow private practice when the saved source contains no visible slides', async () => {
