@@ -285,6 +285,47 @@ export function sortedSlides(slides: readonly StoredEditorSlide[]): readonly Sto
   return result;
 }
 
+/** Move a slide or its round as an exact block in the presentation order. */
+export function moveSlidesBefore(
+  slides: readonly StoredEditorSlide[],
+  slideId: string,
+  beforeSlideId: string | null,
+  moveRound = false,
+): readonly StoredEditorSlide[] {
+  if (new Set(slides.map(slide => slide.id)).size !== slides.length) {
+    throw new QuizEditorError('failed-precondition', 'Slide identities must be unique.');
+  }
+  const source = slides.find(slide => slide.id === slideId);
+  if (!source) throw new QuizEditorError('not-found', 'Quiz slide was not found.');
+  const roundId = typeof source.data.roundId === 'string' && source.data.roundId.length > 0 ? source.data.roundId : undefined;
+  if (moveRound && (roundId === undefined || source.data.isQuestion === true
+    || !(isRoundKind(source.data.kind as EditorSlideKind) || source.data.kind === 'intro'))) {
+    throw new QuizEditorError('invalid-argument', 'Moving a round requires its introduction slide.');
+  }
+  const moved = moveRound ? slides.filter(slide => slide.data.roundId === roundId) : [source];
+  const movedIds = new Set(moved.map(slide => slide.id));
+  if (beforeSlideId !== null && movedIds.has(beforeSlideId)) {
+    throw new QuizEditorError('invalid-argument', 'The move target cannot be part of the moved slides.');
+  }
+  if (moved.some(slide => slide.data.kind === 'thank-you')) {
+    throw new QuizEditorError('failed-precondition', 'The thank-you slide has a fixed place before the finale.');
+  }
+
+  const remaining = slides.filter(slide => !movedIds.has(slide.id));
+  const thankYouIndex = remaining.findIndex(slide => slide.data.kind === 'thank-you');
+  const isClosing = (slide: StoredEditorSlide) => typeof slide.data.kind === 'string' && slide.data.kind.toLowerCase() === 'end';
+  const movesClosing = moved.some(isClosing);
+  const targetIndex = beforeSlideId === null
+    ? (thankYouIndex >= 0 && !movesClosing ? thankYouIndex : remaining.length)
+    : remaining.findIndex(slide => slide.id === beforeSlideId);
+  if (targetIndex < 0) throw new QuizEditorError('not-found', 'Target quiz slide was not found.');
+  if (thankYouIndex >= 0 && (targetIndex <= thankYouIndex ? movesClosing : !moved.every(isClosing))) {
+    throw new QuizEditorError('failed-precondition', 'The thank-you slide must stay between the program and the closing.');
+  }
+
+  return [...remaining.slice(0, targetIndex), ...moved, ...remaining.slice(targetIndex)];
+}
+
 export function validateExistingRoundHeaderTarget(slides: readonly StoredEditorSlide[], roundId: string, position: number): void {
   const members = slides.filter(slide => slide.data.roundId === roundId);
   if (!members.length || members.some(slide => isRoundKind(slide.data.kind as EditorSlideKind) || (slide.data.kind === 'intro' && slide.data.isQuestion !== true)) || position !== members[0]?.data.position) throw new QuizEditorError('failed-precondition', 'Existing round needs an introduction at its first position.');

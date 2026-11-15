@@ -42,7 +42,17 @@
 .quiz-outline .outline-round-screens > summary, .quiz-outline .outline-extra-screens > summary, .quiz-outline .outline-full-order > summary { cursor:pointer; padding:8px 3px; color:var(--color-text-muted); font-size:.75rem; line-height:1.4; }
 .quiz-outline .outline-extra-screens { display:block; padding:10px 14px; }
 .quiz-outline .outline-extra-screens h2 { margin:14px 0 4px; font-size:.7rem; color:var(--color-text-muted); }
-.quiz-outline .outline-extra-screens .outline-system-item { font-size:.76rem; }
+.quiz-outline .outline-extra-screens .outline-system-item, .quiz-outline .outline-full-order .outline-system-item { font-size:.76rem; }
+.quiz-outline .outline-full-order { padding:10px 14px; }
+.quiz-outline .outline-announcement-target { display:grid; gap:5px; font-size:.76rem; }
+.quiz-outline .outline-announcement-target select { width:100%; min-width:0; }
+.quiz-outline .outline-order-row { display:flex; align-items:center; gap:4px; position:relative; }
+.quiz-outline .outline-order-row .outline-system-item { flex:1; min-width:0; }
+.quiz-outline .outline-order-row .outline-system-item span { overflow-wrap:anywhere; }
+.quiz-outline .outline-order-row.drop-before::before, .quiz-outline .outline-order-row.drop-after::after { content:''; position:absolute; inset-inline:3px; height:3px; background:var(--color-focus); z-index:4; pointer-events:none; border-radius:3px; }
+.quiz-outline .outline-order-row.drop-before::before { top:0; }
+.quiz-outline .outline-order-row.drop-after::after { bottom:0; }
+.quiz-outline .outline-order-end { padding:8px; text-align:center; font-size:.72rem; color:var(--color-text-muted); }
 .quiz-outline .outline-rounds > .add-round-button { position:static; margin:0; min-height:42px; font-size:.8rem; }
 .quiz-outline .outline-drop-end { display:block; height:24px; margin:4px 8px; padding:4px; font-size:.7rem; text-align:center; }
 .quiz-outline .drop-active { background:var(--color-selected); outline:2px dashed var(--color-focus); outline-offset:-2px; }

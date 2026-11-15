@@ -85,6 +85,9 @@ export const deleteQuizSlide = (quizId: string, revision: number, slideId: strin
 export const moveQuizSlide = (quizId: string, revision: number, slideId: string, direction: -1 | 1) => (
   invoke('moveQuizSlide', { quizId, slideId, direction, expectedRevision: revision })
 );
+export const moveProgramSlide = (quizId: string, revision: number, slideId: string, beforeSlideId: string | null) => (
+  invoke('moveQuizSlide', { quizId, slideId, beforeSlideId, expectedRevision: revision })
+);
 export const updateQuizRound = (quizId: string, revision: number, roundId: string, title: string) => (
   invoke('updateQuizRound', { quizId, roundId, title, expectedRevision: revision })
 );

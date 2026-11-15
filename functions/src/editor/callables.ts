@@ -24,6 +24,7 @@ import {
   quizCreationIdentity,
   quizRevision,
   sortedSlides,
+  moveSlidesBefore,
   mergeStoredResultTemplates,
   validateExistingRoundHeaderTarget,
   type StoredEditorSlide,
@@ -34,6 +35,7 @@ import {
   expectedRevision,
   isObject,
   requestedDirection,
+  requestedSlideMove,
   requestedPosition,
   requestedRoundRemovalMode,
   requestedRoundTitle,
@@ -274,7 +276,7 @@ function writeQuizState(
   if (slides.some(slide => slide.data.automaticAgenda === true)) {
     const mapped = slides.map(slide => mapEditorSlide(slide.id, slide.data));
     const model = buildSemanticQuizModel({ id: state.quizRef.id, title: '', description: '', revision: state.revision, slideCount: slides.length, roundCount: 0, questionCount: 0, slides: mapped });
-    slides = slides.map(slide => slide.data.automaticAgenda === true ? { ...slide, data: { ...slide.data, options: generatedAgendaOptions(model.rounds) } } : slide);
+    slides = slides.map(slide => slide.data.automaticAgenda === true ? { ...slide, data: { ...slide.data, options: generatedAgendaOptions(model.rounds, mapped) } } : slide);
   }
   const derivedRoundIds = new Set(slides.map(slideRoundId).filter((value): value is string => value !== undefined));
   const derivedQuestions = slides.filter((slide) => slide.data.isQuestion === true && slideRoundId(slide) !== undefined).length;
@@ -605,9 +607,15 @@ export const moveQuizSlide = securedOnCall('moveQuizSlide', callableOptions, asy
     const quizId = requiredId(request.data, 'quizId');
     const slideId = requiredId(request.data, 'slideId');
     const revision = expectedRevision(request.data);
-    const direction = requestedDirection(request.data);
+    const move = requestedSlideMove(request.data);
     return await runAccessTransaction(db, async (transaction) => {
       const state = await loadQuizState(transaction, quizId, revision);
+      if ('beforeSlideId' in move) {
+        const updated = orderedWithPositions(moveSlidesBefore(state.slides, slideId, move.beforeSlideId, move.moveRound));
+        const result = writeQuizState(transaction, state, updated, actor);
+        return { ...result, selectedSlideId: slideId };
+      }
+      const { direction } = move;
       const index = state.slides.findIndex((slide) => slide.id === slideId);
       if (index < 0) throw new QuizEditorError('not-found', 'Quiz slide was not found.');
       const targetIndex = index + direction;
@@ -619,8 +627,9 @@ export const moveQuizSlide = securedOnCall('moveQuizSlide', callableOptions, asy
       const current = reordered[index];
       if (target === undefined || current === undefined) throw new QuizEditorError('failed-precondition', 'Slide order is malformed.');
       const [first, second] = direction === 1 ? [current, target] : [target, current];
-      if (storedKind(first) === 'thank-you' && storedKind(second).toLowerCase() === 'end') {
-        throw new QuizEditorError('failed-precondition', 'The thank-you slide belongs before the closing slide.');
+      if (storedKind(current) === 'thank-you' || (storedKind(first) === 'thank-you' && storedKind(second).toLowerCase() === 'end')
+        || (storedKind(second) === 'thank-you' && storedKind(first).toLowerCase() !== 'end')) {
+        throw new QuizEditorError('failed-precondition', 'The thank-you slide has a fixed place before the finale.');
       }
       reordered[index] = target;
       reordered[targetIndex] = current;

@@ -52,6 +52,23 @@ export function requestedDirection(data: unknown): -1 | 1 {
   return data.direction;
 }
 
+export function requestedSlideMove(data: unknown):
+  | { readonly direction: -1 | 1 }
+  | { readonly beforeSlideId: string | null; readonly moveRound: boolean } {
+  if (!isObject(data)) throw new HttpsError('invalid-argument', 'Request data is required.');
+  if (!Object.hasOwn(data, 'beforeSlideId')) {
+    if (data.moveRound !== undefined) throw new HttpsError('invalid-argument', 'moveRound requires an exact move target.');
+    return { direction: requestedDirection(data) };
+  }
+  if (data.direction !== undefined || (data.moveRound !== undefined && typeof data.moveRound !== 'boolean')) {
+    throw new HttpsError('invalid-argument', 'Slide move is invalid.');
+  }
+  return {
+    beforeSlideId: data.beforeSlideId === null ? null : requiredId(data, 'beforeSlideId'),
+    moveRound: data.moveRound === true,
+  };
+}
+
 export function requestedRoundTitle(data: unknown): string {
   if (!isObject(data)) throw new HttpsError('invalid-argument', 'Request data is required.');
   return boundedString(data.title, 'round title', 300, false);

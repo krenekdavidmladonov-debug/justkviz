@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type DragEvent } from 'react';
+import { canHideInfoSlide } from '@filmovy-kviz/quiz-domain';
 import type { SemanticQuizModel, SemanticRound } from './semanticModel';
 import { questionSummary, questionTypeLabels, semanticQuestionType } from './semanticModel';
 import type { CreatableQuestionType, EditorSlide } from './types';
@@ -9,7 +10,16 @@ import { EditorDeleteButton } from './EditorDeleteButton';
 const creationLabels: Record<CreatableQuestionType, string> = {
   choice: 'Výběr z možností (ABCD)', free: 'Volná odpověď', image: 'Otázka s obrázkem', audio: 'Otázka se zvukem', video: 'Otázka s videem',
 };
-type DraggedItem = { readonly kind: 'question' | 'round'; readonly id: string };
+type DraggedItem = { readonly kind: 'question' | 'round' | 'announcement'; readonly id: string };
+const moveMessages = {
+  question: ['Přesouvám otázku…', 'Otázka přesunuta.'],
+  round: ['Přesouvám kolo…', 'Kolo přesunuto.'],
+  announcement: ['Přesouvám sdělení…', 'Sdělení přesunuto.'],
+} as const;
+
+function isAnnouncement(slide: EditorSlide | undefined): slide is EditorSlide {
+  return slide !== undefined && !slide.isQuestion && !slide.roundId && (slide.kind === 'info' || slide.kind === 'title');
+}
 // Immutable slides retain their validation across draft keystrokes and drag feedback.
 const issueCache = new WeakMap<EditorSlide, ReturnType<typeof validateQuestion>>();
 function questionIssues(slide: EditorSlide) {
@@ -19,7 +29,7 @@ function questionIssues(slide: EditorSlide) {
 }
 
 export function EditorOutline({ model, selectedKey, activeDraft, disabled, disabledReason, creationDisabled = disabled, pickerRoundId,
-  onSelect, onOpenPicker, onClosePicker, onCreateQuestion, onAddRound, onAddClosing, onAddInfo, onAddThankYou, onMove, onMoveRound,
+  onSelect, onOpenPicker, onClosePicker, onCreateQuestion, onAddRound, onAddClosing, onAddInfo, onAddThankYou, onMove, onMoveRound, onMoveSlide,
   onDeleteQuestion, onDeleteRound, deleteDisabled = disabled, questionDeleteDisabled = deleteDisabled, deleteDisabledReason,
 }: {
   readonly model: SemanticQuizModel;
@@ -39,6 +49,7 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
   readonly onAddThankYou?: () => void;
   readonly onMove: (id: string, roundId: string | undefined, beforeId?: string) => Promise<boolean>;
   readonly onMoveRound?: (id: string, beforeId?: string) => Promise<boolean>;
+  readonly onMoveSlide?: (id: string, beforeId: string | null) => Promise<boolean>;
   readonly onDeleteQuestion?: (slide: EditorSlide) => void;
   readonly onDeleteRound?: (round: SemanticRound) => void;
   readonly deleteDisabled?: boolean;
@@ -77,6 +88,13 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
   const createLocked = creationDisabled || moving;
   const rounds = useMemo(() => model.rounds.filter(round => round.id !== 'roundless'), [model.rounds]);
   const questionCount = model.questionBySlideId.size;
+  const presentationSlides = useMemo(() => [...model.slideById.values()].sort((a, b) => a.position - b.position), [model.slideById]);
+  const hasAnnouncements = onMoveSlide !== undefined && presentationSlides.some(isAnnouncement);
+  const selectedSlide = selectedKey.startsWith('slide:') ? model.slideById.get(selectedKey.slice(6)) : undefined;
+  const selectedAnnouncement = onMoveSlide && isAnnouncement(selectedSlide) ? selectedSlide : undefined;
+  const closingIndex = presentationSlides.findIndex(slide => slide.kind === 'thank-you'
+    || (slide.storedKind.toLowerCase() === 'end' && !(slide.hidden === true && canHideInfoSlide(slide))));
+  const lastDestination = closingIndex === -1 ? presentationSlides.length : closingIndex;
   useEffect(() => {
     // Following a validation link or selecting a question reveals its parent.
     if (selectedRoundId) setCollapsed(previous => {
@@ -90,17 +108,31 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
       || model.closing.some(slide => selectedKey === `slide:${slide.id}`)
       || model.legacy.some(slide => selectedKey === `slide:${slide.id}`)) setScreensOpen(true);
   }, [selectedKey, model.thankYou, model.closing, model.legacy]);
+  const selectedAnnouncementId = selectedAnnouncement?.id;
+  useEffect(() => {
+    if (selectedAnnouncementId !== undefined) setOrderOpen(true);
+  }, [selectedAnnouncementId]);
   function clearDrag() { dragged.current = null; setDragging(null); setDropTarget(null); }
   async function move(item: DraggedItem, roundId?: string, beforeId?: string) {
     clearDrag();
     if (locked || movePending.current || item.id === beforeId) return;
+    if (item.kind === 'announcement') {
+      const source = presentationSlides.findIndex(slide => slide.id === item.id);
+      if (source < 0 || beforeId === presentationSlides[source + 1]?.id) return;
+    }
     outlineRef.current?.querySelectorAll<HTMLDetailsElement>('.outline-item-actions[open]').forEach(menu => { menu.open = false; });
     movePending.current = true; setMoving(true);
-    setAnnouncement(item.kind === 'round' ? 'Přesouvám kolo…' : 'Přesouvám otázku…');
+    const [pendingMessage, successMessage] = moveMessages[item.kind];
+    setAnnouncement(pendingMessage);
     try {
-      const success = item.kind === 'round' ? await onMoveRound?.(item.id, beforeId) : await onMove(item.id, roundId, beforeId);
+      let success;
+      switch (item.kind) {
+        case 'round': success = await onMoveRound?.(item.id, beforeId); break;
+        case 'announcement': success = await onMoveSlide?.(item.id, beforeId ?? null); break;
+        default: success = await onMove(item.id, roundId, beforeId);
+      }
       if (success && roundId) setCollapsed(previous => { const next = new Set(previous); next.delete(roundId); return next; });
-      setAnnouncement(success ? (item.kind === 'round' ? 'Kolo přesunuto.' : 'Otázka přesunuta.') : 'Přesun se nezdařil. Zkontrolujte hlášení nad editorem.');
+      setAnnouncement(success ? successMessage : 'Přesun se nezdařil. Zkontrolujte hlášení nad editorem.');
       if (success) requestAnimationFrame(() => document.getElementById(`outline-${item.kind}-${item.id}`)?.focus());
     } catch {
       setAnnouncement('Přesun se nezdařil. Zkuste jej znovu po obnovení editoru.');
@@ -115,6 +147,29 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
     if (locked || dragged.current?.kind !== kind) return;
     event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move';
     setDropTarget(previous => previous === key ? previous : key);
+  }
+  function dragAfter(event: DragEvent) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return event.clientY >= bounds.top + bounds.height / 2;
+  }
+  function allowAnnouncementDrop(event: DragEvent, position: number, key: string) {
+    if (dragged.current?.kind !== 'announcement') return;
+    if (position > lastDestination) { setDropTarget(null); return; }
+    allowDrop(event, key, 'announcement');
+  }
+  function dropAnnouncement(event: DragEvent, position: number) {
+    const item = dragged.current;
+    if (locked || item?.kind !== 'announcement' || position > lastDestination) return;
+    event.preventDefault(); event.stopPropagation();
+    void move(item, undefined, presentationSlides[position]?.id);
+  }
+  function orderLabel(slide: EditorSlide) {
+    const round = model.rounds.find(item => item.settingsSlide?.id === slide.id);
+    const section = model.introduction.find(item => item.slide?.id === slide.id);
+    const key = section ? `system:${section.key}` : round ? `round:${round.id}` : `slide:${slide.id}`;
+    const label = slide.isQuestion ? questionSummary(slide) : slide.title
+      || (round ? 'Úvod kola' : slide.kind === 'recap' ? 'Rekapitulace' : section?.label ?? 'Informační obrazovka');
+    return { key, label };
   }
   function toggleRound(id: string) {
     setCollapsed(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next; });
@@ -168,8 +223,11 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
     </li>;
   }
   const { thankYou } = model;
+  const programEnd = hasAnnouncements && <li className={`outline-order-end ${dropTarget === 'order-end' ? 'drop-active' : ''}`}
+    onDragOver={event => allowAnnouncementDrop(event, lastDestination, 'order-end')}
+    onDrop={event => dropAnnouncement(event, lastDestination)}>Konec programu</li>;
   return <aside ref={outlineRef} className={`editor-outline editor-panel-structure quiz-outline ${dragging ? 'is-dragging' : ''}`} aria-label="Osnova kvízu" aria-busy={moving}
-    onDragOver={event => {
+    onDragOverCapture={event => {
       if (!dragged.current) return;
       const bounds = event.currentTarget.getBoundingClientRect();
       if (event.clientY < bounds.top + 40) event.currentTarget.scrollTop -= 18;
@@ -196,7 +254,7 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
                 allowDrop(event, `round-${event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'}:${round.id}`, 'round');
               }
             }} onDrop={event => {
-              if (!dragged.current || round.id === 'roundless') return;
+              if (!dragged.current || dragged.current.kind === 'announcement' || round.id === 'roundless') return;
               event.preventDefault(); event.stopPropagation();
               if (dragged.current.kind === 'question') { void move(dragged.current, round.id); return; }
               const rect = event.currentTarget.getBoundingClientRect();
@@ -256,12 +314,50 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
         {model.closing.map(slide => <button key={slide.id} type="button" className={`outline-system-item ${selected(`slide:${slide.id}`)}`} onClick={() => onSelect(`slide:${slide.id}`)}>Závěr kvízu</button>)}
         {model.closing.length === 0 && onAddClosing && <button type="button" className="outline-system-item" disabled={createLocked} onClick={onAddClosing}>+ Přidat závěr kvízu</button>}
         {model.legacy.map(slide => <button key={slide.id} type="button" className={`outline-system-item ${selected(`slide:${slide.id}`)}`} onClick={() => onSelect(`slide:${slide.id}`)}>{slide.title || 'Informační obrazovka'}</button>)}
-        <details className="outline-full-order" open={orderOpen} onToggle={event => setOrderOpen(event.currentTarget.open)}><summary>Celé pořadí promítání</summary>{orderOpen && <ol className="presentation-outline">{[...model.slideById.values()].sort((a, b) => a.position - b.position).map(slide => {
-          const round = model.rounds.find(item => item.settingsSlide?.id === slide.id);
-          const section = model.introduction.find(item => item.slide?.id === slide.id);
-          const key = section ? `system:${section.key}` : round ? `round:${round.id}` : `slide:${slide.id}`;
-          return <li key={slide.id}><button type="button" className={`outline-system-item ${selected(key)}`} onClick={() => onSelect(key)}><span>{slide.position}. {slide.isQuestion ? questionSummary(slide) : slide.title || (round ? 'Úvod kola' : slide.kind === 'recap' ? 'Rekapitulace' : section?.label ?? 'Informační obrazovka')}</span>{slide.hidden && <small>Skryté</small>}</button></li>;
-        })}</ol>}</details>
+      </>}
+    </details>
+    <details className="outline-section outline-full-order" open={orderOpen} onToggle={event => setOrderOpen(event.currentTarget.open)}>
+      <summary>Celé pořadí promítání</summary>
+      {orderOpen && <>
+        {hasAnnouncements && <p className="field-help">Sdělení přetáhněte za úchyt před nebo za položku v seznamu.</p>}
+        {selectedAnnouncement && <label className="outline-announcement-target">
+          Přesunout vybrané sdělení
+          <select disabled={locked} value="" onChange={event => {
+            if (event.target.value) void move({ kind: 'announcement', id: selectedAnnouncement.id }, undefined,
+              presentationSlides[Number(event.target.value)]?.id);
+          }}>
+            <option value="">Vyberte místo…</option>
+            {presentationSlides.map((slide, index) => index < lastDestination && slide.id !== selectedAnnouncement.id
+              && index !== selectedAnnouncement.position && <option key={slide.id} value={index}>Před {slide.position}. {orderLabel(slide).label}</option>)}
+            {selectedAnnouncement.position !== lastDestination && <option value={lastDestination}>Na konec programu</option>}
+          </select>
+        </label>}
+        <ol className="presentation-outline">
+          {presentationSlides.map((slide, index) => {
+            const { key, label } = orderLabel(slide);
+            const movable = onMoveSlide !== undefined && isAnnouncement(slide);
+            const item: DraggedItem = { kind: 'announcement', id: slide.id };
+            return <Fragment key={slide.id}>
+              {index === lastDestination && programEnd}
+              <li data-slide-id={slide.id}
+              className={`outline-order-row ${dragging?.id === slide.id && dragging.kind === 'announcement' ? 'drag-source' : ''} ${dropTarget === `order-before:${slide.id}` ? 'drop-before' : ''} ${dropTarget === `order-after:${slide.id}` ? 'drop-after' : ''}`}
+              onDragOver={event => {
+                const after = dragAfter(event);
+                allowAnnouncementDrop(event, index + Number(after), `order-${after ? 'after' : 'before'}:${slide.id}`);
+              }} onDrop={event => dropAnnouncement(event, index + Number(dragAfter(event)))}>
+              {movable && <button type="button" className="outline-drag-handle" draggable={!locked} disabled={locked}
+                aria-label={`Přetáhnout sdělení: ${label}`} title={locked ? lockedReason : 'Přetáhnout sdělení'}
+                onDragStart={event => startDrag(event, item)} onDragEnd={clearDrag} onClick={() => onSelect(key)}>⠿</button>}
+              <button id={movable ? `outline-announcement-${slide.id}` : undefined} type="button"
+                className={`outline-system-item ${selected(key)}`} aria-current={selectedKey === key ? 'true' : undefined}
+                onClick={() => onSelect(key)}>
+                <span>{slide.position}. {label}</span>{slide.hidden && <small>Skryté</small>}
+              </button>
+              </li>
+            </Fragment>;
+          })}
+          {closingIndex < 0 && programEnd}
+        </ol>
       </>}
     </details>
   </aside>;

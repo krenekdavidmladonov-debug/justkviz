@@ -85,6 +85,53 @@ test('unsaved content survives selection and prevents structural writes until sa
   } finally { await f.identity.dispose(); }
 });
 
+test('standalone announcement can be dragged between questions and back between rounds', async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    await secondRound(f);
+    const slides = f.root.collection('slides');
+    const batch = f.identity.db.batch();
+    for (const [index, kind] of ['info', 'thank-you', 'end'].entries()) {
+      batch.set(slides.doc(kind), {
+        ...mediaSlide(kind), position: 9 + index, isQuestion: false,
+        title: kind === 'info' ? 'Testovací oznámení' : kind === 'thank-you' ? 'Poděkování' : 'Závěr',
+        options: [], correctAnswer: '',
+      });
+    }
+    batch.update(f.root, { slideCount: 11 });
+    await batch.commit();
+    await page.setViewportSize({ width: 1600, height: 1200 });
+    await page.reload();
+    const fullOrder = page.locator('.outline-full-order');
+    await fullOrder.locator('summary').click();
+    const announcementRow = fullOrder.locator('[data-slide-id="info"]');
+    const announcement = announcementRow.getByRole('button', { name: /Přetáhnout sdělení/ });
+    const position = async () => (await slides.orderBy('position').get()).docs.map(doc => doc.id);
+    const dragBeforeProgramRow = async id => {
+      await expect(page.locator('.editor-outline')).toHaveAttribute('aria-busy', 'false');
+      await expect(announcement).toHaveAttribute('draggable', 'true');
+      const target = fullOrder.locator('[data-slide-id="' + id + '"]');
+      await target.scrollIntoViewIfNeeded();
+      const box = await target.boundingBox();
+      expect(box).not.toBeNull();
+      await announcement.dragTo(target, { targetPosition: { x: box.width / 2, y: box.height / 4 } });
+    };
+    await dragBeforeProgramRow('b');
+    await expect.poll(position).toEqual(['round','a','info','b','recap','round2','c','d','recap2','thank-you','end']);
+    expect((await slides.doc('info').get()).data().roundId).toBeUndefined();
+    expect((await slides.doc('b').get()).data().questionNumber).toBe(2);
+    await expect(announcementRow.locator('[aria-current="true"]')).toBeVisible();
+    await expect(fullOrder.locator('[data-slide-id="info"] + [data-slide-id="b"]')).toHaveCount(1);
+    await dragBeforeProgramRow('round2');
+    await expect.poll(position).toEqual(['round','a','b','recap','info','round2','c','d','recap2','thank-you','end']);
+    await page.reload();
+    await fullOrder.locator('summary').click();
+    await expect(fullOrder.locator('[data-slide-id]')).toHaveCount(11);
+    const ids = await fullOrder.locator('[data-slide-id]').evaluateAll(rows => rows.map(row => row.dataset.slideId));
+    expect(ids).toEqual(await position());
+  } finally { await f.identity.dispose(); }
+});
+
 test('interrupted cross-round drag reloads persisted order and keeps the editor usable', async ({ page }) => {
   const f = await fixture(page); let failed = false;
   try {

@@ -99,6 +99,19 @@ describe('unified slide render model', () => {
     ]);
   });
 
+  test('automatic agenda keeps visible announcements in saved program order', () => {
+    const rounds = [{ id: 'r1', title: 'První' }, { id: 'r2', title: 'Druhé' }];
+    const slides = [
+      { id: 'start', position: 1, kind: 'intro', title: 'Vítejte', text: '', isQuestion: false },
+      { id: 'r1-head', position: 2, kind: 'round', roundId: 'r1', title: 'První', text: '', isQuestion: false },
+      { id: 'info', position: 3, kind: 'info', title: 'Přestávka', text: '', isQuestion: false },
+      { id: 'hidden', position: 4, kind: 'info', title: 'Skryté', text: '', isQuestion: false, hidden: true },
+      { id: 'r2-head', position: 5, kind: 'round', roundId: 'r2', title: 'Druhé', text: '', isQuestion: false },
+      { id: 'thanks', position: 6, kind: 'thank-you', title: 'Děkujeme', text: '', isQuestion: false },
+    ] as const;
+    expect(generatedAgendaOptions(rounds, slides)).toEqual(['1. KOLO – První', 'Přestávka', '2. KOLO – Druhé']);
+  });
+
   test('legacy timing accepts zero start, rejects a non-increasing end, and parses supported YouTube sources', () => {
     expect(buildSlideRenderModel(slide({ kind: 'video', presentation: { videoStart: 0, videoEnd: 0 } }))).toMatchObject({ clipStartSeconds: 0 });
     expect(buildSlideRenderModel(slide({ kind: 'video', presentation: { videoStart: 9, videoEnd: 4 } }))).not.toHaveProperty('clipEndSeconds');

@@ -89,7 +89,7 @@ export function SystemSectionForm({
   const set = <K extends keyof EditorSlide>(field: K, value: EditorSlide[K]) => onChange({ ...slide, [field]: value });
   if (section.key === 'agenda') {
     const automatic = slide.automaticAgenda === true;
-    const items = automatic ? generatedAgendaOptions(model.rounds) : slide.options;
+    const items = automatic ? generatedAgendaOptions(model.rounds, [...model.slideById.values()]) : slide.options;
     return <section className="editor-form-stack" data-preflight-field="agenda">
       <header className="content-form-heading"><span>Úvod kvízu</span><h2>Harmonogram</h2><p>{automatic ? 'Automaticky podle pořadí a názvů kol' : 'Uložený ruční harmonogram'}</p></header>
       <label className="form-field">Nadpis<input disabled={disabled} value={slide.title} onChange={event => set('title', event.target.value)} /></label>

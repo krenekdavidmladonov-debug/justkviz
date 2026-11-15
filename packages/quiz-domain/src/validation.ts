@@ -260,7 +260,7 @@ export function runQuizPreflight(
   }
 
   const agenda = model.introduction.find((section) => section.key === 'agenda')?.slide;
-  if (agenda !== undefined && !sameStrings(agenda.options, generatedAgendaOptions(model.rounds))) {
+  if (agenda !== undefined && !sameStrings(agenda.options, generatedAgendaOptions(model.rounds, quiz.slides))) {
     issues.push({
       severity: 'WARNING', code: 'AGENDA_OUT_OF_DATE', category: 'STRUCTURE',
       message: 'Uložený harmonogram neodpovídá aktuálním kolům.', reference: quizReference,
