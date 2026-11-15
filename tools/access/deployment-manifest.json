@@ -67,6 +67,7 @@
     "updateQuizSlide"
   ],
   "unchangedExcluded": {
+    "duplicateQuiz": "Introduced by whole-quiz duplication; outside the historical access deployment scope.",
     "restoreQuiz": "Introduced by quiz library trash; outside the historical access deployment scope.",
     "trashQuiz": "Introduced by quiz library trash; outside the historical access deployment scope.",
     "cancelEventRegistration": "Unchanged anonymous registration capability flow",

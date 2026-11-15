@@ -94,9 +94,14 @@ function DuplicateQuizDialog({ quiz, storageKey, entryKey, onClose }: {
         setAttempt(undefined);
       }
       if (code === 'functions/aborted') setError('Kvíz se mezitím změnil. Načtěte stránku znovu a zopakujte duplikování.');
-      else if (code === 'functions/permission-denied') setError('Pro duplikování tohoto kvízu nemáte všechna potřebná oprávnění.');
-      else if (reason instanceof FunctionsError && code === 'functions/failed-precondition' && reason.details === 'quiz-copy-media-unsupported') {
-        setError('Kvíz obsahuje vlastní nebo soukromá média. Vytvoření úplné kopie pro tento typ médií zatím není dostupné.');
+      else if (reason instanceof FunctionsError && reason.details === 'quiz-copy-drive-owner-required') {
+        setError('Tento kvíz může zkopírovat vlastník připojení k Disku Google, ze kterého pocházejí jeho soukromá média.');
+      } else if (code === 'functions/permission-denied') setError('Pro duplikování tohoto kvízu nemáte všechna potřebná oprávnění.');
+      else if (reason instanceof FunctionsError && code === 'functions/failed-precondition'
+        && ['quiz-copy-media-unavailable', 'quiz-copy-source-media-unavailable'].some(detail => detail === reason.details)) {
+        setError('Některá média už ve zdrojovém kvízu nejsou dostupná. Zkontrolujte, že se přehrávají, a potvrďte kopii znovu.');
+      } else if (reason instanceof FunctionsError && reason.details === 'quiz-copy-destination-media-conflict') {
+        setError('Uložený přenos médií se neshoduje se zdrojem. Vytvoření kopie můžete začít znovu.');
       } else if (code === 'functions/resource-exhausted') {
         setError('Volbu kopie teď nelze dokončit kvůli limitu velikosti kvízu nebo počtu povolených kvízů.');
       } else if (code === 'functions/already-exists') {
@@ -114,6 +119,7 @@ function DuplicateQuizDialog({ quiz, storageKey, entryKey, onClose }: {
     <form onSubmit={event => void submit(event)} aria-busy={pending}>
       <h2 id={titleId}>Duplikovat kvíz</h2>
       <p>Vytvoříte nový koncept z uloženého kvízu „{quiz.title}“.</p>
+      {pending && <p role="status">Vlastní soubory se kopírují samostatně. U větších kvízů to může chvíli trvat.</p>}
       <label className="form-field">
         Název kopie
         <input required autoFocus maxLength={300} value={title} readOnly={Boolean(attempt) || pending} onChange={event => setTitle(event.target.value)} />

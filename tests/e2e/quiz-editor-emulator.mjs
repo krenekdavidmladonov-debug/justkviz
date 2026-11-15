@@ -652,7 +652,7 @@ async function run() {
   }
 
   const sourceAssetFixture = adminDb.doc(`quizzes/${createdQuizId}/slides/${savedThankYou.id}`);
-  await sourceAssetFixture.update({ backgroundImage: `quiz-asset:${createdQuizId}/synthetic-copy-owned` });
+  await sourceAssetFixture.update({ backgroundImage: `quiz-asset:${createdQuizId}/${'a'.repeat(64)}` });
   const assetCopyRequest = { ...copyRequest, requestId: 'editor-e2e-duplicate-owned', title: 'Neúplná kopie nesmí vzniknout' };
   await expectFunctionError(() => invoke('duplicateQuiz', assetCopyRequest), 'functions/failed-precondition');
   assert.equal((await adminDb.collection('quizzes').where('title', '==', assetCopyRequest.title).get()).empty, true);
@@ -674,7 +674,7 @@ async function run() {
     createQuizAuthorizationAndIdempotenceVerified: true, newQuizRoundQuestionSaveReloadVerified: true,
     newQuizConflictVerified: true, historicalSnapshotUntouched: true,
     thankYouOutsideRoundsAndBeforeClosingVerified: true,
-    wholeQuizCopyIsolationAndRetryVerified: true, unsupportedMediaCannotCreatePartialCopy: true,
+    wholeQuizCopyIsolationAndRetryVerified: true, missingMediaCannotCreatePartialCopy: true,
   }, null, 2));
 }
 

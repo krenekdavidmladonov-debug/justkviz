@@ -9,9 +9,12 @@ import {
   type Transaction,
 } from 'firebase-admin/firestore';
 import { HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
-import { accessActor, authorize, securedOnCall, runAccessTransaction, grantCreatedResource, currentMembership } from '../access/authorization.js';
+import { accessActor, authorize, authorizeOperation, freshIdentity, securedOnCall, runAccessTransaction, grantCreatedResource, currentMembership } from '../access/authorization.js';
 import { preserveHiddenFields, protectPrivateMedia, protectSlideFields } from '../access/editor-fields.js';
 import { assertQuizActive } from '../quizzes/guards.js';
+import { driveRuntimeSecrets } from '../drive/runtime.js';
+import { verifyDriveAssets } from '../drive/media-read.js';
+import { materializeQuizCopyAsset, verifyQuizCopyAssetPin, type QuizCopyStoragePin } from '../media/quiz-copy-storage.js';
 
 import { QuizEditorError } from './errors.js';
 import {
@@ -24,7 +27,6 @@ import {
   questionTypeForKind,
   quizCreationIdentity,
   quizDuplicationIdentity,
-  hasQuizScopedMedia,
   quizRevision,
   sortedSlides,
   moveSlidesBefore,
@@ -34,6 +36,7 @@ import {
 } from './model.js';
 import type { EditorQuizMutationResponse, EditorSlideKind } from './types.js';
 import { applyPreflightRepair, requestedPreflightRepair } from './repair.js';
+import { quizCopyAssetBinding, readQuizCopyMedia, rebindQuizCopyMedia, unavailableQuizCopyMedia } from './quiz-copy-media.js';
 import {
   expectedRevision,
   isObject,
@@ -377,100 +380,240 @@ export const createQuiz = securedOnCall('createQuiz', callableOptions, async (re
   }
 });
 
-export const duplicateQuiz = securedOnCall('duplicateQuiz', callableOptions, async (request): Promise<EditorQuizMutationResponse> => {
+async function readQuizCopyContent(transaction: Transaction, quizId: string, revision: number, targetId: string, actorUid: string) {
+  const source = await loadQuizState(transaction, quizId, revision);
+  const counts = stateCounts(source.slides);
+  if (typeof source.quiz.description !== 'string' || counts.roundCount !== requiredStoredCount(source.quiz, 'roundCount')
+    || counts.questionCount !== requiredStoredCount(source.quiz, 'questionCount')) {
+    throw new QuizEditorError('failed-precondition', 'Quiz content does not match its stored metadata.');
+  }
+  const metadata = Object.fromEntries(['description', 'defaultAppearance', 'defaultDesign', 'resultTemplates', 'printTemplate']
+    .filter(key => Object.hasOwn(source.quiz, key)).map(key => [key, source.quiz[key]]));
+  const roundSnapshot = await transaction.get(source.quizRef.collection('rounds').limit(maximumSlideCount + 1));
+  if (roundSnapshot.size !== counts.roundCount) {
+    throw new QuizEditorError('failed-precondition', 'Quiz roundCount does not match its stored rounds.');
+  }
+
+  // Child IDs are local to the new root, so references between slides and
+  // their derived round/question records continue to point into the copy.
+  const roundIds = new Set(roundSnapshot.docs.map(round => round.id));
+  const questionIds = new Map<string, Set<string>>();
+  for (const slide of source.slides) {
+    const roundId = slideRoundId(slide);
+    if (roundId === undefined) continue;
+    if (!roundIds.has(roundId)) throw new QuizEditorError('failed-precondition', 'Quiz slide does not match a stored round.');
+    if (slide.data.isQuestion !== true) continue;
+    const group = questionIds.get(roundId) ?? new Set<string>();
+    group.add(slide.id);
+    questionIds.set(roundId, group);
+  }
+  const linkedQuestionCount = [...questionIds.values()].reduce((total, group) => total + group.size, 0);
+  const rounds = await Promise.all(roundSnapshot.docs.map(async (round) => {
+    const data = snapshotData(round, 'Quiz round');
+    const knownQuestions = questionIds.get(round.id);
+    const count = knownQuestions?.size ?? 0;
+    const questions = await transaction.get(round.ref.collection('questions').limit(count + 1));
+    if (questions.size !== count || questions.docs.some(question => !knownQuestions?.has(question.id))) {
+      throw new QuizEditorError('failed-precondition', 'Quiz round questions do not match its stored slides.');
+    }
+    return {
+      id: round.id, data,
+      questions: questions.docs.map(question => ({ id: question.id, data: snapshotData(question, 'Quiz question') })),
+    };
+  }));
+  const assetIds = new Set<string>();
+  const rebind = (data: Record<string, unknown>) => rebindQuizCopyMedia(data, quizId, targetId, assetIds);
+  const content = {
+    metadata: rebind(metadata),
+    slides: source.slides.map(slide => ({ id: slide.id, data: rebind(slide.data) })),
+    rounds: rounds.map(round => ({ id: round.id, data: rebind(round.data),
+      questions: round.questions.map(question => ({ id: question.id, data: rebind(question.data) })) })),
+  };
+  if (counts.slideCount + counts.roundCount + linkedQuestionCount + assetIds.size + 4 > maximumQuizWriteCount) {
+    throw new HttpsError('resource-exhausted', 'Kvíz je příliš velký pro vytvoření jedné úplné kopie.');
+  }
+  return { ...content, counts, ...await readQuizCopyMedia(transaction, db, quizId, actorUid, assetIds) };
+}
+
+type QuizCopyContent = Awaited<ReturnType<typeof readQuizCopyContent>>;
+type QuizCopyAttempt = {
+  fingerprint: string;
+  mediaFingerprint: string;
+  driveConnection: QuizCopyContent['driveConnection'];
+  pins: Record<string, QuizCopyStoragePin>;
+  completedAt?: Timestamp;
+};
+
+function sameQuizCopyConnection(a: QuizCopyContent['driveConnection'], b: QuizCopyContent['driveConnection']) {
+  return a?.generation === b?.generation && a?.account === b?.account;
+}
+
+function assertQuizCopyDriveAuthority(connection: QuizCopyContent['driveConnection']) {
+  if (!connection) return;
+  const member = currentMembership();
+  if (member.role !== 'owner' || !member.permissions.includes('users.manage')) {
+    throw new HttpsError('permission-denied', 'Kopírování soukromých médií vyžaduje aktuální oprávnění vlastníka Disku.', 'quiz-copy-drive-owner-required');
+  }
+}
+
+function writeQuizCopy(
+  transaction: Transaction, target: FirebaseFirestore.DocumentReference, content: QuizCopyContent,
+  pins: ReadonlyMap<string, QuizCopyStoragePin>, title: string, fingerprint: string, actorUid: string,
+): EditorQuizMutationResponse {
+  const now = Timestamp.now();
+  grantCreatedResource(transaction, 'quiz', target.id);
+  transaction.create(target, {
+    ...content.metadata,
+    ...content.counts,
+    schemaVersion: 1,
+    title,
+    status: 'draft',
+    revision: 0,
+    creationFingerprint: fingerprint,
+    createdAt: now,
+    updatedAt: now,
+    createdBy: actorUid,
+    updatedBy: actorUid,
+  });
+  for (const slide of content.slides) transaction.create(target.collection('slides').doc(slide.id), slide.data);
+  for (const round of content.rounds) {
+    const roundRef = target.collection('rounds').doc(round.id);
+    transaction.create(roundRef, round.data);
+    for (const question of round.questions) transaction.create(roundRef.collection('questions').doc(question.id), question.data);
+  }
+  for (const asset of content.assets) {
+    const pin = pins.get(asset.assetId);
+    if (!pin) throw unavailableQuizCopyMedia();
+    transaction.create(target.collection('mediaAssets').doc(asset.assetId), {
+      quizId: target.id, assetId: asset.assetId, kind: asset.kind, contentType: asset.contentType, size: asset.size,
+      status: 'ready', storageBackend: 'storage', createdBy: actorUid, createdAt: now, readyAt: now, ...pin,
+    });
+  }
+  return { quizId: target.id, revision: 0, ...content.counts };
+}
+
+const duplicateQuizOptions = { ...callableOptions, timeoutSeconds: 540, memory: '512MiB', cpu: 1, concurrency: 1, maxInstances: 4,
+  ...(driveRuntimeSecrets.length ? { secrets: driveRuntimeSecrets } : {}) } as const;
+
+export const createDuplicateQuizCallable = (materialize = materializeQuizCopyAsset, verifyResumedDrive = verifyDriveAssets) => securedOnCall(
+  'duplicateQuiz', duplicateQuizOptions, async (request): Promise<EditorQuizMutationResponse> => {
+  request.rawRequest.res?.setHeader('Cache-Control', 'no-store');
   try {
     const actor = authorizeEditorAdmin(request.auth);
     const input = requestedQuizDuplication(request.data);
     const identity = quizDuplicationIdentity(actor.uid, input.requestId, input.quizId, input.expectedRevision, input.title);
     const target = db.collection('quizzes').doc(identity.quizId);
+    const attempt = db.collection('quizDuplicationAttempts').doc(identity.quizId);
+    const sourceScope = { kind: 'quiz', id: input.quizId } as const;
+    const started = Date.now();
 
-    return await runAccessTransaction(db, async (transaction) => {
+    async function existingCopy(transaction: Transaction) {
       const existing = await transaction.get(target);
-      if (existing.exists) {
-        const quiz = snapshotData(existing, 'Quiz');
-        if (quiz.createdBy !== actor.uid || quiz.creationFingerprint !== identity.fingerprint) {
-          throw new QuizEditorError('already-exists', 'requestId was already used for another quiz duplication.');
-        }
-        await authorize(request.auth, ['quiz.read', 'quiz.edit'], { kind: 'quiz', id: identity.quizId }, transaction);
-        assertQuizActive(quiz);
-        return currentQuizResponse(identity.quizId, quiz);
+      if (!existing.exists) return undefined;
+      const quiz = snapshotData(existing, 'Quiz');
+      if (quiz.createdBy !== actor.uid || quiz.creationFingerprint !== identity.fingerprint) {
+        throw new QuizEditorError('already-exists', 'requestId was already used for another quiz duplication.');
       }
+      await authorize(request.auth, ['quiz.read', 'quiz.edit'], { kind: 'quiz', id: identity.quizId }, transaction);
+      assertQuizActive(quiz);
+      return currentQuizResponse(identity.quizId, quiz);
+    }
 
-      const source = await loadQuizState(transaction, input.quizId, input.expectedRevision);
-      const counts = stateCounts(source.slides);
-      if (typeof source.quiz.description !== 'string' || counts.roundCount !== requiredStoredCount(source.quiz, 'roundCount')
-        || counts.questionCount !== requiredStoredCount(source.quiz, 'questionCount')) {
-        throw new QuizEditorError('failed-precondition', 'Quiz content does not match its stored metadata.');
+    async function readAttempt(transaction: Transaction) {
+      const stored = (await transaction.get(attempt)).data() as QuizCopyAttempt | undefined;
+      if (stored && stored.fingerprint !== identity.fingerprint) {
+        throw new QuizEditorError('already-exists', 'requestId was already used for another quiz duplication.');
       }
-      const metadata = Object.fromEntries(['description', 'defaultAppearance', 'defaultDesign', 'resultTemplates', 'printTemplate']
-        .filter(key => Object.hasOwn(source.quiz, key)).map(key => [key, source.quiz[key]]));
-      const roundSnapshot = await transaction.get(source.quizRef.collection('rounds').limit(maximumSlideCount + 1));
-      if (roundSnapshot.size !== counts.roundCount) {
-        throw new QuizEditorError('failed-precondition', 'Quiz roundCount does not match its stored rounds.');
-      }
+      if (stored?.completedAt) throw new QuizEditorError('failed-precondition', 'Completed copy is no longer available.');
+      return stored;
+    }
 
-      // Child IDs are local to the new root, so references between slides and
-      // their derived round/question records continue to point into the copy.
-      const roundIds = new Set(roundSnapshot.docs.map(round => round.id));
-      const questionIds = new Map<string, Set<string>>();
-      for (const slide of source.slides) {
-        const roundId = slideRoundId(slide);
-        if (roundId === undefined) continue;
-        if (!roundIds.has(roundId)) throw new QuizEditorError('failed-precondition', 'Quiz slide does not match a stored round.');
-        if (slide.data.isQuestion !== true) continue;
-        const group = questionIds.get(roundId) ?? new Set<string>();
-        group.add(slide.id);
-        questionIds.set(roundId, group);
+    const plan = await runAccessTransaction(db, async transaction => {
+      const existing = await existingCopy(transaction);
+      if (existing) return { result: existing };
+      const stored = await readAttempt(transaction);
+      const content = await readQuizCopyContent(transaction, input.quizId, input.expectedRevision, target.id, actor.uid);
+      if (stored && stored.mediaFingerprint !== content.mediaFingerprint) {
+        throw new QuizEditorError('aborted', 'Source media changed during quiz duplication.');
       }
-      const linkedQuestionCount = [...questionIds.values()].reduce((total, group) => total + group.size, 0);
-      if (counts.slideCount + counts.roundCount + linkedQuestionCount + 3 > maximumQuizWriteCount) {
-        throw new HttpsError('resource-exhausted', 'Kvíz je příliš velký pro vytvoření jedné úplné kopie.');
-      }
+      if (!content.assets.length) return { result: writeQuizCopy(transaction, target, content, new Map(), input.title, identity.fingerprint, actor.uid) };
+      await authorize(request.auth, ['quiz.media.upload'], sourceScope, transaction);
+      assertQuizCopyDriveAuthority(content.driveConnection);
+      const progress = stored && sameQuizCopyConnection(stored.driveConnection, content.driveConnection) ? stored.pins : {};
+      if (!stored) transaction.create(attempt, { fingerprint: identity.fingerprint, mediaFingerprint: content.mediaFingerprint,
+        driveConnection: content.driveConnection, pins: progress, createdAt: Timestamp.now() });
+      else if (progress !== stored.pins) transaction.update(attempt, { driveConnection: content.driveConnection, pins: progress });
+      return { content, progress };
+    });
+    if (plan.result) return plan.result;
 
-      const rounds = await Promise.all(roundSnapshot.docs.map(async (round) => {
-        const data = snapshotData(round, 'Quiz round');
-        const knownQuestions = questionIds.get(round.id);
-        const count = knownQuestions?.size ?? 0;
-        const questions = await transaction.get(round.ref.collection('questions').limit(count + 1));
-        if (questions.size !== count || questions.docs.some(question => !knownQuestions?.has(question.id))) {
-          throw new QuizEditorError('failed-precondition', 'Quiz round questions do not match its stored slides.');
-        }
-        return {
-          id: round.id, data,
-          questions: questions.docs.map(question => ({ id: question.id, data: snapshotData(question, 'Quiz question') })),
-        };
+    const prepared = plan.content;
+    const pins = new Map<string, QuizCopyStoragePin>();
+    const destinationFor = (assetId: string) => ({ quizId: target.id, assetId,
+      binding: quizCopyAssetBinding(identity.fingerprint, prepared.mediaFingerprint, assetId) });
+    const savedAssets = prepared.assets.filter(asset => plan.progress[asset.assetId] !== undefined);
+    // Verified generations are immutable. Confirm their metadata in parallel
+    // so an interrupted large transfer spends its next window on new files.
+    for (let start = 0; start < savedAssets.length; start += 12) {
+      await Promise.all(savedAssets.slice(start, start + 12).map(async asset => {
+        const pin = plan.progress[asset.assetId]!;
+        if (await verifyQuizCopyAssetPin(asset, destinationFor(asset.assetId), pin)) pins.set(asset.assetId, pin);
       }));
-      if (hasQuizScopedMedia(metadata) || source.slides.some(slide => hasQuizScopedMedia(slide.data)) || hasQuizScopedMedia(rounds)) {
-        throw new HttpsError('failed-precondition', 'Kvíz obsahuje nahraná média, která zatím nelze bezpečně zkopírovat.', 'quiz-copy-media-unsupported');
+    }
+    const resumedDrive = savedAssets.flatMap(asset => asset.raw && pins.has(asset.assetId) ? [asset.raw] : []);
+    if (resumedDrive.length) await verifyResumedDrive(resumedDrive, input.quizId);
+    for (const asset of prepared.assets) {
+      if (pins.has(asset.assetId)) continue;
+      if (Date.now() - started > 420_000) {
+        throw new HttpsError('unavailable', 'Přenos médií ještě není dokončený. Zopakujte stejný pokus.', 'quiz-copy-media-retry');
       }
-
-      const now = Timestamp.now();
-      grantCreatedResource(transaction, 'quiz', target.id);
-      transaction.create(target, {
-        ...metadata,
-        ...counts,
-        schemaVersion: 1,
-        title: input.title,
-        status: 'draft',
-        revision: 0,
-        creationFingerprint: identity.fingerprint,
-        createdAt: now,
-        updatedAt: now,
-        createdBy: actor.uid,
-        updatedBy: actor.uid,
+      await freshIdentity(request.auth);
+      await Promise.all([authorizeOperation('duplicateQuiz', request), authorize(request.auth, ['quiz.media.upload'], sourceScope)]);
+      const pin = await materialize(asset, destinationFor(asset.assetId));
+      await freshIdentity(request.auth);
+      const concurrentCopy = await runAccessTransaction(db, async transaction => {
+        const existing = await existingCopy(transaction);
+        if (existing) return existing;
+        const stored = await readAttempt(transaction);
+        await authorize(request.auth, ['quiz.media.upload'], sourceScope, transaction);
+        assertQuizCopyDriveAuthority(prepared.driveConnection);
+        if (!stored || stored.mediaFingerprint !== prepared.mediaFingerprint
+          || !sameQuizCopyConnection(stored.driveConnection, prepared.driveConnection)) {
+          throw new QuizEditorError('aborted', 'Source media changed during quiz duplication.');
+        }
+        transaction.update(attempt, { [`pins.${asset.assetId}`]: pin });
+        return undefined;
       });
-      for (const slide of source.slides) transaction.create(target.collection('slides').doc(slide.id), slide.data);
-      for (const round of rounds) {
-        const roundRef = target.collection('rounds').doc(round.id);
-        transaction.create(roundRef, round.data);
-        for (const question of round.questions) transaction.create(roundRef.collection('questions').doc(question.id), question.data);
+      if (concurrentCopy) return concurrentCopy;
+      pins.set(asset.assetId, pin);
+    }
+
+    await freshIdentity(request.auth);
+    return await runAccessTransaction(db, async transaction => {
+      const existing = await existingCopy(transaction);
+      if (existing) return existing;
+      const stored = await readAttempt(transaction);
+      await authorize(request.auth, ['quiz.media.upload'], sourceScope, transaction);
+      const current = await readQuizCopyContent(transaction, input.quizId, input.expectedRevision, target.id, actor.uid);
+      assertQuizCopyDriveAuthority(current.driveConnection);
+      if (!stored || stored.mediaFingerprint !== prepared.mediaFingerprint || current.mediaFingerprint !== prepared.mediaFingerprint
+        || !sameQuizCopyConnection(stored.driveConnection, prepared.driveConnection)
+        || !sameQuizCopyConnection(current.driveConnection, prepared.driveConnection)
+        || current.assets.some(({ assetId }) => {
+          const pin = pins.get(assetId), saved = stored.pins[assetId];
+          return !pin || !saved || pin.generation !== saved.generation || pin.sha256 !== saved.sha256;
+        })) {
+        throw new QuizEditorError('aborted', 'Source media changed during quiz duplication.');
       }
-      return { quizId: target.id, revision: 0, ...counts };
+      const result = writeQuizCopy(transaction, target, current, pins, input.title, identity.fingerprint, actor.uid);
+      transaction.set(attempt, { fingerprint: identity.fingerprint, mediaFingerprint: current.mediaFingerprint, completedAt: Timestamp.now() });
+      return result;
     });
   } catch (error) {
     return mapError(error);
   }
 });
+export const duplicateQuiz = createDuplicateQuizCallable();
 
 export const updateQuizMetadata = securedOnCall('updateQuizMetadata', callableOptions, async (request): Promise<EditorQuizMutationResponse> => {
   try {

@@ -27,6 +27,52 @@ async function stoppedAtFirstCrossing(page, endSeconds) {
   return sample;
 }
 
+test('copies an owned image from the library and replaces it in the copy only @quiz-copy-media', async ({ page, context }) => {
+  const f = await mediaFixture();
+  let copyId;
+  try {
+    const image = await f.upload('image', syntheticImage(), 'image/png');
+    await f.update('image', { questionImage: image.reference });
+    await context.route('**/*', route => ['127.0.0.1', 'localhost'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
+    await page.goto('/admin/login');
+    await page.getByLabel('E-mail').fill(f.loginEmail);
+    await page.getByLabel('Heslo').fill(f.loginPassword);
+    await page.getByRole('button', { name: 'Přihlásit se' }).click();
+    await expect(page).toHaveURL(/\/admin$/u);
+    await page.goto('/admin/quizzes');
+    await page.getByRole('button', { name: 'Duplikovat kvíz Syntetická vlastní média' }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Vytvořit kopii' }).click();
+    await expect(page).toHaveURL(/\/admin\/quizzes\/quiz_[a-f0-9]{64}\/edit$/u);
+    copyId = new URL(page.url()).pathname.split('/')[3];
+    await openRounds(page);
+    await page.locator('.outline-question').filter({ hasText: 'Syntetický obrázek' }).click();
+    const media = page.getByRole('region', { name: 'Obrázek otázky', exact: true });
+    await expect.poll(() => media.getByRole('img').evaluate(img => img.naturalWidth)).toBe(8);
+    const copied = f.db.doc(`quizzes/${copyId}/slides/${f.ids.image}`);
+    expect((await copied.get()).get('questionImage')).toBe(`quiz-asset:${copyId}/${image.assetId}`);
+    await media.getByLabel('Obrázek otázky — soubor', { exact: true }).setInputFiles({
+      name: 'replacement.png', mimeType: 'image/png', buffer: syntheticImage(),
+    });
+    await expect(media.getByText('Ověřené médium tohoto kvízu', { exact: false })).toBeVisible();
+    await page.getByRole('button', { name: 'Uložit vše', exact: true }).click();
+    await expect(page.locator('.save-state')).toHaveText('Uloženo');
+    const replacement = (await copied.get()).get('questionImage');
+    expect(replacement).toMatch(new RegExp(`^quiz-asset:${copyId}/[a-f0-9]{64}$`, 'u'));
+    expect(replacement).not.toBe(`quiz-asset:${copyId}/${image.assetId}`);
+    expect((await f.quizRef.collection('slides').doc(f.ids.image).get()).get('questionImage')).toBe(image.reference);
+    await page.goto('/admin/quizzes/' + f.quizId + '/edit');
+    await openRounds(page);
+    await page.locator('.outline-question').filter({ hasText: 'Syntetický obrázek' }).click();
+    await expect.poll(() => media.getByRole('img').evaluate(img => img.naturalWidth)).toBe(8);
+  } finally {
+    if (copyId) {
+      await f.bucket.deleteFiles({ prefix: 'quiz-assets/' + copyId + '/' });
+      await f.db.recursiveDelete(f.db.doc('quizzes/' + copyId));
+    }
+    await f.dispose();
+  }
+});
+
 test('synthetic owned image/audio upload, editor preview, immutable projector image and manual audio lifecycle', async ({page,context,browser}) => {
   const f=await mediaFixture();let projectorContext, unsubscribe, phase='login';
   const playbackStates=[];

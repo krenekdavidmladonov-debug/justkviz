@@ -139,6 +139,20 @@ test('Drive revalidation checks live ownership and file verification without byt
   expect(dependencies.files.download).not.toHaveBeenCalled();
 });
 
+test('resuming verified Drive copies checks each file with one current owner session', async () => {
+  const dependencies = fixture();
+  const second = { ...asset, drive: { ...asset.drive, file: { ...file, id: 'private_second' } } };
+  await mediaRead.verifyDriveAssets([asset, second], 'quiz-1', dependencies);
+  expect(dependencies.provider.refresh).toHaveBeenCalledTimes(1);
+  expect(dependencies.files.verify).toHaveBeenNthCalledWith(1, 'private-access', account, file);
+  expect(dependencies.files.verify).toHaveBeenNthCalledWith(2, 'private-access', account, second.drive.file);
+  expect(dependencies.files.download).not.toHaveBeenCalled();
+  await expect(mediaRead.verifyDriveAssets([asset, { ...second, drive: { ...second.drive, ownerUid: 'different' } }], 'quiz-1', dependencies))
+    .rejects.toMatchObject({ code: 'failed-precondition' });
+  vi.mocked(dependencies.files.verify).mockRejectedValueOnce(new Error('file became public'));
+  await expect(mediaRead.verifyDriveAssets([asset, second], 'quiz-1', dependencies)).rejects.toMatchObject({ code: 'unavailable' });
+});
+
 test('image-byte reuse still checks current owner, connection and file ACLs on every read', async () => {
   const dependencies = fixture();
   vi.mocked(dependencies.files.download).mockResolvedValue(Buffer.from(bytes));

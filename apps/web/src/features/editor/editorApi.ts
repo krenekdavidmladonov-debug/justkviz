@@ -6,8 +6,8 @@ import type { EditorMutationResponse, EditorSlide } from './types';
 
 export const staleEditorMessage = 'Kvíz byl mezitím změněn v jiném okně. Načtěte prosím aktuální verzi a své změny zopakujte.';
 
-function callable(name: string) {
-  return httpsCallable<Record<string, unknown>, EditorMutationResponse>(getFirebaseServices().functions, name);
+function callable(name: string, timeout?: number) {
+  return httpsCallable<Record<string, unknown>, EditorMutationResponse>(getFirebaseServices().functions, name, timeout === undefined ? undefined : { timeout });
 }
 
 function slidePayload(slide: EditorSlide) {
@@ -54,7 +54,7 @@ export const createQuiz = (title: string, requestId: string) => (
   invoke('createQuiz', { title, requestId })
 );
 export const duplicateQuiz = async (quizId: string, expectedRevision: number, title: string, requestId: string) => (
-  (await callable('duplicateQuiz')({ quizId, expectedRevision, title, requestId })).data
+  (await callable('duplicateQuiz', 550_000)({ quizId, expectedRevision, title, requestId })).data
 );
 export const updateQuizMetadata = (quizId: string, revision: number, title: string, description: string, defaultAppearance?: EditorAppearance, defaultDesign?: SlideDesign, resultTemplates?: ResultTemplates, printTemplate?: PrintTemplate, status?: 'draft' | 'ready') => (
   invoke('updateQuizMetadata', { quizId, expectedRevision: revision, quiz: { title, description, ...(defaultAppearance === undefined ? {} : { defaultAppearance }), ...(defaultDesign === undefined ? {} : { defaultDesign }), ...(resultTemplates === undefined ? {} : { resultTemplates }), ...(printTemplate === undefined ? {} : { printTemplate }), ...(status === undefined ? {} : { status }) } })

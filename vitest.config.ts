@@ -14,7 +14,7 @@ export default defineConfig({
       'tests/registrationInput.test.tsx',
       'tests/driveLocal*.test.ts', 'tests/driveCompanionUi*.test.*',
       'tests/driveFiles.test.ts', 'tests/driveImageByteCache.test.ts', 'tests/drivePicker.test.ts', 'tests/driveImportUi.test.tsx', 'tests/driveImages.test.ts', 'tests/driveImportCallables.test.ts',
-      'tests/driveImports.test.ts', 'tests/driveMediaPlayback.test.tsx', 'tests/driveMediaRead.test.ts', 'tests/recapPresentation.test.tsx',
+      'tests/driveImports.test.ts', 'tests/driveMediaPlayback.test.tsx', 'tests/driveMediaRead.test.ts', 'tests/quizCopyStorage.test.ts', 'tests/recapPresentation.test.tsx',
       'tests/driveConnection.test.ts', 'tests/driveConnectionAuthorization.test.ts', 'tests/driveConnectionUi.test.tsx',
       'tests/showModeServer.test.ts', 'tests/showModeDomain.test.ts',
       'tests/showModePresentation.test.tsx', 'tests/showModePublicParser.test.ts',

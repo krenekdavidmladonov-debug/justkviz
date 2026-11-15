@@ -82,6 +82,17 @@ notes and media attachments, and grants access only to the new draft. A
 replayed request rechecks source authority and access to the destination. The
 operation sends only the destination ID and counters to the client.
 
+Media duplication additionally requires `quiz.media.upload` in source scope.
+Only the owner of the connected Drive account may copy its private assets.
+The server verifies the current connection, private file access and recorded
+digest, then creates a separate private Storage object under the copy. The new
+object carries no source Drive binding or bearer token. The draft and access
+grant become visible only when every file is verified and the current source
+revision, media pins and permissions pass the final transaction. A transfer
+interrupted before publication can leave private objects for idempotent retry.
+Resuming a Drive transfer rechecks the private file access for completed
+objects along with the current account and connection.
+
 The current policy is defined in [PERSONAL_ACCESS.md](PERSONAL_ACCESS.md) and the shared permission module. Firebase Auth verifies identity; current membership, permissions and resource scope authorize each operation. Role labels are editable presets. Legacy custom claims are preserved but ignored as authority.
 
 Every legacy staff callable uses the explicit fail-closed policy wrapper. Permission and scope are reread inside each content transaction, so revocation conflicts with delayed saves. HTTP media and print gateways check the same current membership. Storage grants bind member version, quiz scope, MIME, size and expiry. No browser writes membership, content, snapshots or audit directly.

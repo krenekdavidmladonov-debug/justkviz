@@ -53,13 +53,22 @@ Current required fields:
 The admin-only `createQuiz` workflow creates an empty private root with `schemaVersion: 1`, `description: ''`, `status: draft`, `revision: 0`, and all three counters at `0`; it does not create placeholder rounds, questions, slides, snapshots, or public projections. Its opaque quiz ID is deterministic for the authenticated admin UID plus client `requestId`. New roots also keep an immutable private `creationFingerprint` over the normalized title, allowing an identical retry to return the same root while rejecting reuse of that request ID for different content. Trusted timestamps and actor fields come from the Function.
 
 `duplicateQuiz` creates a separate private draft at revision 0 from an exact
-saved source revision. One Firestore transaction validates and copies the
-ordered slides, round/question documents, and authoring designs and templates.
-Child IDs remain scoped to the new root. The private creation fingerprint
-binds retries to the actor, source, revision, and normalized title. Events,
-sessions, registrations, and historical snapshots stay with their existing
-records. Sources referencing quiz-owned or private Drive media are rejected
-before the transaction creates a copy.
+saved source revision. It copies ordered slides, rounds, questions, designs,
+templates and every referenced quiz asset. Child IDs remain scoped to the new
+root. Media references point to separately owned, generation-pinned Storage
+objects with ready metadata under the new root. The actor, source revision and
+normalized title are bound to the creation fingerprint. Events, sessions,
+registrations and existing snapshots stay with their existing records.
+
+For a copy with media, the server-only `quizDuplicationAttempts/{targetId}`
+record binds the request to the exact asset revisions before transfer. The
+final transaction rechecks the source, creates the complete draft and ready
+asset records, grants its scope and replaces transfer progress with a compact
+completion receipt.
+Interrupted attempts can reuse private objects from the same pinned plan.
+Partial copies have no quiz root or readable asset metadata. The same limit as
+offline preparation applies to media volume, 256 files and 512 MiB, within the
+overall editor transaction limit.
 
 V1-migrated drafts may additionally contain private `legacy: { source, metadata }`. Version-2 imports retain only explicitly allowlisted compatibility metadata and extend the same legacy object with source project/collection/ID and export/content fingerprints. It is never copied into a public projection. See tools/migration-v1/CLOUD_IMPORT.md.
 

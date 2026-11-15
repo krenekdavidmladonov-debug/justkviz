@@ -35,6 +35,19 @@ export async function verifyDriveAsset(asset: Record<string, unknown>, quizId: s
   }, dependencies);
 }
 
+/** Revalidate an interrupted copy using one session for files from the same owner and account. */
+export async function verifyDriveAssets(assets: readonly Record<string, unknown>[], quizId: string, dependencies?: DriveRuntimeDependencies): Promise<void> {
+  const files = assets.map(asset => validatedAsset(asset, quizId));
+  const binding = files[0]?.binding;
+  if (!binding) return;
+  if (files.some(file => file.binding.ownerUid !== binding.ownerUid || file.binding.accountPermissionId !== binding.accountPermissionId)) invalid();
+  await withDriveAccess(binding, async access => {
+    for (let start = 0; start < files.length; start += 8) {
+      await Promise.all(files.slice(start, start + 8).map(({ reference }) => access.files.verify(access.accessToken, access.account, reference)));
+    }
+  }, dependencies);
+}
+
 export async function readDriveAsset(asset: Record<string, unknown>, quizId: string, dependencies?: DriveRuntimeDependencies): Promise<Buffer> {
   const { binding, reference } = validatedAsset(asset, quizId);
   const imageKey = asset.kind === 'image' ? JSON.stringify([binding, reference]) : undefined;
