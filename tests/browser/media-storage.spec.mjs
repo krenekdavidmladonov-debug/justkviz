@@ -211,7 +211,7 @@ test('synthetic owned image/audio upload, editor preview, immutable projector im
   } catch(error) { console.error('Media browser failed during '+phase);  throw error; } finally {unsubscribe?.();await projectorContext?.close();await context.close();await f.dispose();}
 });
 
-test('editor uploads owned H264/AAC MP4 and MP3, pins the exact assets, and rejects audio-only MP4 readiness', async ({ page, context }) => {
+test('owned MP4 and MP3 upload, snapshot, projector video playback and offline media validation', async ({ page, context, browser }) => {
   requireFullEmulatorEnvironment(process.env, 'Owned media editor upload');
   const storagePort = localEmulatorEndpoint(process.env.FIREBASE_STORAGE_EMULATOR_HOST, 'Owned media editor upload').port;
   const f = await mediaFixture();
@@ -309,6 +309,33 @@ test('editor uploads owned H264/AAC MP4 and MP3, pins the exact assets, and reje
     const snapshotId = await f.lock();
     expect((await f.db.doc(`quizSnapshots/${snapshotId}/slides/${videoSlide.id}`).get()).data()).toMatchObject({ mediaSource: uploadedVideo.reference, clipStartSeconds: 1, clipEndSeconds: 3 });
     expect((await f.db.doc(`quizSnapshots/${snapshotId}/slides/${f.ids.audio}`).get()).data().mediaSource).toBe(uploadedMp3.reference);
+
+
+    const snapshotVideo = (await f.db.doc(`quizSnapshots/${snapshotId}/slides/${videoSlide.id}`).get()).data();
+    const sessionId = await f.live();
+    const projectorContext = await browser.newContext({ baseURL: 'http://127.0.0.1:5198' });
+    try {
+      await projectorContext.route('**/*', route => ['127.0.0.1', 'localhost'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
+      const projector = await projectorContext.newPage();
+      await projector.goto('/projector/' + sessionId);
+      const projectedVideo = projector.locator('.slide-renderer video');
+      const startClip = async () => {
+        await f.navigate(sessionId, snapshotVideo.position);
+        await expect(projector.getByText(videoPrompt, { exact: true })).toBeVisible();
+        await projector.locator('body').click({ position: { x: 10, y: 10 } });
+        const session = (await f.db.doc('sessions/' + sessionId).get()).data();
+        await f.admin.call('playMedia', { sessionId, expectedRevision: session.revision });
+        await expect.poll(() => projectedVideo.evaluate(element => !element.paused && element.currentTime > 1 && element.videoWidth === 384)).toBe(true);
+        await expect.poll(() => projectedVideo.evaluate(element => element.paused && element.currentTime >= 3 && element.currentTime < element.duration)).toBe(true);
+      };
+      await startClip();
+      await f.navigate(sessionId, snapshotVideo.position - 1);
+      await expect(projectedVideo).toHaveCount(0);
+      await projector.reload();
+      await startClip();
+    } finally {
+      await projectorContext.close();
+    }
 
     // Audio decodes in Chromium. The actual offline verifier must reject it as video.
     const decodedAudio = await verifyOfflineNativeMedia(page, { ...audioOnlyMp4, kind: 'audio' });

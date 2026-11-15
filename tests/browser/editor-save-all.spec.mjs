@@ -122,10 +122,15 @@ test('save and next keeps the new draft safe when the acknowledged write refresh
     await page.getByRole('button', { name: 'Uložit a přidat další', exact: true }).click();
     const warning = page.locator('.round-editor-error');
     await expect(warning).toContainText('Změny jsou uložené');
-    await expect(page.locator('#outline-question-a')).toContainText('Acknowledged before the next draft');
+    const savedQuestion = page.locator('#outline-question-a');
+    await expect(savedQuestion).toHaveCount(1);
+    await expect(savedQuestion).toContainText('Acknowledged before the next draft');
+    await expect(page.locator('.outline-question[aria-current="true"]')).toHaveAttribute('id', 'outline-question-local-question-free');
+    await expect(prompt(page)).toHaveValue('');
     await expect(page.getByRole('button', { name: 'Zrušit novou otázku', exact: true })).toBeVisible();
     await prompt(page).fill('New draft after the acknowledged save');
     await expect(prompt(page)).toHaveValue('New draft after the acknowledged save');
+    await expect(savedQuestion).toContainText('Acknowledged before the next draft');
     expect(network.editorReads).toBe(1);
     expect(network.writes).toEqual([{ slideId: 'a', expectedRevision: 0 }]);
     expect((await f.root.get()).data()).toMatchObject({ revision: 1, slideCount: 4 });

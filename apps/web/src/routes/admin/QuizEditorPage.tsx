@@ -7,7 +7,7 @@ import { MediaAuthoringContext } from '../../features/media/MediaUploadField';
 import { usePrivateMediaPrefetch } from '../../features/media/usePrivateMediaPrefetch';
 import { DriveMediaImportStatus } from '../../features/drive/DriveMediaImportStatus';
 import { useDriveMediaImports } from '../../features/drive/useDriveMediaImports';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useBlocker, useLocation, useNavigation, useParams, useSearchParams } from 'react-router-dom';
 
 import { useAuth } from '../../auth/AuthProvider';
@@ -423,7 +423,8 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
     if (field !== null) setPendingFixFocus({ selectionKey, field, ...(questionId === null ? {} : { questionId }) });
   }, [quiz?.id, quizId, searchParams, semantic]);
 
-  useEffect(() => {
+  // Resolve the selection before paint so a saved slide cannot appear as a new draft.
+  useLayoutEffect(() => {
     if (quiz === null || semantic === null) return;
     const stored = parkedRef.current[selectedKey];
     if (stored !== undefined) {
@@ -806,7 +807,8 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const selectedRound = roundForSelection(selectedKey, semantic)
     ?? (selectedKey === 'draft' ? semantic.rounds.find((round) => round.id === draft?.roundId) : undefined);
   const selectedQuestion = draft === null ? undefined : semantic.questionBySlideId.get(draft.id);
-  const isLocalQuestion = selectedKey === 'draft' && draft?.isQuestion === true;
+  const isLocalQuestion = selectedKey === 'draft' && pendingCreate?.semanticKey === 'draft'
+    && draft?.isQuestion === true && !semantic.slideById.has(draft.id);
   const questionNumber = selectedQuestion?.number ?? draft?.questionNumber ?? 1;
   const selectedSection = selectedKey.startsWith('system:')
     ? semantic.introduction.find((item) => item.key === selectedKey.slice('system:'.length))
@@ -917,7 +919,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
         <EditorOutline
           model={outlineModel ?? semantic}
           selectedKey={selectedKey}
-          activeDraft={draft}
+          activeDraft={selectedKey !== 'draft' || isLocalQuestion ? draft : null}
           disabled={structuralDisabled}
           creationDisabled={editingDisabled || saving || uploading}
           disabledReason={readOnly ? 'Máte oprávnění pouze ke čtení.' : announcementRefreshPending ? 'Nejprve načtěte aktuální pořadí.' : uploading ? 'Nejdříve dokončete nahrávání média.' : saving ? 'Právě ukládám změny…' : 'Pro přesouvání nejprve uložte nebo zahoďte rozepsané změny.'}
@@ -986,7 +988,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
               </div></details> : <p className="field-help">Toto je bezpečný přehled starších otázek bez přiřazeného kola. Otázky můžete jednotlivě přesunout.</p>}
             </>
           )}
-          {draft?.isQuestion && (selectedKey === 'draft' || selectedKey === `slide:${draft.id}`) && (
+          {draft?.isQuestion && (isLocalQuestion || selectedKey === `slide:${draft.id}`) && (
             <>
               {!isLocalQuestion && <div className="editor-selection-actions"><span>{questionNumber}. otázka{selectedRound ? ` · ${selectedRound.title}` : ''}</span><EditorDeleteButton label="Smazat otázku…" disabled={deletionDisabled || quiz.slideCount <= 1} reason={deletionReason ?? (quiz.slideCount <= 1 ? 'Poslední slide kvízu nelze tímto způsobem smazat.' : undefined)} onClick={() => { setError(null); setRemoveQuestion(draft); }} /></div>}
               <QuestionForm answersReadable={can('quiz.answers.read')} answersEditable={can('quiz.answers.edit')} notesReadable={can('quiz.notes.read')} notesEditable={can('quiz.notes.edit')} key={draft.id} defaultAppearance={quiz.defaultAppearance ?? initialAppearance} onUploadPending={onUploadPending} quizId={quiz.id} slide={draft} number={questionNumber} disabled={editingDisabled || saving || uploading} showAllIssues={showReadiness} touched={touched}
