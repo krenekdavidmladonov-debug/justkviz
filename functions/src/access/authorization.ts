@@ -64,6 +64,7 @@ function resourceId(value: unknown): string {
   if (typeof value !== 'string' || !value || value.length > 1500 || value.includes('/')) throw new HttpsError('invalid-argument', 'Neplatný identifikátor.');
   return value;
 }
+const quizExportPermissions = ['quiz.read', 'quiz.export', 'quiz.answers.read', 'quiz.notes.read'] as const;
 const quizEdits = ['updateQuizMetadata', 'updateQuizSlide', 'createQuizSlide', 'duplicateQuizSlide', 'moveQuizSlide', 'updateQuizRound', 'reorderQuizQuestion', 'moveQuizQuestionToRound', 'duplicateQuizRound', 'moveQuizRound', 'createQuizRound'];
 const eventManagement = ['updateEvent', 'cancelEvent', 'archiveEvent', 'configureEventRegistration', 'adminCancelEventRegistration', 'adminAddEventTeam', 'adminUpdateEventTeam', 'listRefereeAccess'];
 const live = ['createLiveSession', 'endLiveSession', 'finishMedia', 'goToSlide', 'hideAnswer', 'nextSlide', 'playMedia', 'previousSlide', 'reportMediaPlayback', 'replayMedia', 'revealAnswer', 'selectRecapQuestion', 'startIntro', 'stopMedia'];
@@ -93,6 +94,9 @@ export async function authorizeOperation(name: string, request: CallableRequest,
     if (!(stored && name === 'configureEventRegistration' && isCompletedEventHide(stored, data))) assertEventOperational(stored);
   }
   if (name === 'createQuiz') return authorize(request.auth, ['quiz.create'], undefined, tx);
+  if (name === 'duplicateQuiz') return activeQuiz([
+    ...quizExportPermissions, 'quiz.create', 'quiz.edit', 'quiz.answers.edit', 'quiz.notes.edit', 'quiz.media.attach',
+  ]);
   if (name === 'createEvent') return authorize(request.auth, ['event.create'], undefined, tx);
   if (quizEdits.includes(name)) return activeQuiz(['quiz.edit']);
   // Removing a round also deletes its header/recap even when questions are moved.
@@ -110,7 +114,7 @@ export async function authorizeOperation(name: string, request: CallableRequest,
     return member;
   }
   if (name === 'lockEventQuiz') {
-    await activeQuiz(['quiz.read', 'quiz.export', 'quiz.answers.read', 'quiz.notes.read']);
+    await activeQuiz(quizExportPermissions);
     return authorize(request.auth, ['event.manage'], event(), tx);
   }
   if (name === 'saveEventScore') return authorize(request.auth, ['event.score'], event(), tx);

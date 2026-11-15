@@ -601,6 +601,66 @@ async function run() {
   assert.deepEqual(program.slice(-4).map(slide => slide.data().kind), ['round', 'recap', 'thank-you', 'end']);
   assert.equal(program.at(-4).id, lastRound.selectedSlideId);
 
+  const sourceBeforeCopy = (await getDoc(createdQuizRef)).data();
+  const sourceProgramBefore = program.map(slide => ({ id: slide.id, data: slide.data() }));
+  const copyRequest = {
+    quizId: createdQuizId, expectedRevision: lastRound.revision,
+    title: 'Samostatná kopie syntetického kvízu', requestId: 'editor-e2e-duplicate-whole-1',
+  };
+  await expectFunctionError(
+    () => invoke('duplicateQuiz', { ...copyRequest, requestId: 'editor-e2e-duplicate-stale', expectedRevision: lastRound.revision - 1 }),
+    'functions/aborted',
+  );
+  const [copy, replay] = await Promise.all([
+    invoke('duplicateQuiz', copyRequest),
+    invoke('duplicateQuiz', copyRequest),
+  ]);
+  assert.deepEqual(copy, replay);
+  assert.notEqual(copy.quizId, createdQuizId);
+  assert.equal(copy.roundCount, lastRound.roundCount);
+  assert.equal(copy.questionCount, lastRound.questionCount);
+  assert.equal(copy.slideCount, lastRound.slideCount);
+  const copyRef = doc(db, 'quizzes', copy.quizId);
+  const copied = (await getDoc(copyRef)).data();
+  assert.equal(copied.status, 'draft');
+  assert.equal(copied.title, copyRequest.title);
+  assert.equal(copied.createdBy, auth.currentUser.uid);
+  const copiedSlides = (await getDocs(query(collection(copyRef, 'slides'), orderBy('position')))).docs;
+  const outline = items => items.map(item => ({
+    position: item.position, kind: item.kind, title: item.title, text: item.text,
+    correctAnswer: item.correctAnswer, moderatorNote: item.moderatorNote,
+  }));
+  assert.deepEqual(outline(copiedSlides.map(slide => slide.data())), outline(program.map(slide => slide.data())));
+  await invoke('updateQuizMetadata', {
+    quizId: copy.quizId, expectedRevision: copy.revision,
+    quiz: { title: 'Upravená kopie', description: copied.description },
+  });
+  assert.equal((await getDoc(copyRef)).data().title, 'Upravená kopie');
+  assert.deepEqual((await getDoc(createdQuizRef)).data(), sourceBeforeCopy);
+  assert.deepEqual((await newQuizProgram()).docs.map(slide => ({ id: slide.id, data: slide.data() })), sourceProgramBefore);
+  assert.equal((await invoke('duplicateQuiz', copyRequest)).quizId, copy.quizId);
+  await expectFunctionError(
+    () => invoke('duplicateQuiz', { ...copyRequest, title: 'Změněný požadavek' }),
+    'functions/already-exists',
+  );
+  const copyMembership = (await memberRef.get()).data();
+  try {
+    await memberRef.update({ quizzes: { mode: 'selected', ids: [copy.quizId] }, version: copyMembership.version + 1 });
+    await expectFunctionError(() => invoke('duplicateQuiz', copyRequest), 'functions/permission-denied');
+  } finally {
+    await memberRef.set({ ...copyMembership, version: copyMembership.version + 2 });
+  }
+
+  const sourceAssetFixture = adminDb.doc(`quizzes/${createdQuizId}/slides/${savedThankYou.id}`);
+  await sourceAssetFixture.update({ backgroundImage: `quiz-asset:${createdQuizId}/synthetic-copy-owned` });
+  const assetCopyRequest = { ...copyRequest, requestId: 'editor-e2e-duplicate-owned', title: 'Neúplná kopie nesmí vzniknout' };
+  await expectFunctionError(() => invoke('duplicateQuiz', assetCopyRequest), 'functions/failed-precondition');
+  assert.equal((await adminDb.collection('quizzes').where('title', '==', assetCopyRequest.title).get()).empty, true);
+
+  await signOut(auth);
+  await signInWithEmailAndPassword(auth, 'moderator@example.test', 'LocalQuiz123!');
+  await expectFunctionError(() => invoke('duplicateQuiz', copyRequest), 'functions/permission-denied');
+
   globalThis.console.log(JSON.stringify({
     status: 'PASS', adminMutations: true, moderatorReadOnly: true, normalUserDenied: true,
     directWritesDenied: true, staleAndConcurrentWritesVerified: true,
@@ -614,6 +674,7 @@ async function run() {
     createQuizAuthorizationAndIdempotenceVerified: true, newQuizRoundQuestionSaveReloadVerified: true,
     newQuizConflictVerified: true, historicalSnapshotUntouched: true,
     thankYouOutsideRoundsAndBeforeClosingVerified: true,
+    wholeQuizCopyIsolationAndRetryVerified: true, unsupportedMediaCannotCreatePartialCopy: true,
   }, null, 2));
 }
 

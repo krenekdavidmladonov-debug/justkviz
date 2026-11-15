@@ -53,6 +53,38 @@ async function dragAt(page, source, target, fraction) {
   await handle(page, source).dragTo(destination, { targetPosition: { x: box.width / 2, y: box.height * fraction } });
 }
 const dragBefore = (page, source, target) => dragAt(page, source, target, 0.25);
+
+test('scoped quiz copy opens after the access grant remounts its dialog @duplicate-quiz', async ({ page }) => {
+  const f = await fixture(page);
+  try {
+    const { member } = await f.identity.call('getMyAccess', {});
+    const membershipRef = f.identity.db.doc('memberships/' + member.uid);
+    await membershipRef.update({ quizzes: { mode: 'selected', ids: [f.root.id] }, version: member.version + 1 });
+    await page.goto('/admin/quizzes/' + f.root.id);
+    await page.getByRole('button', { name: 'Duplikovat kvíz Společné ukládání' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Duplikovat kvíz' });
+    await expect(dialog).toBeVisible();
+    let submissions = 0;
+    await page.route('**/duplicateQuiz', async route => {
+      if (route.request().method() !== 'POST') { await route.continue(); return; }
+      submissions++;
+      const response = await route.fetch();
+      expect(response.ok()).toBe(true);
+      await dialog.waitFor({ state: 'detached' });
+      await route.fulfill({ response });
+    });
+    await dialog.getByRole('button', { name: 'Vytvořit kopii' }).click();
+    await expect(page).toHaveURL(/\/admin\/quizzes\/quiz_[a-f0-9]{64}\/edit$/u);
+    await openRounds(page);
+    await expect(page.locator('.outline-question')).toHaveCount(2);
+    const targetId = new URL(page.url()).pathname.split('/')[3];
+    const granted = (await membershipRef.get()).data();
+    expect([...granted.quizzes.ids].sort()).toEqual([f.root.id, targetId].sort());
+    expect((await f.root.get()).data().revision).toBe(0);
+    expect(submissions).toBe(1);
+  } finally { await f.identity.dispose(); }
+});
+
 test('drag in left outline changes order and rounds without leaving the editor', async ({ page }) => {
   const f = await fixture(page);
   try {

@@ -1,5 +1,6 @@
 import { validateQuestion, mapEditorSlide, directMediaKind, youtubeVideoId, parseQuizAsset, mergeStoredDesign, canHideInfoSlide, type ResultTemplates } from '@filmovy-kviz/quiz-domain';
 import { createHash } from 'node:crypto';
+import { DocumentReference } from 'firebase-admin/firestore';
 
 import { QuizEditorError } from './errors.js';
 import type {
@@ -41,15 +42,45 @@ export function assertRevision(data: Record<string, unknown>, expected: number):
   return current;
 }
 
+function creationDigest(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
 export function quizCreationIdentity(actorUid: string, requestId: string, title: string): {
   readonly quizId: string;
   readonly fingerprint: string;
 } {
-  const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
   return {
-    quizId: `quiz_${digest([actorUid, requestId])}`,
-    fingerprint: digest({ title }),
+    quizId: `quiz_${creationDigest([actorUid, requestId])}`,
+    fingerprint: creationDigest({ title }),
   };
+}
+
+export function quizDuplicationIdentity(
+  actorUid: string, requestId: string, sourceQuizId: string, expectedRevision: number, title: string,
+): ReturnType<typeof quizCreationIdentity> {
+  const intent = [actorUid, 'duplicateQuiz', requestId];
+  return {
+    quizId: `quiz_${creationDigest(intent)}`,
+    fingerprint: creationDigest([...intent, sourceQuizId, expectedRevision, title]),
+  };
+}
+
+/** Includes normalized fields, authoring defaults, legacy media and private Drive asset shapes. */
+export function hasQuizScopedMedia(value: unknown): boolean {
+  if (typeof value === 'string') {
+    const decodeEscapes = (text: string) => text.replace(/%([a-f0-9]{2})/giu, (_escape, byte: string) => String.fromCharCode(Number.parseInt(byte, 16)));
+    const reference = decodeEscapes(decodeEscapes(value));
+    return /(?:^|[=/?])(?:quiz-asset:|quiz-assets\/|quizzes\/[^/?]+\/mediaAssets\/)/iu.test(reference);
+  }
+  if (value instanceof DocumentReference) return hasQuizScopedMedia(value.path);
+  if (Array.isArray(value)) return value.some(hasQuizScopedMedia);
+  if (!isObject(value)) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  if (value.storageBackend === 'drive' || (typeof value.generation === 'string' && value.generation.startsWith('drive:'))
+    || (typeof value.quizId === 'string' && typeof value.assetId === 'string')) return true;
+  return Object.values(value).some(hasQuizScopedMedia);
 }
 
 export function isQuestionKind(kind: EditorSlideKind): boolean {

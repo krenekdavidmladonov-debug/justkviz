@@ -21,6 +21,7 @@ export {
   createQuiz,
   createQuizSlide,
   deleteQuizSlide,
+  duplicateQuiz,
   duplicateQuizSlide,
   duplicateQuizRound,
   moveQuizQuestionToRound,

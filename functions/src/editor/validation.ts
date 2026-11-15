@@ -147,6 +147,22 @@ export function requestedQuizCreation(data: unknown): { readonly title: string; 
   };
 }
 
+export function requestedQuizDuplication(data: unknown): {
+  readonly quizId: string;
+  readonly expectedRevision: number;
+  readonly title: string;
+  readonly requestId: string;
+} {
+  if (!isObject(data) || Object.keys(data).some(key => !['quizId', 'expectedRevision', 'title', 'requestId'].includes(key))) {
+    throw new QuizEditorError('invalid-argument', 'Quiz duplication request is invalid.');
+  }
+  return {
+    ...requestedQuizCreation({ title: data.title, requestId: data.requestId }),
+    quizId: requiredId(data, 'quizId'),
+    expectedRevision: expectedRevision(data),
+  };
+}
+
 function nullableNumber(value: unknown, field: string, maximum: number): number | null {
   if (value === null) return null;
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > maximum) {

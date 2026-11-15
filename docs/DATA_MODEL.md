@@ -52,6 +52,15 @@ Current required fields:
 
 The admin-only `createQuiz` workflow creates an empty private root with `schemaVersion: 1`, `description: ''`, `status: draft`, `revision: 0`, and all three counters at `0`; it does not create placeholder rounds, questions, slides, snapshots, or public projections. Its opaque quiz ID is deterministic for the authenticated admin UID plus client `requestId`. New roots also keep an immutable private `creationFingerprint` over the normalized title, allowing an identical retry to return the same root while rejecting reuse of that request ID for different content. Trusted timestamps and actor fields come from the Function.
 
+`duplicateQuiz` creates a separate private draft at revision 0 from an exact
+saved source revision. One Firestore transaction validates and copies the
+ordered slides, round/question documents, and authoring designs and templates.
+Child IDs remain scoped to the new root. The private creation fingerprint
+binds retries to the actor, source, revision, and normalized title. Events,
+sessions, registrations, and historical snapshots stay with their existing
+records. Sources referencing quiz-owned or private Drive media are rejected
+before the transaction creates a copy.
+
 V1-migrated drafts may additionally contain private `legacy: { source, metadata }`. Version-2 imports retain only explicitly allowlisted compatibility metadata and extend the same legacy object with source project/collection/ID and export/content fingerprints. It is never copied into a public projection. See tools/migration-v1/CLOUD_IMPORT.md.
 
 The existing `status` is an explicit organizational choice: metadata updates accept `draft` or `ready`, preserve it when omitted, and cannot restore `archived`. It is independent of content validation and grants no publication authority. Quiz readiness is intentionally not stored on this document. `PreflightResult` is derived from the current bounded private quiz model so it cannot become a stale duplicate truth such as `isQuizValid: true`.

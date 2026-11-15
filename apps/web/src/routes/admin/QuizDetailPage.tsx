@@ -12,6 +12,7 @@ import {
 import { getQuizDetail } from '../../features/quizzes/quizRepository';
 import type { QuizDetail } from '../../features/quizzes/types';
 import { QuizStatusControl } from '../../features/quizzes/QuizStatusControl';
+import { DuplicateQuizButton } from '../../features/quizzes/DuplicateQuizButton';
 import { LiveStartButton } from '../../features/live/LiveStartButton';
 
 export function QuizDetailPage() {
@@ -89,6 +90,7 @@ export function QuizDetailPage() {
           <LiveStartButton quizId={quiz.id} />
           <Link className="secondary-link" to={`/admin/quizzes/${encodeURIComponent(quiz.id)}/readiness`}>Zkontrolovat připravenost</Link>
           <Link className="secondary-link" to={`/admin/quizzes/${encodeURIComponent(quiz.id)}/edit`}>Otevřít editor</Link>
+          <DuplicateQuizButton quiz={quiz} />
         </div>
       </header>
 

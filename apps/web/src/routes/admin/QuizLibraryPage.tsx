@@ -10,6 +10,7 @@ import { QuizStatusControl } from '../../features/quizzes/QuizStatusControl';
 import { listQuizzes } from '../../features/quizzes/quizRepository';
 import type { QuizSummary } from '../../features/quizzes/types';
 import { QuizTrashDialog } from '../../features/quizzes/QuizTrashDialog';
+import { DuplicateQuizButton } from '../../features/quizzes/DuplicateQuizButton';
 import { quizTrashError, restoreQuiz, type QuizTrashResult } from '../../features/quizzes/quizTrashApi';
 
 function TrashIcon() {
@@ -135,6 +136,7 @@ export function QuizLibraryPage() {
                     {view === 'active' ? <>
                       <Link className="secondary-link" to={`/admin/quizzes/${quiz.id}`} aria-label={`Otevřít kvíz ${quiz.title}`}>Otevřít</Link>
                       {can('quiz.edit') && inScope(quiz) && <Link className="secondary-link" to={`/admin/quizzes/${quiz.id}/edit`} aria-label={`Upravit kvíz ${quiz.title}`}>Upravit</Link>}
+                      <DuplicateQuizButton quiz={quiz} />
                       {canDelete && inScope(quiz) && <button className="danger-button" aria-label={`Smazat kvíz ${quiz.title}`} onClick={() => { setNotice(null); setActionError(null); setDeleting(quiz); }}><TrashIcon /> Smazat</button>}
                     </> : canDelete && inScope(quiz) && <button className="secondary-button" disabled={restoring !== null} aria-label={`Obnovit kvíz ${quiz.title}`} onClick={() => void restore(quiz)}>{restoring === quiz.id ? 'Obnovuji…' : 'Obnovit'}</button>}
                     </div>

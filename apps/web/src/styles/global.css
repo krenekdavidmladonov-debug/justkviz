@@ -856,6 +856,7 @@ h1 { max-width: 900px; margin: 0; font-size: clamp(2.8rem, 6vw, 5.5rem); line-he
 .editor-dialog h2 { margin: 0; font-size: 1.5rem; }
 .editor-dialog p { color: var(--color-text-muted); line-height: 1.55; }
 .editor-dialog-actions { margin-top: var(--space-5); display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
+.quiz-duplicate-dialog { white-space: normal; }
 .editor-dialog-actions button { min-height: 44px; }
 .editor-dialog-actions.vertical-actions { display: grid; }
 

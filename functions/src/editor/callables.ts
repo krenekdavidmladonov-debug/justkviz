@@ -11,6 +11,7 @@ import {
 import { HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
 import { accessActor, authorize, securedOnCall, runAccessTransaction, grantCreatedResource, currentMembership } from '../access/authorization.js';
 import { preserveHiddenFields, protectPrivateMedia, protectSlideFields } from '../access/editor-fields.js';
+import { assertQuizActive } from '../quizzes/guards.js';
 
 import { QuizEditorError } from './errors.js';
 import {
@@ -22,6 +23,8 @@ import {
   isRoundKind,
   questionTypeForKind,
   quizCreationIdentity,
+  quizDuplicationIdentity,
+  hasQuizScopedMedia,
   quizRevision,
   sortedSlides,
   moveSlidesBefore,
@@ -40,6 +43,7 @@ import {
   requestedRoundRemovalMode,
   requestedRoundTitle,
   requestedQuizCreation,
+  requestedQuizDuplication,
   requestedSlide,
   requiredId,
   validateQuizMetadata,
@@ -50,6 +54,7 @@ if (getApps().length === 0) initializeApp();
 const db = getFirestore();
 const callableOptions = { region: 'europe-west1', cors: true } as const;
 const maximumSlideCount = 400;
+const maximumQuizWriteCount = 475;
 
 interface AdminActor {
   readonly uid: string;
@@ -92,7 +97,7 @@ async function loadQuizState(
   if (!quizSnapshot.exists) throw new QuizEditorError('not-found', 'Quiz was not found.');
   const quiz = snapshotData(quizSnapshot, 'Quiz');
   const currentRevision = assertRevision(quiz, revision);
-  const slideSnapshot = await transaction.get(quizRef.collection('slides').orderBy('position'));
+  const slideSnapshot = await transaction.get(quizRef.collection('slides').orderBy('position').limit(maximumSlideCount + 1));
   const slides = sortedSlides(slideSnapshot.docs.map((document) => ({
     id: document.id,
     data: snapshotData(document, 'Quiz slide'),
@@ -129,6 +134,16 @@ function stateCounts(slides: readonly StoredEditorSlide[]) {
     slideCount: slides.length,
     questionCount: slides.filter((slide) => slide.data.isQuestion === true).length,
     roundCount: roundIds.size,
+  };
+}
+
+function currentQuizResponse(quizId: string, quiz: Record<string, unknown>): EditorQuizMutationResponse {
+  return {
+    quizId,
+    revision: quizRevision(quiz),
+    slideCount: requiredStoredCount(quiz, 'slideCount'),
+    questionCount: requiredStoredCount(quiz, 'questionCount'),
+    roundCount: requiredStoredCount(quiz, 'roundCount'),
   };
 }
 
@@ -281,7 +296,7 @@ function writeQuizState(
   const derivedRoundIds = new Set(slides.map(slideRoundId).filter((value): value is string => value !== undefined));
   const derivedQuestions = slides.filter((slide) => slide.data.isQuestion === true && slideRoundId(slide) !== undefined).length;
   const estimatedWrites = slides.length + derivedQuestions + derivedRoundIds.size + 3;
-  if (estimatedWrites > 475) {
+  if (estimatedWrites > maximumQuizWriteCount) {
     throw new QuizEditorError('failed-precondition', 'Quiz is too large for one safe editor transaction.');
   }
   const now = Timestamp.now();
@@ -330,13 +345,7 @@ export const createQuiz = securedOnCall('createQuiz', callableOptions, async (re
           throw new QuizEditorError('already-exists', 'requestId was already used for another quiz creation.');
         }
         await authorize(request.auth, ['quiz.read', 'quiz.create'], { kind: 'quiz', id: identity.quizId }, transaction);
-        return {
-          quizId: identity.quizId,
-          revision: quizRevision(quiz),
-          slideCount: requiredStoredCount(quiz, 'slideCount'),
-          questionCount: requiredStoredCount(quiz, 'questionCount'),
-          roundCount: requiredStoredCount(quiz, 'roundCount'),
-        };
+        return currentQuizResponse(identity.quizId, quiz);
       }
       const now = Timestamp.now();
       grantCreatedResource(transaction, 'quiz', identity.quizId);
@@ -362,6 +371,101 @@ export const createQuiz = securedOnCall('createQuiz', callableOptions, async (re
         questionCount: 0,
         roundCount: 0,
       };
+    });
+  } catch (error) {
+    return mapError(error);
+  }
+});
+
+export const duplicateQuiz = securedOnCall('duplicateQuiz', callableOptions, async (request): Promise<EditorQuizMutationResponse> => {
+  try {
+    const actor = authorizeEditorAdmin(request.auth);
+    const input = requestedQuizDuplication(request.data);
+    const identity = quizDuplicationIdentity(actor.uid, input.requestId, input.quizId, input.expectedRevision, input.title);
+    const target = db.collection('quizzes').doc(identity.quizId);
+
+    return await runAccessTransaction(db, async (transaction) => {
+      const existing = await transaction.get(target);
+      if (existing.exists) {
+        const quiz = snapshotData(existing, 'Quiz');
+        if (quiz.createdBy !== actor.uid || quiz.creationFingerprint !== identity.fingerprint) {
+          throw new QuizEditorError('already-exists', 'requestId was already used for another quiz duplication.');
+        }
+        await authorize(request.auth, ['quiz.read', 'quiz.edit'], { kind: 'quiz', id: identity.quizId }, transaction);
+        assertQuizActive(quiz);
+        return currentQuizResponse(identity.quizId, quiz);
+      }
+
+      const source = await loadQuizState(transaction, input.quizId, input.expectedRevision);
+      const counts = stateCounts(source.slides);
+      if (typeof source.quiz.description !== 'string' || counts.roundCount !== requiredStoredCount(source.quiz, 'roundCount')
+        || counts.questionCount !== requiredStoredCount(source.quiz, 'questionCount')) {
+        throw new QuizEditorError('failed-precondition', 'Quiz content does not match its stored metadata.');
+      }
+      const metadata = Object.fromEntries(['description', 'defaultAppearance', 'defaultDesign', 'resultTemplates', 'printTemplate']
+        .filter(key => Object.hasOwn(source.quiz, key)).map(key => [key, source.quiz[key]]));
+      const roundSnapshot = await transaction.get(source.quizRef.collection('rounds').limit(maximumSlideCount + 1));
+      if (roundSnapshot.size !== counts.roundCount) {
+        throw new QuizEditorError('failed-precondition', 'Quiz roundCount does not match its stored rounds.');
+      }
+
+      // Child IDs are local to the new root, so references between slides and
+      // their derived round/question records continue to point into the copy.
+      const roundIds = new Set(roundSnapshot.docs.map(round => round.id));
+      const questionIds = new Map<string, Set<string>>();
+      for (const slide of source.slides) {
+        const roundId = slideRoundId(slide);
+        if (roundId === undefined) continue;
+        if (!roundIds.has(roundId)) throw new QuizEditorError('failed-precondition', 'Quiz slide does not match a stored round.');
+        if (slide.data.isQuestion !== true) continue;
+        const group = questionIds.get(roundId) ?? new Set<string>();
+        group.add(slide.id);
+        questionIds.set(roundId, group);
+      }
+      const linkedQuestionCount = [...questionIds.values()].reduce((total, group) => total + group.size, 0);
+      if (counts.slideCount + counts.roundCount + linkedQuestionCount + 3 > maximumQuizWriteCount) {
+        throw new HttpsError('resource-exhausted', 'Kvíz je příliš velký pro vytvoření jedné úplné kopie.');
+      }
+
+      const rounds = await Promise.all(roundSnapshot.docs.map(async (round) => {
+        const data = snapshotData(round, 'Quiz round');
+        const knownQuestions = questionIds.get(round.id);
+        const count = knownQuestions?.size ?? 0;
+        const questions = await transaction.get(round.ref.collection('questions').limit(count + 1));
+        if (questions.size !== count || questions.docs.some(question => !knownQuestions?.has(question.id))) {
+          throw new QuizEditorError('failed-precondition', 'Quiz round questions do not match its stored slides.');
+        }
+        return {
+          id: round.id, data,
+          questions: questions.docs.map(question => ({ id: question.id, data: snapshotData(question, 'Quiz question') })),
+        };
+      }));
+      if (hasQuizScopedMedia(metadata) || source.slides.some(slide => hasQuizScopedMedia(slide.data)) || hasQuizScopedMedia(rounds)) {
+        throw new HttpsError('failed-precondition', 'Kvíz obsahuje nahraná média, která zatím nelze bezpečně zkopírovat.', 'quiz-copy-media-unsupported');
+      }
+
+      const now = Timestamp.now();
+      grantCreatedResource(transaction, 'quiz', target.id);
+      transaction.create(target, {
+        ...metadata,
+        ...counts,
+        schemaVersion: 1,
+        title: input.title,
+        status: 'draft',
+        revision: 0,
+        creationFingerprint: identity.fingerprint,
+        createdAt: now,
+        updatedAt: now,
+        createdBy: actor.uid,
+        updatedBy: actor.uid,
+      });
+      for (const slide of source.slides) transaction.create(target.collection('slides').doc(slide.id), slide.data);
+      for (const round of rounds) {
+        const roundRef = target.collection('rounds').doc(round.id);
+        transaction.create(roundRef, round.data);
+        for (const question of round.questions) transaction.create(roundRef.collection('questions').doc(question.id), question.data);
+      }
+      return { quizId: target.id, revision: 0, ...counts };
     });
   } catch (error) {
     return mapError(error);

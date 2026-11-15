@@ -43,6 +43,29 @@ async function selectOnlyQuestion(page: Page): Promise<ReturnType<Page['getByLab
 
 test.describe.configure({ mode: 'serial' });
 
+test('creates an independent whole-quiz copy from the detail page @seeded @duplicate-quiz', async ({ browser }) => {
+  const context = await browser.newContext();
+  await restrictToLocalhost(context);
+  const page = await context.newPage();
+  try {
+    await login(page);
+    const original = '/admin/quizzes/editor-core-imported-e2e';
+    await page.goto(original);
+    const initialTitle = await page.locator('.quiz-detail h1').innerText();
+    await page.getByRole('button', { name: `Duplikovat kvíz ${initialTitle}`, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Duplikovat kvíz' });
+    await expect(dialog.getByLabel('Název kopie')).toHaveValue(`${initialTitle} (kopie)`);
+    await dialog.getByLabel('Název kopie').fill('Browserová kopie celého kvízu');
+    await waitForCallable(page, 'duplicateQuiz', () => dialog.getByRole('button', { name: 'Vytvořit kopii' }).click());
+    await expect(page).toHaveURL(/\/admin\/quizzes\/quiz_[a-f0-9]{64}\/edit$/u);
+    await expect(page.getByLabel('Název kvízu *')).toHaveValue('Browserová kopie celého kvízu');
+    await page.goto(original);
+    await expect(page.locator('.quiz-detail h1')).toHaveText(initialTitle);
+  } finally {
+    await context.close();
+  }
+});
+
 test('empty library exposes the new-quiz CTA @empty-library', async ({ browser }) => {
   const context = await browser.newContext();
   await restrictToLocalhost(context);

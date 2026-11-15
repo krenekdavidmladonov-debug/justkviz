@@ -75,6 +75,13 @@ See [SNAPSHOT_DRIVE_CLIPS.md](SNAPSHOT_DRIVE_CLIPS.md).
 
 Quiz trash/restore requires current `quiz.read` + `quiz.delete` and quiz scope inside the transaction. Trashed sources cannot be edited or newly used; immutable event copies and retained media remain readable through their existing permissions. The library trash filter is not a new content confidentiality boundary. See [QUIZ_TRASH.md](QUIZ_TRASH.md).
 
+Whole-quiz duplication checks source scope and full quiz export, answer and
+note read permissions through the current membership. The same transaction
+checks quiz creation and editing permissions, including writes to answers,
+notes and media attachments, and grants access only to the new draft. A
+replayed request rechecks source authority and access to the destination. The
+operation sends only the destination ID and counters to the client.
+
 The current policy is defined in [PERSONAL_ACCESS.md](PERSONAL_ACCESS.md) and the shared permission module. Firebase Auth verifies identity; current membership, permissions and resource scope authorize each operation. Role labels are editable presets. Legacy custom claims are preserved but ignored as authority.
 
 Every legacy staff callable uses the explicit fail-closed policy wrapper. Permission and scope are reread inside each content transaction, so revocation conflicts with delayed saves. HTTP media and print gateways check the same current membership. Storage grants bind member version, quiz scope, MIME, size and expiry. No browser writes membership, content, snapshots or audit directly.

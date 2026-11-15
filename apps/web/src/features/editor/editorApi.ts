@@ -53,6 +53,9 @@ async function invoke(name: string, data: Record<string, unknown>): Promise<Edit
 export const createQuiz = (title: string, requestId: string) => (
   invoke('createQuiz', { title, requestId })
 );
+export const duplicateQuiz = async (quizId: string, expectedRevision: number, title: string, requestId: string) => (
+  (await callable('duplicateQuiz')({ quizId, expectedRevision, title, requestId })).data
+);
 export const updateQuizMetadata = (quizId: string, revision: number, title: string, description: string, defaultAppearance?: EditorAppearance, defaultDesign?: SlideDesign, resultTemplates?: ResultTemplates, printTemplate?: PrintTemplate, status?: 'draft' | 'ready') => (
   invoke('updateQuizMetadata', { quizId, expectedRevision: revision, quiz: { title, description, ...(defaultAppearance === undefined ? {} : { defaultAppearance }), ...(defaultDesign === undefined ? {} : { defaultDesign }), ...(resultTemplates === undefined ? {} : { resultTemplates }), ...(printTemplate === undefined ? {} : { printTemplate }), ...(status === undefined ? {} : { status }) } })
 );

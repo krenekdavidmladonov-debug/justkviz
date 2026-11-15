@@ -5,6 +5,7 @@ import { QuizEditorError } from '../functions/src/editor/errors';
 import {
   applyKnownSlideUpdate,
   assertRevision,
+  hasQuizScopedMedia,
   mergeEditorMedia,
   quizCreationIdentity,
   sortedSlides,
@@ -36,6 +37,13 @@ function slideInput(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+test('whole-quiz copying rejects nested private asset references including escaped transport URLs', () => {
+  expect(hasQuizScopedMedia({ resultTemplates: { final: { design: { logoImage: 'quiz-asset:source/media' } } } })).toBe(true);
+  expect(hasQuizScopedMedia({ media: [{ generation: 'drive:sample', storageBackend: 'drive' }] })).toBe(true);
+  expect(hasQuizScopedMedia('https://example.test/media?ref=quiz%252Dasset%253Asource%252Fmedia')).toBe(true);
+  expect(hasQuizScopedMedia({ media: ['https://www.youtube.com/watch?v=synthetic01', 'https://example.test/images/logo.png'] })).toBe(false);
+});
 
 describe('organizational quiz status', () => {
   test('accepts explicit draft/ready independently of content review and preserves omission', () => {
