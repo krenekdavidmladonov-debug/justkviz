@@ -27,11 +27,44 @@ describe('shared viewer appearance', () => {
     const html = renderToStaticMarkup(<SlideRenderer quizTitle="Večer ve městě" slide={{ ...slide, kind, design: { fontFamily: 'serif', fontScale: 1.2, textAlign: 'center', layout: 'centered', accentColor: '#00aabb' } }} />);
     expect(html).toContain(slide.title);
     if (kind !== 'recap') expect(html).toContain(slide.text);
-    expect(html).toContain('layout-centered');
-    expect(html).toContain('align-center');
+    const fixedLayout = ['image', 'audio', 'video'].includes(kind) ? 'split' : kind === 'question' ? 'classic' : undefined;
+    expect(html).toContain(fixedLayout ? 'layout-' + fixedLayout : 'layout-centered');
+    expect(html).toContain(fixedLayout ? 'align-left' : 'align-center');
     expect(html).toContain('--slide-scale:1.2');
     expect(html).toContain('--slide-gold:#00aabb');
     expect(html).not.toContain('SPRÁVNÁ ODPOVĚĎ');
+  });
+
+  test('picture questions retain copy on the left and their uncut picture on the right through explicit reveal', () => {
+    const picture = { ...slide, kind: 'image', questionImage: 'http://127.0.0.1:5199/photo.jpg', imageLayout: 'stacked',
+      design: { layout: 'image-first', textAlign: 'right', textWidth: 70, mediaFit: 'cover' } as const,
+      answerImage: 'http://127.0.0.1:5199/private-answer.png' };
+    const question = renderToStaticMarkup(<SlideRenderer quizTitle="Večer" slide={picture} />);
+    const reveal = renderToStaticMarkup(<SlideRenderer quizTitle="Večer" mode="recap" slide={{ ...picture, revealedAnswer: 'Brno' }} />);
+    const preview = renderToStaticMarkup(<SlidePreview quizTitle="Večer" slide={{ ...picture, correctAnswer: 'Brno' }} showAnswer />);
+    for (const html of [question, reveal, preview]) {
+      expect(html).toContain('layout-split align-left');
+      expect(html).toContain('fixed-photo-question');
+      expect(html).toContain('--slide-media-fit:contain');
+      expect(html.indexOf('fixed-photo-copy')).toBeLessThan(html.indexOf('question-image-frame'));
+      expect(html.indexOf('slide-options')).toBeLessThan(html.indexOf('question-image-frame'));
+    }
+    expect(question).not.toContain('private-answer.png');
+    expect(reveal).toContain('private-answer.png');
+    expect(preview).toContain('private-answer.png');
+  });
+
+  test.each(['info', 'image'])('a standalone %s photo gets the full canvas without authoring chrome', kind => {
+    const photo = 'http://127.0.0.1:5199/photo.png';
+    const html = renderToStaticMarkup(<SlideRenderer quizTitle="Večer" slide={{ kind, title: ' ', text: '', options: [], media: [],
+      ...(kind === 'info' ? { backgroundImage: photo } : { questionImage: photo }),
+      design: { layout: 'centered', mediaFit: 'cover' },
+    }} />);
+    expect(html).toContain('layout-photo-only');
+    expect(html).toContain('full-slide-photo');
+    expect(html).toContain('Fotografie na snímku');
+    expect(html).not.toContain('slide-brand');
+    expect(html).not.toContain('slide-background-overlay');
   });
 
   test.each(['question', 'intro'])('number, round and logo controls apply to %s without modifying content', kind => {

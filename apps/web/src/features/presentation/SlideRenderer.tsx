@@ -2,7 +2,7 @@ import { Brand } from '../../ui/Brand';
 import { parseQuizAsset } from '@filmovy-kviz/quiz-domain';
 import { AssetImage } from '../media/AssetImage';
 import type { ImageTiming, LocalMediaTiming } from './mediaTiming';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { productConfig } from '../../config/product';
 import { buildSlideRenderModel, defaultRules, isSafeHttpUrl, projectorMediaPlan, recapAnswer } from './model';
@@ -61,10 +61,11 @@ function ScheduleItems({ items }: { readonly items: readonly string[] }) {
   );
 }
 
-function QuestionImage({ source, overlay, sessionId, ...diagnostic }: {
+function QuestionImage({ source, sessionId, fullSlide = false, mediaRole = 'question-image', ...diagnostic }: {
   readonly source: string;
-  readonly overlay: number;
   readonly sessionId?: string | undefined;
+  readonly fullSlide?: boolean;
+  readonly mediaRole?: 'question-image' | 'background-image';
   readonly onDiagnostic?: ((reason: MediaDiagnosticReason) => void) | undefined;
   readonly onDiagnosticResolved?: (() => void) | undefined;
   readonly onTiming?: ((stage: ImageTiming) => void) | undefined;
@@ -72,8 +73,7 @@ function QuestionImage({ source, overlay, sessionId, ...diagnostic }: {
 }) {
   return (
     <div className="question-image-frame">
-      <AssetImage source={source} alt="Obrázek k otázce" sessionId={sessionId} mediaRole="question-image" {...diagnostic} />
-      <span className="question-image-overlay" style={{ opacity: overlay / 100 }} aria-hidden="true" />
+      <AssetImage source={source} alt={fullSlide ? 'Fotografie na snímku' : 'Obrázek k otázce'} sessionId={sessionId} mediaRole={mediaRole} {...diagnostic} />
     </div>
   );
 }
@@ -159,11 +159,47 @@ export function SlideRenderer({
   const showAnswer = model.renderMode === 'recap' && model.revealedAnswer !== undefined;
   const displayedAnswer = showAnswer ? recapAnswer(model) : undefined;
   const visibleMode = model.renderMode === 'editorPreview' ? 'editorPreview' : model.renderMode;
+  const fixedQuestion = model.isQuestionLike && ['question', 'recap', 'editorPreview'].includes(visibleMode);
+  const fixedPhotoQuestion = fixedQuestion && model.contentKind === 'image' && questionImage !== undefined;
+  const hasVisibleCopy = Boolean(model.title.trim() || model.text.trim() || model.options.some(option => option.trim()));
+  const standaloneBackground = model.contentKind === 'info' && model.backgroundImage
+    && (isSafeHttpUrl(model.backgroundImage) || parseQuizAsset(model.backgroundImage)) ? model.backgroundImage : undefined;
+  const standalonePhoto = !hasVisibleCopy && !showAnswer && visibleMode !== 'recap'
+    ? (fixedPhotoQuestion ? questionImage : standaloneBackground) : undefined;
+  const standaloneRole = fixedPhotoQuestion ? 'question-image' : 'background-image';
+  const photoQuestion = fixedPhotoQuestion && !standalonePhoto;
+  const photoCopy = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const column = photoCopy.current;
+    if (!photoQuestion || !column) return;
+    function fitText(element: HTMLDivElement) {
+      for (const scale of [1, .92, .84, .76, .68, .6]) {
+        element.style.setProperty('--photo-fit', String(scale));
+        if (element.scrollHeight <= element.clientHeight + 1) break;
+      }
+    }
+    const fit = () => fitText(column);
+    fit();
+    const resize = new ResizeObserver(fit);
+    resize.observe(column);
+    column.addEventListener('load', fit, true);
+    document.fonts.addEventListener('loadingdone', fit);
+    return () => {
+      resize.disconnect();
+      column.removeEventListener('load', fit, true);
+      document.fonts.removeEventListener('loadingdone', fit);
+    };
+  }, [photoQuestion, model, compact]);
+  const design = fixedQuestion || standalonePhoto
+    ? { ...model.design, textAlign: 'left' as const, textWidth: 45, mediaFit: 'contain' as const }
+    : model.design;
   const questionHeader = model.design.showQuestionNumber === false ? null
     : <QuestionHeader number={model.questionNumber} count={model.questionCount} legacyPl={model.isLegacyPl} />;
-  const layout = model.design.layout ?? (slide.imageLayout === 'full' ? 'image-first' : model.contentKind === 'image' || model.contentKind === 'audio' ? 'split' : 'classic');
+  const splitByKind = model.contentKind === 'image' || model.contentKind === 'audio' || model.contentKind === 'video';
+  const layout = standalonePhoto ? 'photo-only' : fixedQuestion ? (splitByKind ? 'split' : 'classic')
+    : (model.design.layout ?? (slide.imageLayout === 'full' ? 'image-first' : splitByKind ? 'split' : 'classic'));
   const textLength = model.title.length + model.text.length + model.options.join('').length;
-  const density = textLength > 650 || model.options.length > 6 ? 'dense' : textLength > 350 ? 'medium' : 'normal';
+  const density = textLength > 650 || model.options.length >= (photoQuestion ? 6 : 7) ? 'dense' : textLength > 350 ? 'medium' : 'normal';
   const finish = (generation: number) => {
     if (generation !== mediaGeneration) return;
     setLocallyFinishedGeneration(generation);
@@ -234,14 +270,26 @@ export function SlideRenderer({
         {recap ? answerContent : model.contentKind === 'audio' ? vinyl : null}
       </div>
     );
+  } else if (standalonePhoto) {
+    content = <div className="slide-layout full-slide-photo">
+      <QuestionImage source={standalonePhoto} fullSlide sessionId={mediaSessionId}
+        mediaRole={standaloneRole} {...imageDiagnostic(standaloneRole)} />
+    </div>;
+  } else if (photoQuestion) {
+    content = <div className="slide-layout fixed-photo-grid">
+      {questionHeader}
+      <div className="fixed-photo-copy" ref={photoCopy}>
+        <QuestionCopy title={model.title} text={model.text} />
+        <Options options={model.options} />
+        {answerContent}
+      </div>
+      <QuestionImage source={questionImage} sessionId={mediaSessionId} {...imageDiagnostic('question-image')} />
+    </div>;
   } else if (model.renderMode === 'recap') {
     content = (
       <div className={`slide-layout recap-layout recap-${model.contentKind}`}>
         {questionHeader}
         <QuestionCopy title={model.title} text={model.text} />
-        {model.contentKind === 'image' && questionImage && (
-          <QuestionImage sessionId={mediaSessionId} source={questionImage} overlay={0} {...imageDiagnostic('question-image')} />
-        )}
         {answerContent}
       </div>
     );
@@ -269,22 +317,21 @@ export function SlideRenderer({
         {model.isQuestionLike && questionHeader}
         {!model.isQuestionLike && <p className="slide-kicker">{model.contentKind === 'info' ? 'DNEŠNÍ VEČER' : 'JUSTKVÍZ'}</p>}
         <QuestionCopy title={model.title || (model.contentKind === 'legacy' ? 'Legacy slide' : '')} text={model.text} />
-        {model.contentKind === 'image' && questionImage && (
-          <QuestionImage sessionId={mediaSessionId} source={questionImage} overlay={0} {...imageDiagnostic('question-image')} />
-        )}
         <Options options={model.contentKind === 'free' ? [] : model.options} />
       </div>
     );
   }
 
   return (
-    <article data-media-playback-mode={model.mediaPlaybackMode} style={slideDesignStyle(model.design)} className={`slide-renderer mode-${visibleMode} kind-${model.contentKind} layout-${layout} align-${model.design.textAlign ?? 'left'} density-${density}${model.design.backgroundColor ? ' has-custom-background' : ''} image-layout-${slide.imageLayout ?? 'split'}${compact ? ' is-compact' : ''}`}>
-      <div className="slide-background" aria-hidden="true">{model.backgroundImage && <AssetImage source={model.backgroundImage} alt="" sessionId={mediaSessionId} mediaRole="background-image" {...imageDiagnostic('background-image')} />}</div>
-      <div className="slide-background-overlay" style={{ opacity: model.backgroundOverlay / 100 }} aria-hidden="true" />
+    <article data-media-playback-mode={model.mediaPlaybackMode} style={slideDesignStyle(design)} className={`slide-renderer mode-${visibleMode} kind-${model.contentKind} layout-${layout} align-${design.textAlign ?? 'left'} density-${density}${design.backgroundColor ? ' has-custom-background' : ''} image-layout-${fixedQuestion ? 'split' : slide.imageLayout ?? 'split'}${photoQuestion ? ' fixed-photo-question' : ''}${compact ? ' is-compact' : ''}`}>
+      {!standalonePhoto && <>
+        <div className="slide-background" aria-hidden="true">{model.backgroundImage && <AssetImage source={model.backgroundImage} alt="" sessionId={mediaSessionId} mediaRole="background-image" {...imageDiagnostic('background-image')} />}</div>
+        <div className="slide-background-overlay" style={{ opacity: model.backgroundOverlay / 100 }} aria-hidden="true" />
+      </>}
       <div className="slide-safe-area">
-        <header className="slide-brand"><span>{quizTitle}</span>{model.design.showLogo !== false && (model.design.logoImage ? <span className="slide-custom-logo"><AssetImage source={model.design.logoImage} alt="Logo pořadatele" sessionId={mediaSessionId} mediaRole="logo-image" {...imageDiagnostic('logo-image')} /></span> : <Brand />)}</header>
+        {!standalonePhoto && <header className="slide-brand"><span>{quizTitle}</span>{design.showLogo !== false && (design.logoImage ? <span className="slide-custom-logo"><AssetImage source={design.logoImage} alt="Logo pořadatele" sessionId={mediaSessionId} mediaRole="logo-image" {...imageDiagnostic('logo-image')} /></span> : <Brand />)}</header>}
         {content}
-        {model.design.showRoundTitle !== false && model.roundTitle && model.isQuestionLike && <footer className="slide-round-title">{model.roundTitle}</footer>}
+        {!standalonePhoto && design.showRoundTitle !== false && model.roundTitle && model.isQuestionLike && <footer className="slide-round-title">{model.roundTitle}</footer>}
         {showMediaError && <p className="projector-media-error" role="status">Médium se nepodařilo přehrát. Moderátor může použít Pustit znovu nebo pokračovat otázkou.</p>}
       </div>
     </article>

@@ -23,6 +23,20 @@ test('visual controls expose inherited values and local overrides without copyin
   expect(onChange).not.toHaveBeenCalled();
 });
 
+test('question layout is locked at quiz, round, question and answer scopes while colors stay editable', () => {
+  for (const scope of ['quiz', 'round', 'slide', 'answer'] as const) {
+    const onChange = vi.fn();
+    const html = renderToStaticMarkup(<SlideDesignFields scope={scope} lockLayout
+      value={{ layout: 'image-first', textWidth: 70, mediaFit: 'cover', accentColor: '#aabbcc' }} disabled={false} onChange={onChange} />);
+    expect(html).toContain('Promítané otázky používají jednotné rozložení.');
+    expect(html).toContain('Barva zvýraznění');
+    expect(html).toContain('Typografie a doplňky');
+    for (const control of ['Prostor pro text', 'Zobrazení obrázku', 'Obraz v hlavní roli', 'Vyplnit prostor ořezem', 'Zarovnání', 'Rozložení ↩'])
+      expect(html).not.toContain(control);
+    expect(onChange).not.toHaveBeenCalled();
+  }
+});
+
 test('contrast warning handles shorthand colors and never blocks editing', () => {
   expect(designContrastWarning({ backgroundColor: '#fff', textColor: '#fff' })).toBe(true);
   expect(designContrastWarning({ backgroundColor: '#000', textColor: '#fff' })).toBe(false);

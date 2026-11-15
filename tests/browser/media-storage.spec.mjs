@@ -124,6 +124,11 @@ test('synthetic owned image/audio upload, editor preview, immutable projector im
     expect(await page.evaluate(()=>window.__FILMOVY_KVIZ_MEDIA_DEBUG__.peakPlayers)).toBe(1);
 
     phase='snapshot/projector';console.log('Media browser: editor audio completed');
+    const quiz = (await f.quizRef.get()).data();
+    await f.admin.call('updateQuizMetadata', { quizId: f.quizId, expectedRevision: quiz.revision, quiz: {
+      title: quiz.title, description: quiz.description,
+      defaultDesign: { layout: 'image-first', textAlign: 'center', textWidth: 70, mediaFit: 'cover' },
+    } });
     await f.lock();const sessionId=await f.live();
     await new Promise((resolve,reject)=>{unsubscribe=f.db.doc('sessions/'+sessionId).onSnapshot(snapshot=>{playbackStates.push(snapshot.data()?.mediaPlaybackState);resolve();},reject);});
     await f.navigate(sessionId,3);
@@ -134,8 +139,24 @@ test('synthetic owned image/audio upload, editor preview, immutable projector im
     const projected=projector.locator('.question-image-frame img');
     await expect.poll(()=>projected.evaluate(img=>img.naturalWidth)).toBe(8);
     expect(await projected.evaluate(img=>getComputedStyle(img).objectFit)).toBe('contain');
-
+    await expect(projector.locator('.slide-renderer')).toHaveClass(/fixed-photo-question/u);
+    const photoGeometry = () => projector.locator('.fixed-photo-grid').evaluate(node => {
+      const frame = node.querySelector('.question-image-frame'), copy = node.querySelector('.fixed-photo-copy');
+      const answer = copy.querySelector('.slide-answer');
+      return { photoX: frame.getBoundingClientRect().x, copyRight: copy.getBoundingClientRect().right,
+        transparent: getComputedStyle(frame).backgroundColor, answerLeft: answer ? answer.getBoundingClientRect().right <= frame.getBoundingClientRect().x : null };
+    });
+    const beforeReveal = await photoGeometry();
+    expect(beforeReveal.photoX).toBeGreaterThan(beforeReveal.copyRight);
+    expect(beforeReveal.transparent).toBe('rgba(0, 0, 0, 0)');
     await expect(projector.getByText('Soukromá odpověď',{exact:true})).toHaveCount(0);
+    await page.getByRole('button', { name: 'Odhalit odpověď', exact: true }).click();
+    await expect(projector.getByText('Soukromá odpověď', { exact: true })).toBeVisible();
+    const afterReveal = await photoGeometry();
+    expect(afterReveal.answerLeft).toBe(true);
+    expect(afterReveal.photoX).toBe(beforeReveal.photoX);
+    await page.getByRole('button', { name: 'Skrýt odpověď', exact: true }).click();
+    await expect(projector.getByText('Soukromá odpověď', { exact: true })).toHaveCount(0);
     phase='moderator audio';
     await f.navigate(sessionId,4);await expect(projector.getByText('Syntetické audio',{exact:true})).toBeVisible();
     await expect(projector.locator('audio,iframe')).toHaveCount(0);
