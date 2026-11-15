@@ -68,7 +68,7 @@ export interface EditorSlideInput {
   readonly backgroundImage: string;
   readonly questionImage: string;
   readonly answerImage: string;
-  readonly mediaSource: string;
+  readonly mediaSource?: string;
   readonly backgroundOverlay: number | null;
   readonly clipStartSeconds: number | null;
   readonly clipEndSeconds: number | null;

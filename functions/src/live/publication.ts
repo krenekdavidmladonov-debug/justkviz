@@ -103,7 +103,7 @@ function renderMode(slide?: PrivateSlide, recap = false): LiveRenderMode {
 
 function explicitMediaSource(value: unknown): string | undefined {
   return isObject(value)
-    ? publicText(value.source) ?? publicText(value.value)
+    ? publicText(value.source) ?? publicText(value.value) ?? publicText(value.url)
     : publicText(value);
 }
 

@@ -204,7 +204,7 @@ function validateNormalizedImage(value: unknown, field: string): string {
 }
 
 function validateNormalizedMediaSource(value: unknown): string {
-  const source = value === undefined ? '' : boundedString(value, 'mediaSource', 4_096);
+  const source = boundedString(value, 'mediaSource', 4_096);
   if (source === '' || parseQuizAsset(source) || /^[\w-]{11}$/u.test(source)) return source;
   try {
     const parsed = new URL(source);
@@ -308,7 +308,7 @@ export function validateSlideInput(value: unknown): EditorSlideInput {
     backgroundImage: validateNormalizedImage(value.backgroundImage, 'backgroundImage'),
     questionImage: validateNormalizedImage(value.questionImage, 'questionImage'),
     answerImage: validateNormalizedImage(value.answerImage, 'answerImage'),
-    mediaSource: validateNormalizedMediaSource(value.mediaSource),
+    ...(value.mediaSource === undefined ? {} : { mediaSource: validateNormalizedMediaSource(value.mediaSource) }),
     backgroundOverlay: value.backgroundOverlay === undefined
       ? presentation.backgroundOverlay
       : nullableNumber(value.backgroundOverlay, 'backgroundOverlay', 100),

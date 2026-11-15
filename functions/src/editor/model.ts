@@ -195,7 +195,6 @@ function preserveRedactedFields(current: Record<string, unknown>, input: EditorS
   for (const key of ['title', 'text'] as const) {
     if (Object.hasOwn(current, key) && typeof current[key] !== 'string' && input[key] === '') updated[key] = current[key];
   }
-  if (Array.isArray(current.mediaSource) && input.mediaSource === '') updated.mediaSource = current.mediaSource;
   if (Array.isArray(current.options) && current.options.length === input.options.length) {
     const stored: unknown[] = current.options;
     const merged = updated.options as unknown[];
@@ -235,17 +234,19 @@ export function applyKnownSlideUpdate(
   for (const field of ['backgroundImage', 'questionImage', 'answerImage', 'mediaSource'] as const) {
     // Equal mapped values mean no edit, retaining absent, malformed and legacy fields.
     // Explicit empty replacement shadows the legacy role without deleting its history.
-    if (mapped[field] !== input[field]) result[field] = input[field];
+    if (input[field] !== undefined && mapped[field] !== input[field]) result[field] = input[field];
   }
   for (const field of ['authoringStatus','answerMode','imageLayout','answerExplanation'] as const) if (input[field] !== undefined) result[field] = input[field];
   if (result.authoringStatus !== undefined && result.isQuestion !== true) throw new QuizEditorError('invalid-argument', 'Only questions can be drafts.');
   const timed = ['audio', 'music', 'video', 'youtube'].includes(input.kind);
-  if (timed && input.mediaSource !== '' && mapped.mediaSource !== input.mediaSource && youtubeVideoId(input.mediaSource) === undefined
-      && directMediaKind(input.mediaSource) !== (['audio', 'music'].includes(input.kind) ? 'audio' : 'video')
-      && !parseQuizAsset(input.mediaSource)) {
+  const source = input.mediaSource;
+  const newTimedSource = timed && source !== undefined && source !== '' && mapped.mediaSource !== source;
+  if (newTimedSource && youtubeVideoId(source) === undefined
+      && directMediaKind(source) !== (['audio', 'music'].includes(input.kind) ? 'audio' : 'video')
+      && !parseQuizAsset(source)) {
     throw new QuizEditorError('invalid-argument', 'Nepodporovaný zdroj ukázky.');
   }
-  if (input.authoringStatus !== 'draft' && timed && input.mediaSource !== '' && mapped.mediaSource !== input.mediaSource
+  if (input.authoringStatus !== 'draft' && newTimedSource
       && (input.clipStartSeconds === null || input.clipEndSeconds === null || input.clipEndSeconds <= input.clipStartSeconds)) {
     throw new QuizEditorError('invalid-argument', 'Změna zdroje vyžaduje platný začátek a konec ukázky.');
   }

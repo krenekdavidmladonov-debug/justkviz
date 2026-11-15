@@ -128,6 +128,49 @@ describe('bounded slide design authoring', () => {
 });
 
 describe('quiz editor lossless model', () => {
+  test.each([
+    { kind: 'audio', source: 'https://example.test/audio.mp3' },
+    { kind: 'video', source: 'https://example.test/video.mp4' },
+  ])('keeps a legacy $kind source across partial and full editor saves', ({ kind, source }) => {
+    const opaque = [{ private: 'RAW_PRIVATE_SENTINEL' }];
+    const storedMedia = [{ role: 'prompt', kind, value: source }];
+    const current = {
+      position: 1,
+      kind,
+      isQuestion: true,
+      mediaSource: opaque,
+      media: storedMedia,
+      presentation: { videoStart: 1, videoEnd: 3 },
+    };
+    const view = slideView('q', current, false, false);
+    expect(view.mediaSource).toBe(source);
+    expect(JSON.stringify(view)).not.toContain('RAW_PRIVATE_SENTINEL');
+
+    const input = slideInput({
+      kind,
+      media: view.media,
+      presentation: view.presentation,
+      clipStartSeconds: view.clipStartSeconds,
+      clipEndSeconds: view.clipEndSeconds,
+    });
+    const omitted = validateSlideInput(input);
+    expect(omitted).not.toHaveProperty('mediaSource');
+    const canonical = applyKnownSlideUpdate({ ...current, mediaSource: source }, omitted);
+    expect(canonical.mediaSource).toBe(source);
+    for (const saved of [applyKnownSlideUpdate(current, omitted),
+      applyKnownSlideUpdate(current, validateSlideInput({ ...input, mediaSource: source }))]) {
+      expect(saved.mediaSource).toEqual(opaque);
+      expect(saved.media).toEqual(storedMedia);
+      expect(saved.presentation).toEqual(current.presentation);
+      expect(mapEditorSlide('q', saved).mediaSource).toBe(source);
+    }
+
+    const detached = applyKnownSlideUpdate(current, validateSlideInput({ ...input, mediaSource: '' }));
+    expect(detached.mediaSource).toBe('');
+    expect(slideView('q', detached, false, false).mediaSource).toBe('');
+    expect(detached.media).toEqual(storedMedia);
+  });
+
   test('updates known fields while preserving legacy.raw and unknown fields exactly', () => {
     const legacy = { raw: { unexplained: ['keep', 42], correct: 'private sentinel' } };
     const current = {

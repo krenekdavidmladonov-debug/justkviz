@@ -156,6 +156,19 @@ function expectNoPrivateFields(value: unknown): void {
 }
 
 describe('live-session publication security', () => {
+  test('legacy video URL matches the editor without reviving explicitly detached media', () => {
+    const url = 'https://example.test/archived-video.mp4';
+    const slide = { ...questionSlide(), kind: 'video', media: [], mediaSource: { url, private: 'RAW_PRIVATE_SENTINEL' } };
+    expect(slideView(slide.id, { ...slide }, false, false).mediaSource).toBe(url);
+    const projection = buildPublicSessionState(session(), slide);
+    expect(projection.mediaSource).toBe(url);
+    expect(JSON.stringify(projection)).not.toContain('RAW_PRIVATE_SENTINEL');
+    expect(buildPublicSessionState(session(), {
+      ...slide, mediaSource: '', media: [{ role: 'prompt', kind: 'video', value: url }],
+    }).mediaSource).toBe('');
+    expect(buildPublicSessionState(session(), { ...slide, kind: 'audio' })).not.toHaveProperty('mediaSource');
+  });
+
   test('publishes resolved safe visuals and reveal-only overrides without private design extensions', () => {
     const slide = { ...questionSlide(), defaultDesign: { textColor: '#fff', fontScale: 1 }, roundDesign: { accentColor: '#abc' }, design: { layout: 'centered', correctAnswer: 'SENTINEL-NESTED', logoImage: 'javascript:SENTINEL' }, answerDesign: { textColor: '#000', logoImage: 'https://example.test/SENTINEL-ANSWER.png' } };
     const hidden = buildPublicSessionState(session(), slide);

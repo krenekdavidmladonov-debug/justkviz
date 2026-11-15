@@ -47,7 +47,7 @@ export function protectSlideFields(current: Record<string, unknown> | undefined,
   if (!allowed.includes('quiz.notes.edit') && !equal(input.moderatorNote, allowed.includes('quiz.notes.read') ? previous?.moderatorNote : '')) deny();
   if (!allowed.includes('quiz.media.attach')) {
     if (input.resetAppearance === true && previous?.backgroundImage) deny();
-    for (const key of mediaKeys) if (!equal(input[key], visible?.[key])) deny();
+    for (const key of mediaKeys) if (input[key] !== undefined && !equal(input[key], visible?.[key])) deny();
     const visibleMedia = (previous?.media ?? []).filter(m => m.role === 'prompt' || m.role === 'background' || (allowed.includes('quiz.answers.read') && m.role === 'answer'));
     if (!equal(input.media, visibleMedia)) deny();
     if (allowed.includes('quiz.answers.read') && !equal(input.answerImage, previous?.answerImage)) deny();

@@ -73,7 +73,7 @@ function mediaByRoleAndKind(value: unknown, role: string, kind: string): string 
 
 function normalizedSource(value: unknown): string {
   const data = object(value);
-  return data === undefined ? optionalText(value) : mediaSource(data);
+  return data === undefined ? '' : mediaSource(data);
 }
 
 function mapMedia(value: unknown): readonly EditorMedia[] {
