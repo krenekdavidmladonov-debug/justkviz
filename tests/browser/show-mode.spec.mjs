@@ -1,8 +1,12 @@
 /* global window, document, requestAnimationFrame, MutationObserver */
 import { expect, test } from '@playwright/test';
+import { createRequire } from 'node:module';
 import { mkdir, writeFile } from 'node:fs/promises';
+import jsQR from 'jsqr';
+import { PNG } from 'pngjs';
 import { leaderboardFixture } from '../e2e/leaderboard-fixture.mjs';
 import { finalFixture } from '../e2e/final-reveal-fixture.mjs';
+import { requireFullEmulatorEnvironment } from '../../tools/local-emulator-environment.mjs';
 
 const evidence = '.local-data/show-mode/evidence';
 const interimPanel = page => page.getByRole('region', { name: 'Ovládání průběžných výsledků', exact: true });
@@ -11,6 +15,69 @@ const finalPanel = page => page.getByRole('region', { name: 'Ovládání fináln
 async function localOnly(context) {
   await context.route('**/*', route => ['127.0.0.1', 'localhost'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
 }
+
+test('thank-you projector follows public events and displays two scannable QR codes', async ({ context, page }, testInfo) => {
+  const { projectId } = requireFullEmulatorEnvironment(process.env, 'Thank-you projector E2E');
+  const require = createRequire(new URL('../../functions/package.json', import.meta.url));
+  const { initializeApp, deleteApp } = require('firebase-admin/app');
+  const { getFirestore } = require('firebase-admin/firestore');
+  const app = initializeApp({ projectId }, 'thank-you-projector-e2e');
+  const db = getFirestore(app);
+  const sessionId = 'thank-you-projector-e2e';
+  const session = db.doc(`publicSessions/${sessionId}`);
+  const first = db.doc('publicEvents/thank-you-first-e2e');
+  const second = db.doc('publicEvents/thank-you-second-e2e');
+  const now = Date.now();
+  const upcoming = (title, days) => ({
+    title, startsAt: new Date(now + days * 86400000), timeZone: 'Europe/Prague',
+    venueName: 'Syntetická restaurace', publicLocation: '', lifecycleStatus: 'scheduled',
+    registrationPublished: true, registrationStatus: 'open', teamSize: { min: 2, max: 4 }, revision: 1,
+  });
+
+  try {
+    await localOnly(context);
+    await session.set({
+      sessionId, status: 'active', quizTitle: 'Syntetický večer', slidePosition: 42,
+      renderMode: 'question', presentationMode: 'slide', slideKind: 'thank-you',
+      title: '', text: '', mediaCommand: 'idle', mediaPlaybackState: 'idle', answerRevealed: false, revision: 1,
+    });
+    await first.set(upcoming('První syntetický kvíz', 2));
+    await page.goto(`/projector/${sessionId}`);
+    await expect(page.getByRole('heading', { name: 'Děkujeme, že jste hráli!' })).toBeVisible();
+    const dates = page.getByRole('region', { name: 'Nadcházející kvízy' });
+    await expect(dates.getByRole('listitem')).toContainText('První syntetický kvíz');
+
+    await second.set(upcoming('Druhý syntetický kvíz', 3));
+    await expect(dates.getByRole('listitem')).toHaveText([/První syntetický kvíz/, /Druhý syntetický kvíz/]);
+    await first.update({ registrationPublished: false });
+    await expect(dates.getByRole('listitem')).toHaveText([/Druhý syntetický kvíz/]);
+    await second.delete();
+    await expect(dates.getByRole('listitem')).toHaveCount(0);
+
+    await first.set(upcoming('První syntetický kvíz', 2));
+    await second.set(upcoming('Druhý syntetický kvíz', 3));
+    await expect(dates.getByRole('listitem')).toHaveCount(2);
+    const destinations = [
+      ['Přihlášky na kvízy', 'https://justkviz.cz/events'],
+      ['Facebook JustKvízu', 'https://www.facebook.com/profile.php?id=61596012273723'],
+    ];
+    for (const width of [1280, 1920]) {
+      await page.setViewportSize({ width, height: width * 9 / 16 });
+      await expect.poll(() => page.locator('.slide-renderer').evaluate(content => Math.round(content.getBoundingClientRect().width))).toBe(width);
+      for (const [label, destination] of destinations) {
+        const image = page.getByRole('img', { name: `QR kód – ${label}` });
+        await expect(image).toBeVisible();
+        const png = PNG.sync.read(await image.screenshot());
+        expect(jsQR(new Uint8ClampedArray(png.data), png.width, png.height)?.data).toBe(destination);
+      }
+      await page.locator('.slide-renderer').screenshot({ path: testInfo.outputPath(`thank-you-${width}.png`) });
+    }
+  } finally {
+    await Promise.all([session.delete(), first.delete(), second.delete()]);
+    await deleteApp(app);
+  }
+});
+
 async function login(page, fixture) {
   await page.goto('/admin/login');
   await page.getByLabel('E-mail').fill(fixture.login.email);

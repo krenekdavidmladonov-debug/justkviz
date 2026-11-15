@@ -10,6 +10,7 @@ import type { MediaPlaybackCommand, MediaPlaybackState, SlideRenderInput, SlideR
 import { MediaPlayer } from './MediaPlayer';
 import type { MediaDiagnosticReason, MediaDiagnosticSignal, MediaDiagnosticTarget } from './mediaDiagnostics';
 import { slideDesignStyle } from './design';
+import { ThankYouSlideContent } from './ThankYouSlideContent';
 import './presentation.css';
 
 function QuestionHeader({ number, count, legacyPl }: { readonly number?: number; readonly count?: number; readonly legacyPl: boolean }) {
@@ -97,6 +98,7 @@ export function SlideRenderer({
   introGeneration = 0,
   compact = false,
   mediaEnabled = true,
+  liveEventsEnabled = true,
   playPrivateAudio = false,
   onMediaFinished,
   onMediaPlaybackState,
@@ -113,6 +115,7 @@ export function SlideRenderer({
   readonly introGeneration?: number;
   readonly compact?: boolean;
   readonly mediaEnabled?: boolean;
+  readonly liveEventsEnabled?: boolean;
   readonly playPrivateAudio?: boolean;
   readonly onMediaFinished?: (generation: number) => void;
   readonly onMediaDiagnostic?: ((target: MediaDiagnosticTarget, reason: MediaDiagnosticSignal) => void) | undefined;
@@ -250,6 +253,8 @@ export function SlideRenderer({
     content = <div key={introGeneration} className={`slide-centered round-intro-content ${introGeneration > 0 ? 'intro-running' : ''}`}><p className="slide-kicker">{model.contentKind === 'intro' ? 'VÍTEJTE NA KVÍZU' : 'NOVÉ KOLO'}</p><h1>{model.title || quizTitle}</h1>{model.text && <p>{model.text}</p>}</div>;
   } else if (model.contentKind === 'end') {
     content = <div className="slide-centered"><p className="slide-kicker">DĚKUJEME</p><h1>{model.title || 'To je pro dnešek vše'}</h1>{model.text && <p>{model.text}</p>}</div>;
+  } else if (model.contentKind === 'thank-you') {
+    content = <ThankYouSlideContent title={model.title} text={model.text} liveEventsEnabled={liveEventsEnabled} />;
   } else if (model.contentKind === 'audio') {
     content = (
       <div className="slide-layout audio-layout">

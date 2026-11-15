@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: [
+      'tests/thankYouSlide.test.tsx',
       'tests/offline*.test.ts', 'tests/offlineWizard.test.tsx', 'tests/offlineApp.test.tsx',
       'tests/usersAccessPage.test.tsx', 'tests/accessApi.test.ts',
       'tests/privacyNotice.test.tsx', 'tests/registrationAbuse.test.ts',

@@ -51,7 +51,7 @@ function PublicPresentation({ state, finished, mediaEnabled = true }: { readonly
   return <ShowModeRenderer state={state}>
     {state.status === 'waiting' ? <div className="offline-projector-message">Kvíz brzy začne</div>
       : state.status === 'ended' ? <div className="offline-projector-message">Děkujeme za hru</div>
-      : <SlideRenderer slide={slide} quizTitle={state.quizTitle} mode={state.renderMode}
+      : <SlideRenderer slide={slide} quizTitle={state.quizTitle} mode={state.renderMode} liveEventsEnabled={false}
         mediaCommand={state.mediaCommand} mediaPlaybackState={state.mediaPlaybackState}
         mediaGeneration={state.mediaGeneration} mediaEnabled={mediaEnabled} onMediaFinished={finished} />}
   </ShowModeRenderer>;

@@ -418,9 +418,11 @@ export function QuestionForm({
 export function SystemContentForm({ slide, disabled, onChange }: { readonly slide: EditorSlide; readonly disabled: boolean; readonly onChange: (slide: EditorSlide) => void }) {
   const set = <K extends keyof EditorSlide>(field: K, value: EditorSlide[K]) => onChange({ ...slide, [field]: value });
   const recap = slide.kind === 'recap';
+  const title = recap ? 'Rekapitulace' : slide.kind === 'end' ? 'Závěr kvízu'
+    : slide.kind === 'thank-you' ? 'Poděkování před vyhlášením' : 'Informační slide';
   return (
     <section className="editor-form-stack">
-      <header className="content-form-heading"><span>Systémová část</span><h2>{recap ? 'Rekapitulace' : slide.kind === 'end' ? 'Závěr kvízu' : 'Informační slide'}</h2></header>
+      <header className="content-form-heading"><span>Systémová část</span><h2>{title}</h2></header>
       {recap && <p className="system-content-note">Rekapitulace se sestavuje z otázek tohoto kola. Původní nastavení zůstává zachované.</p>}
       <label className="form-field">Titulek<input disabled={disabled} value={slide.title} onChange={(event) => set('title', event.target.value)} /></label>
       <label className="form-field">Text<textarea rows={4} disabled={disabled} value={slide.text} onChange={(event) => set('text', event.target.value)} /></label>

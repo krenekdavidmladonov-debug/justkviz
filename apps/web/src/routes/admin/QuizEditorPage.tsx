@@ -1,4 +1,4 @@
-import { resolveSlideDesign, resolveLegacySlideAppearance, type SlideDesign, type ResultTemplates, type PrintTemplate } from '@filmovy-kviz/quiz-domain';
+import { canHideInfoSlide, resolveSlideDesign, resolveLegacySlideAppearance, type SlideDesign, type ResultTemplates, type PrintTemplate } from '@filmovy-kviz/quiz-domain';
 import { SlideDesignFields, legacySlideDesign } from '../../features/editor/SlideDesignFields';
 import { ResultTemplatePreview } from '../../features/editor/ResultTemplatePreview';
 import { PrintTemplateFields } from '../../features/print/PrintTemplateFields';
@@ -899,6 +899,10 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
           onClosePicker={() => setPickerRoundId(null)}
           onCreateQuestion={(round, type) => void createQuestion(round.id, type)}
           onAddInfo={() => void mutate(current => createQuizSlide(current.id, current.revision, current.slideCount + 1, localDraft('info', current.slideCount + 1, { title: 'Organizační sdělení', text: 'Napište oznámení, poděkování nebo pokyny k přestávce.' }), 'quiz'))}
+          onAddThankYou={() => void mutate(current => {
+            const position = current.slideCount + 1;
+            return createQuizSlide(current.id, current.revision, position, localDraft('thank-you', position, { title: 'Děkujeme, že jste hráli!' }), 'quiz');
+          })}
           onAddClosing={() => void mutate(current => createQuizSlide(current.id, current.revision, current.slideCount + 1, localDraft('end', current.slideCount + 1, { title: 'Děkujeme za hru' }), 'quiz'))}
           onAddRound={() => {
             void mutate(current => createQuizRound(current.id, current.revision, `${buildSemanticQuizModel(current).rounds.length + 1}. kolo`), undefined, true);
@@ -981,13 +985,19 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
           )}
           {draft !== null && <EditorDisclosure key={`design:${selectedKey}`} field="backgroundImage" title={`Vzhled ${selectedKey.startsWith('round:') ? 'celého kola' : 'otázky nebo slidu'}`} busy={uploading}>{() => <SlideDesignFields scope={selectedKey.startsWith('round:') ? 'round' : 'slide'} value={draft.design ?? {}} legacy={legacySlideDesign({ ...draft, ...resolveLegacySlideAppearance(appearance, draft) })} legacyResetAvailable={Boolean(draft.backgroundImage) || (draft.backgroundOverlay ?? draft.presentation.backgroundOverlay ?? 0) > 0 || draft.imageLayout !== undefined} inherited={inheritedDesign} disabled={readOnly || saving || uploading} onChange={value => { setDraft({ ...draft, design: value }); setDirtySlide(true); }} onReset={() => { setDraft({ ...draft, design: {}, resetAppearance: true, backgroundImage: '', backgroundOverlay: null, imageLayout: undefined, presentation: { ...draft.presentation, backgroundOverlay: null } }); setDirtySlide(true); }} />}</EditorDisclosure>}
           {draft?.isQuestion && can('quiz.answers.read') && <EditorDisclosure key={`answer-design:${selectedKey}`} title="Vzhled odhalené odpovědi" busy={uploading}>{() => <SlideDesignFields scope="answer" value={draft.answerDesign ?? {}} inherited={resolveSlideDesign(legacySlideDesign(draft), inheritedDesign, draft.design)} disabled={readOnly || saving || uploading || !can('quiz.answers.edit')} onChange={value => { setDraft({ ...draft, answerDesign: value }); setDirtySlide(true); }} />}</EditorDisclosure>}
-          {draft !== null && !draft.isQuestion && ['info', 'end', 'title'].includes(draft.kind) && !pendingCreate && <div className="semantic-actions">
-            <button type="button" className="secondary-button" disabled={structuralDisabled} onClick={() => void mutate(current => duplicateQuizSlide(current.id, current.revision, draft.id))}>Duplikovat slide</button>
-            <button type="button" className="secondary-button" disabled={structuralDisabled || draft.position <= 1} onClick={() => void mutate(current => moveQuizSlide(current.id, current.revision, draft.id, -1))}>Posunout před předchozí slide</button>
-            <button type="button" className="secondary-button" disabled={structuralDisabled || draft.position >= quiz.slideCount} onClick={() => void mutate(current => moveQuizSlide(current.id, current.revision, draft.id, 1))}>Posunout za následující slide</button>
-            <button type="button" className="danger-button" disabled={structuralDisabled || !can('quiz.delete') || quiz.slideCount <= 1} onClick={() => { if (window.confirm('Odstranit tento informační slide?')) void mutate(current => deleteQuizSlide(current.id, current.revision, draft.id)); }}>Odstranit slide</button>
+          {draft !== null && !draft.isQuestion && ['info', 'end', 'title', 'thank-you'].includes(draft.kind) && !pendingCreate && <div className="semantic-actions">
+            {draft.kind !== 'thank-you' && <>
+              <button type="button" className="secondary-button" disabled={structuralDisabled} onClick={() => void mutate(current => duplicateQuizSlide(current.id, current.revision, draft.id))}>Duplikovat slide</button>
+              <button type="button" className="secondary-button" disabled={structuralDisabled || draft.position <= 1 || (draft.kind === 'end' && semantic.thankYou?.position === draft.position - 1)} onClick={() => void mutate(current => moveQuizSlide(current.id, current.revision, draft.id, -1))}>Posunout před předchozí slide</button>
+              <button type="button" className="secondary-button" disabled={structuralDisabled || draft.position >= quiz.slideCount} onClick={() => void mutate(current => moveQuizSlide(current.id, current.revision, draft.id, 1))}>Posunout za následující slide</button>
+            </>}
+            <button type="button" className="danger-button" disabled={structuralDisabled || !can('quiz.delete') || (quiz.slideCount <= 1 && draft.kind !== 'thank-you')} onClick={() => {
+              if (window.confirm(draft.kind === 'thank-you' ? 'Odstranit poděkování před vyhlášením?' : 'Odstranit tento informační slide?')) {
+                void mutate(current => deleteQuizSlide(current.id, current.revision, draft.id), draft.kind === 'thank-you' ? 'quiz' : undefined);
+              }
+            }}>Odstranit slide</button>
           </div>}
-          {draft !== null && !draft.isQuestion && !draft.roundId && ['intro', 'agenda', 'rules', 'end', 'title', 'info'].includes(draft.kind) && <label className="binary-answer"><input type="checkbox" checked={draft.hidden === true} disabled={readOnly || saving} onChange={event => { setDraft({ ...draft, hidden: event.target.checked }); setDirtySlide(true); }} /> Skrýt při moderování <span className="field-help">Obsah zůstane uložený, průběh jej přeskočí.</span></label>}
+          {draft !== null && canHideInfoSlide(draft) && <label className="binary-answer"><input type="checkbox" checked={draft.hidden === true} disabled={readOnly || saving} onChange={event => { setDraft({ ...draft, hidden: event.target.checked }); setDirtySlide(true); }} /> Skrýt při moderování <span className="field-help">Obsah zůstane uložený, průběh jej přeskočí.</span></label>}
           {showReadiness && draft?.isQuestion && <ReadinessSummary slide={draft} />}
           {dirty && <p className="structure-save-hint">Strukturální operace budou dostupné po uložení nebo zahození rozepsaných změn.</p>}
         </main>

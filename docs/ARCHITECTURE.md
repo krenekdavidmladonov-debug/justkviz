@@ -40,6 +40,12 @@ Authenticated working area for admins and moderators. Route guards improve UX, b
 
 Public, read-only display for the active session. It consumes a deliberately sanitized projection document and never queries private quiz/question documents directly.
 
+An optional thank-you screen sits outside rounds before the final results. While
+it is displayed online, it listens to the same published event listing as
+`/events` for upcoming dates and venues. The Facebook and registration QR codes
+are generated locally. The offline player keeps both QR codes and links to the
+registration page for current dates.
+
 ### `/events`
 
 Public event list and registration surface. Public event data contains capacity/status information but no team contact details.

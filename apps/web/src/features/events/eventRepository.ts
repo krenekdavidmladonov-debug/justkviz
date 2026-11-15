@@ -3,6 +3,7 @@ import {
   doc,
   getDocFromServer,
   getDocsFromServer,
+  onSnapshot,
   where,
   query,
 } from 'firebase/firestore';
@@ -26,12 +27,30 @@ export async function getEvent(eventId: string): Promise<EventRecord | null> {
   return mapEvent(result.id, result.data);
 }
 
-export async function listPublicEvents(): Promise<readonly PublicEventRecord[]> {
-  const snapshot = await getDocsFromServer(query(
+function publicEventsQuery() {
+  return query(
     collection(getFirebaseFirestore(), 'publicEvents'),
     where('registrationPublished', '==', true),
-  ));
+  );
+}
+
+export async function listPublicEvents(): Promise<readonly PublicEventRecord[]> {
+  const snapshot = await getDocsFromServer(publicEventsQuery());
   return snapshot.docs.map((item) => mapPublicEvent(item.id, item.data())).sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+}
+
+export function subscribePublishedEvents(onChange: (events: readonly PublicEventRecord[] | null) => void) {
+  return onSnapshot(publicEventsQuery(), { includeMetadataChanges: true }, (snapshot) => {
+    if (snapshot.metadata.fromCache) {
+      onChange(null);
+      return;
+    }
+    const events = snapshot.docs.flatMap(item => {
+      try { return [mapPublicEvent(item.id, item.data())]; }
+      catch { return []; }
+    });
+    onChange(events);
+  }, () => onChange(null));
 }
 
 export async function getPublicEvent(eventId: string): Promise<PublicEventRecord | null> {

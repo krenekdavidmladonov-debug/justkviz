@@ -16,6 +16,15 @@ describe('event finale is the step before the closing slide', () => {
   test('legacy quiz without an end slide still gets finale before session ending', () => {
     expect(entersFinale(slides.slice(0, 2), 2, 1)).toBe(true);
   });
+  test('an optional thank-you screen is presented after recap and before finale', () => {
+    const thankYou = { ...slides[2]!, id: 'thank-you', kind: 'thank-you' };
+    const closing = { ...slides[2]!, position: 4 };
+    const program = [...slides.slice(0, 2), thankYou, closing];
+    expect(entersFinale(program, 2, 1)).toBe(false);
+    expect(entersFinale(program, 3, 1)).toBe(true);
+    expect(entersFinale(program.slice(0, -1), 3, 1)).toBe(true);
+    expect(entersFinale([...program.slice(0, 2), { ...thankYou, hidden: true }, closing], 2, 1)).toBe(true);
+  });
   test('every tied group page is shown before the next rank', () => {
     expect(nextFinaleStep(initial)).toEqual({ action: 'reveal' });
     expect(nextFinaleStep({ ...initial, mode: 'group', rank: 2, revealedCount: 2, pageCount: 3 })).toEqual({ action: 'page', page: 1 });

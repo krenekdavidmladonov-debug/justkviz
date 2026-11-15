@@ -4,6 +4,7 @@ export const editorSlideKinds = [
   'agenda',
   'rules',
   'recap',
+  'thank-you',
   'end',
   'title',
   'info',

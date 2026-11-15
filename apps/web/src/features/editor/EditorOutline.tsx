@@ -19,7 +19,7 @@ function questionIssues(slide: EditorSlide) {
 }
 
 export function EditorOutline({ model, selectedKey, activeDraft, disabled, disabledReason, creationDisabled = disabled, pickerRoundId,
-  onSelect, onOpenPicker, onClosePicker, onCreateQuestion, onAddRound, onAddClosing, onAddInfo, onMove, onMoveRound,
+  onSelect, onOpenPicker, onClosePicker, onCreateQuestion, onAddRound, onAddClosing, onAddInfo, onAddThankYou, onMove, onMoveRound,
   onDeleteQuestion, onDeleteRound, deleteDisabled = disabled, questionDeleteDisabled = deleteDisabled, deleteDisabledReason,
 }: {
   readonly model: SemanticQuizModel;
@@ -36,6 +36,7 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
   readonly onAddRound: () => void;
   readonly onAddClosing?: () => void;
   readonly onAddInfo?: () => void;
+  readonly onAddThankYou?: () => void;
   readonly onMove: (id: string, roundId: string | undefined, beforeId?: string) => Promise<boolean>;
   readonly onMoveRound?: (id: string, beforeId?: string) => Promise<boolean>;
   readonly onDeleteQuestion?: (slide: EditorSlide) => void;
@@ -85,9 +86,10 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
   }, [selectedKey, selectedRoundId]);
   useEffect(() => {
     if (selectedKey.startsWith('system:') || selectedKey.startsWith('results:')
+      || (model.thankYou && selectedKey === `slide:${model.thankYou.id}`)
       || model.closing.some(slide => selectedKey === `slide:${slide.id}`)
       || model.legacy.some(slide => selectedKey === `slide:${slide.id}`)) setScreensOpen(true);
-  }, [selectedKey, model.closing, model.legacy]);
+  }, [selectedKey, model.thankYou, model.closing, model.legacy]);
   function clearDrag() { dragged.current = null; setDragging(null); setDropTarget(null); }
   async function move(item: DraggedItem, roundId?: string, beforeId?: string) {
     clearDrag();
@@ -165,6 +167,7 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
       </details>}
     </li>;
   }
+  const { thankYou } = model;
   return <aside ref={outlineRef} className={`editor-outline editor-panel-structure quiz-outline ${dragging ? 'is-dragging' : ''}`} aria-label="Osnova kvízu" aria-busy={moving}
     onDragOver={event => {
       if (!dragged.current) return;
@@ -243,7 +246,12 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
       {screensOpen && <>
         <h2>Úvod kvízu</h2>{model.introduction.map(section => <button key={section.key} type="button" className={`outline-system-item ${selected(`system:${section.key}`)}`} onClick={() => onSelect(`system:${section.key}`)}><span>{section.label}</span>{section.generated && (section.key !== 'agenda' || section.slide?.automaticAgenda === true) && <small>Automaticky</small>}</button>)}
         {onAddInfo && <button type="button" className="outline-system-item" disabled={createLocked} onClick={onAddInfo}>+ Přidat informaci nebo přestávku</button>}
-        <h2>Výsledky</h2><button type="button" className={`outline-system-item ${selected('results:interim')}`} onClick={() => onSelect('results:interim')}>Průběžné pořadí</button><button type="button" className={`outline-system-item ${selected('results:final')}`} onClick={() => onSelect('results:final')}>Finální vyhlášení</button>
+        <h2>Výsledky</h2>
+        <button type="button" className={`outline-system-item ${selected('results:interim')}`} onClick={() => onSelect('results:interim')}>Průběžné pořadí</button>
+        {thankYou ? <button type="button" className={`outline-system-item ${selected(`slide:${thankYou.id}`)}`} onClick={() => onSelect(`slide:${thankYou.id}`)}>
+          <span>Poděkování před vyhlášením</span>{thankYou.hidden && <small>Skryté</small>}
+        </button> : onAddThankYou && <button type="button" className="outline-system-item" disabled={createLocked} onClick={onAddThankYou}>+ Přidat poděkování před vyhlášením</button>}
+        <button type="button" className={`outline-system-item ${selected('results:final')}`} onClick={() => onSelect('results:final')}>Finální vyhlášení</button>
         <p className="field-help">Moderátor je zobrazí po publikaci výsledků.</p>
         {model.closing.map(slide => <button key={slide.id} type="button" className={`outline-system-item ${selected(`slide:${slide.id}`)}`} onClick={() => onSelect(`slide:${slide.id}`)}>Závěr kvízu</button>)}
         {model.closing.length === 0 && onAddClosing && <button type="button" className="outline-system-item" disabled={createLocked} onClick={onAddClosing}>+ Přidat závěr kvízu</button>}

@@ -1,6 +1,6 @@
 import type { SlideDesign, ResultTemplates, PrintTemplate } from './design.js';
 export const editableSlideKinds = [
-  'intro', 'agenda', 'rules', 'recap', 'end', 'title', 'info', 'round', 'roundheader', 'round-header', 'section',
+  'intro', 'agenda', 'rules', 'recap', 'thank-you', 'end', 'title', 'info', 'round', 'roundheader', 'round-header', 'section',
   'question', 'text', 'classic', 'free', 'image', 'picture', 'photo',
   'audio', 'music', 'video', 'youtube', 'pl', 'legacy',
 ] as const;

@@ -564,6 +564,43 @@ async function run() {
     slide: (await adminDb.doc(snapshotSlideRef.path).get()).data(),
   }), snapshotBefore);
 
+  const thankYouSlide = editorSlide({
+    kind: 'thank-you', title: 'Děkujeme, že jste hráli!', text: '', options: [], correctAnswer: '',
+  });
+  const newQuizProgram = () => getDocs(query(collection(createdQuizRef, 'slides'), orderBy('position')));
+  await expectFunctionError(
+    () => invoke('createQuizSlide', { quizId: createdQuizId, expectedRevision: 4, position: 1, slide: thankYouSlide }),
+    'functions/invalid-argument',
+  );
+  const thankYou = await invoke('createQuizSlide', {
+    quizId: createdQuizId, expectedRevision: 4, position: 1, scope: 'quiz', slide: thankYouSlide,
+  });
+  const savedThankYou = (await newQuizProgram()).docs.at(-1);
+  assert.equal(savedThankYou.id, thankYou.selectedSlideId);
+  assert.equal(savedThankYou.data().roundId, undefined);
+  assert.equal(savedThankYou.data().isQuestion, false);
+  assert.equal(thankYou.questionCount, 1);
+  await expectFunctionError(
+    () => invoke('createQuizSlide', { quizId: createdQuizId, expectedRevision: thankYou.revision, position: 1, scope: 'quiz', slide: thankYouSlide }),
+    'functions/failed-precondition',
+  );
+  const info = await invoke('createQuizSlide', {
+    quizId: createdQuizId, expectedRevision: thankYou.revision, position: thankYou.slideCount + 1, scope: 'quiz',
+    slide: { ...thankYouSlide, kind: 'info', title: 'Organizační sdělení' },
+  });
+  assert.deepEqual((await newQuizProgram()).docs.slice(-2).map(slide => slide.id), [info.selectedSlideId, thankYou.selectedSlideId]);
+  const closing = await invoke('createQuizSlide', {
+    quizId: createdQuizId, expectedRevision: info.revision, position: info.slideCount + 1, scope: 'quiz',
+    slide: { ...thankYouSlide, kind: 'end', title: 'Závěr' },
+  });
+  assert.deepEqual((await newQuizProgram()).docs.slice(-3).map(slide => slide.id), [info.selectedSlideId, thankYou.selectedSlideId, closing.selectedSlideId]);
+  const lastRound = await invoke('createQuizRound', {
+    quizId: createdQuizId, expectedRevision: closing.revision, title: 'Kolo před vyhlášením',
+  });
+  const program = (await newQuizProgram()).docs;
+  assert.deepEqual(program.slice(-4).map(slide => slide.data().kind), ['round', 'recap', 'thank-you', 'end']);
+  assert.equal(program.at(-4).id, lastRound.selectedSlideId);
+
   globalThis.console.log(JSON.stringify({
     status: 'PASS', adminMutations: true, moderatorReadOnly: true, normalUserDenied: true,
     directWritesDenied: true, staleAndConcurrentWritesVerified: true,
@@ -576,6 +613,7 @@ async function run() {
     importedZeroTimingRoundTripVerified: true, importedPrivateFieldsPreserved: true,
     createQuizAuthorizationAndIdempotenceVerified: true, newQuizRoundQuestionSaveReloadVerified: true,
     newQuizConflictVerified: true, historicalSnapshotUntouched: true,
+    thankYouOutsideRoundsAndBeforeClosingVerified: true,
   }, null, 2));
 }
 

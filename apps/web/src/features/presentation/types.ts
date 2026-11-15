@@ -13,6 +13,7 @@ export type SlideContentKind =
   | 'rules'
   | 'recap'
   | 'end'
+  | 'thank-you'
   | 'info'
   | 'legacy';
 

@@ -55,6 +55,7 @@ function contentKind(kind: string): SlideContentKind {
   if (normalized === 'rules') return 'rules';
   if (normalized === 'recap') return 'recap';
   if (normalized === 'end') return 'end';
+  if (normalized === 'thank-you') return 'thank-you';
   if (normalized === 'title' || normalized === 'info') return 'info';
   return 'legacy';
 }
