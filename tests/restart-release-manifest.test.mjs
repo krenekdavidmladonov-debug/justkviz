@@ -31,7 +31,7 @@ assert(localDemoExports.every(name => access.unchangedExcluded[name]?.includes('
 const laterFeatureExports = [
   ...localDemoExports, ...offline.newCallableFunctions,
   ...show.newFunctions, ...drive.functions, ...driveMedia.newFunctions, ...driveLocal.newFunctions,
-  'restoreQuiz', 'trashQuiz', 'completeEvent',
+  'restoreQuiz', 'trashQuiz', 'completeEvent', 'duplicateQuiz',
 ];
 
 function sourceExports() {
@@ -88,7 +88,7 @@ test('frozen restart inventory and separate later features account for current e
   assertInventory(manifest);
   assert.equal(manifest.counts.releaseFunctions, 70);
   assert.equal(manifest.counts.sourceExports, 77);
-  assert.equal(sourceExports().length, 105);
+  assert.equal(sourceExports().length, 106);
   assert.deepEqual(manifest.sourceManifests, [
     'tools/staging/editor-release-manifest.mjs',
     'tools/access/deployment-manifest.json',
