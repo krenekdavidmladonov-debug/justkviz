@@ -16,16 +16,16 @@ lib/
 .firebase/
 .firebaserc
 firebase-debug*.log
-firestore-debug.log
-ui-debug.log
+debug.log
+*-debug.log
 
 # Test and tool output
 coverage/
 playwright-report/
 test-results/
 .eslintcache
-output/pdf/
-tmp/pdfs/
+output/
+tmp/
 
 # Editors and operating systems
 .idea/

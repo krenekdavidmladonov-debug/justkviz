@@ -8,4 +8,6 @@ Quiz authoring, team registrations, trusted scoring, projector presentation and 
 
 Use Node.js22, the pinned pnpm version and JDK21 for Firebase emulators. Install with pnpm install --frozen-lockfile, then run pnpm check and pnpm test:unit. Integration and Rules tests require explicitly configured demo-* Firebase emulators on loopback endpoints. Browser tests additionally require Playwright Chromium; PDF checks use Python/pypdf and Poppler. No production credentials or live data are required.
 
-See [architecture](docs/ARCHITECTURE.md), [data model](docs/DATA_MODEL.md), [security](docs/SECURITY.md), [event management](docs/EVENT_MANAGEMENT.md) and [print center](docs/PRINT_CENTER.md) for the product contracts. Source/test preparation does not authorize a public push, merge or cloud deployment. Historical release notes are not current authorization.
+See [architecture](docs/ARCHITECTURE.md), [data model](docs/DATA_MODEL.md), [security](docs/SECURITY.md), [event management](docs/archive/EVENT_MANAGEMENT.md) and [print center](docs/archive/PRINT_CENTER.md) for the product contracts. Source/test preparation does not authorize a public push, merge or cloud deployment. Historical release notes are not current authorization.
+
+See the [documentation index](docs/README.md), [event-night operation](docs/PROVOZ_VECERA.md) and [local QA](docs/LOCAL_QA.md) for the current guides.

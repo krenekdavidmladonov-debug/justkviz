@@ -201,7 +201,7 @@ function New-EventNightBuildManifest {
   $dist = Join-Path $RepoRoot 'apps\web\dist'
   $records = @(Get-EventNightFileRecords $dist)
   if ($records.Count -eq 0 -or -not (Test-Path -LiteralPath (Join-Path $dist 'index.html'))) {
-    Throw-QaError 'Production build je prázdný nebo neobsahuje index.html.' 'Spusťte PREPARE_EVENT_NIGHT.cmd znovu.'
+    Throw-QaError 'Production build je prázdný nebo neobsahuje index.html.' 'Spusťte tools\legacy\PREPARE_EVENT_NIGHT.cmd znovu.'
   }
   $manifest = [ordered]@{
     schemaVersion = 1
@@ -243,15 +243,15 @@ function Assert-EventNightBuildManifest {
   )
 
   if (-not (Test-Path -LiteralPath $Paths.BuildManifest -PathType Leaf)) {
-    Throw-QaError 'Chybí manifest production buildu.' 'Nejdřív spusťte PREPARE_EVENT_NIGHT.cmd.'
+    Throw-QaError 'Chybí manifest production buildu.' 'Nejdřív spusťte tools\legacy\PREPARE_EVENT_NIGHT.cmd.'
   }
   $manifest = Get-Content -LiteralPath $Paths.BuildManifest -Raw -Encoding UTF8 | ConvertFrom-Json
   if ([int]$manifest.schemaVersion -ne 1 -or [string]$manifest.projectId -ne $script:EventNightProjectId) {
-    Throw-QaError 'Manifest buildu nemá bezpečný event-night formát nebo demo projekt.' 'Spusťte PREPARE_EVENT_NIGHT.cmd znovu.'
+    Throw-QaError 'Manifest buildu nemá bezpečný event-night formát nebo demo projekt.' 'Spusťte tools\legacy\PREPARE_EVENT_NIGHT.cmd znovu.'
   }
   $head = Get-EventNightGitHead $RepoRoot $GitTool
   if ([string]$manifest.sourceHead -ne $head) {
-    Throw-QaError 'Production build neodpovídá aktuálnímu release HEAD.' 'Spusťte PREPARE_EVENT_NIGHT.cmd na správném release commitu.'
+    Throw-QaError 'Production build neodpovídá aktuálnímu release HEAD.' 'Spusťte tools\legacy\PREPARE_EVENT_NIGHT.cmd na správném release commitu.'
   }
   $actual = @(Get-EventNightFileRecords (Join-Path $RepoRoot 'apps\web\dist'))
   Assert-EventNightRecords @($manifest.files) $actual 'SHA-256 manifest production buildu'
@@ -262,13 +262,13 @@ function Get-EventNightCandidate {
 
   Assert-EventNightNoReparse $Paths.CandidateManifest
   if (-not (Test-Path -LiteralPath $Paths.CandidateManifest -PathType Leaf)) {
-    Throw-QaError 'Chybí lokální manifest vybraného kvízu.' 'Nejdřív spusťte PREPARE_EVENT_NIGHT.cmd.'
+    Throw-QaError 'Chybí lokální manifest vybraného kvízu.' 'Nejdřív spusťte tools\legacy\PREPARE_EVENT_NIGHT.cmd.'
   }
   $manifest = Get-Content -LiteralPath $Paths.CandidateManifest -Raw -Encoding UTF8 | ConvertFrom-Json
   if ([int]$manifest.schemaVersion -ne 1 -or
       [string]$manifest.projectId -ne $script:EventNightProjectId -or
       [string]::IsNullOrWhiteSpace([string]$manifest.candidate.quizId)) {
-    Throw-QaError 'Candidate manifest není bezpečný nebo je neúplný.' 'Spusťte PREPARE_EVENT_NIGHT.cmd znovu.'
+    Throw-QaError 'Candidate manifest není bezpečný nebo je neúplný.' 'Spusťte tools\legacy\PREPARE_EVENT_NIGHT.cmd znovu.'
   }
   return $manifest.candidate
 }
@@ -378,14 +378,14 @@ function Assert-EventNightSnapshot {
   $manifestPath = Join-Path $SnapshotDirectory '.event-night-manifest.json'
   Assert-EventNightExportLayout $SnapshotDirectory
   if (-not (Test-Path -LiteralPath (Get-EventNightNativePath $manifestPath) -PathType Leaf)) {
-    Throw-QaError 'Persistentní snapshot nemá event-night manifest.' 'Nejdřív spusťte PREPARE_EVENT_NIGHT.cmd.'
+    Throw-QaError 'Persistentní snapshot nemá event-night manifest.' 'Nejdřív spusťte tools\legacy\PREPARE_EVENT_NIGHT.cmd.'
   }
   $manifest = Get-Content -LiteralPath (Get-EventNightNativePath $manifestPath) -Raw -Encoding UTF8 | ConvertFrom-Json
   $candidate = Get-EventNightCandidate $Paths
   if ([int]$manifest.schemaVersion -ne 1 -or
       [string]$manifest.projectId -ne $script:EventNightProjectId -or
       [string]$manifest.candidateQuizId -ne [string]$candidate.quizId) {
-    Throw-QaError 'Persistentní snapshot nepatří demo projektu nebo vybranému kvízu.' 'Nepokračujte; vytvořte nový snapshot přes PREPARE_EVENT_NIGHT.cmd.'
+    Throw-QaError 'Persistentní snapshot nepatří demo projektu nebo vybranému kvízu.' 'Nepokračujte; vytvořte nový snapshot přes tools\legacy\PREPARE_EVENT_NIGHT.cmd.'
   }
   $actual = @(Get-EventNightFileRecords $SnapshotDirectory @('.event-night-manifest.json'))
   Assert-EventNightRecords @($manifest.files) $actual 'SHA-256 manifest persistentního snapshotu'
@@ -471,7 +471,7 @@ function Stop-EventNightWorker {
   }
   & taskkill.exe /PID ([int]$Worker.pid) /T /F | Out-Null
   if ($LASTEXITCODE -ne 0 -and $null -ne (Get-Process -Id ([int]$Worker.pid) -ErrorAction SilentlyContinue)) {
-    Throw-QaError 'Event-night proces se nepodařilo ukončit.' 'Zkuste STOP_EVENT_NIGHT.cmd znovu.'
+    Throw-QaError 'Event-night proces se nepodařilo ukončit.' 'Zkuste tools\legacy\STOP_EVENT_NIGHT.cmd znovu.'
   }
 }
 
@@ -572,7 +572,7 @@ function Assert-EventNightPromotionClear {
     Assert-EventNightPath $RepoRoot $target
   }
   if (Test-Path -LiteralPath $Paths.PromotionJournal) {
-    Throw-QaError 'Nedokončená promotion snapshotu; další export ani FIRST PREPARE nejsou povolené.' 'Spusťte START_EVENT_NIGHT.cmd pro ověřenou obnovu, nikoli nový seed.'
+    Throw-QaError 'Nedokončená promotion snapshotu; další export ani FIRST PREPARE nejsou povolené.' 'Spusťte tools\legacy\START_EVENT_NIGHT.cmd pro ověřenou obnovu, nikoli nový seed.'
   }
 }
 
@@ -710,5 +710,5 @@ function Write-EventNightReady {
   Write-Host 'admin@example.test'
   Write-Host 'LocalQuiz123!'
   Write-Host ''
-  Write-Host 'Po skončení vždy spusťte STOP_EVENT_NIGHT.cmd.'
+  Write-Host 'Po skončení vždy spusťte tools\legacy\STOP_EVENT_NIGHT.cmd.'
 }

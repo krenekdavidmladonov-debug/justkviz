@@ -59,7 +59,7 @@ try {
       Complete-EventNightWindow
       exit 0
     }
-    Throw-QaError 'Evidované event-night prostředí není kompletní.' 'Spusťte STOP_EVENT_NIGHT.cmd a potom START_EVENT_NIGHT.cmd znovu.'
+    Throw-QaError 'Evidované event-night prostředí není kompletní.' 'Spusťte tools\legacy\STOP_EVENT_NIGHT.cmd a potom tools\legacy\START_EVENT_NIGHT.cmd znovu.'
   }
   if ($null -ne $state) {
     $trackedStillExists = $null -ne (Get-Process -Id ([int]$state.emulators.pid) -ErrorAction SilentlyContinue)
@@ -71,7 +71,7 @@ try {
 
   if (-not (Test-Path -LiteralPath (Join-Path $repoRoot 'node_modules\.bin\firebase.cmd')) -or
       -not (Test-Path -LiteralPath (Join-Path $repoRoot 'node_modules\@playwright\test'))) {
-    Throw-QaError 'Projektové dependencies nejsou připravené.' 'Spusťte PREPARE_EVENT_NIGHT.cmd; běžný start záměrně nic nestahuje.'
+    Throw-QaError 'Projektové dependencies nejsou připravené.' 'Spusťte tools\legacy\PREPARE_EVENT_NIGHT.cmd; běžný start záměrně nic nestahuje.'
   }
   Assert-EventNightBuildManifest $repoRoot $gitTool $paths
   Restore-EventNightSnapshot $repoRoot $paths | Out-Null

@@ -2,7 +2,7 @@
 
 Existing imported-image provenance derives original HTTPS sources without
 rewriting quiz or event snapshot records. Backups remain retained; see
-[ORIGINAL_IMAGE_SOURCES.md](ORIGINAL_IMAGE_SOURCES.md).
+[ORIGINAL_IMAGE_SOURCES.md](archive/ORIGINAL_IMAGE_SOURCES.md).
 
 This is a first design, not a migration contract. Fields should be introduced only with validation, rules, and indexes required by an implemented feature.
 
@@ -15,13 +15,13 @@ single-use authorization state for the owner-directed Drive connection. Direct
 client reads and writes remain denied by the existing default-deny Rules. Only
 allowlisted connection status is returned through freshly authorized callables.
 No Drive credentials or folder details enter quiz snapshots or public projections.
-See [GOOGLE_DRIVE_CONNECTION.md](GOOGLE_DRIVE_CONNECTION.md) for lifecycle and
+See [GOOGLE_DRIVE_CONNECTION.md](archive/GOOGLE_DRIVE_CONNECTION.md) for lifecycle and
 activation requirements. The separately gated media pipeline adds
 `driveMediaJobs/{jobId}` (server-only source fingerprint, connection/account/member
 binding, lease, reserved Drive file ID, output digest, status), Drive-backed ready
 `quizzes/{quizId}/mediaAssets/{assetId}` records and private per-field
 `slides/{slideId}.driveImportProvenance`. Their exact contract and retention are
-in [GOOGLE_DRIVE_MEDIA.md](GOOGLE_DRIVE_MEDIA.md). No new browser write access is granted.
+in [GOOGLE_DRIVE_MEDIA.md](archive/GOOGLE_DRIVE_MEDIA.md). No new browser write access is granted.
 
 Optional local preparation adds server-only `driveMediaCompanions/{deviceId}`
 (one owner-bound device, token digest, revocation/expiry, current authority and
@@ -29,17 +29,17 @@ connection binding, active claim) and `driveMediaPairings/{codeHash}` (five-minu
 single-use pairing). `driveMediaJobs.execution: local` separates YouTube device
 claims from cloud photo work; missing execution retains historical cloud mode.
 No capability secret, device record or source provenance enters public data.
-See [LOCAL_MEDIA_COMPANION.md](LOCAL_MEDIA_COMPANION.md).
+See [LOCAL_MEDIA_COMPANION.md](archive/LOCAL_MEDIA_COMPANION.md).
 
 ### `users/{uid}`
 
-Legacy profile documents are no longer authority and are denied to clients. Personal identity lives in Firebase Auth. Current permissions, scope and revocation live in server-managed `memberships/{uid}`; invitations, control state and immutable audit are defined in [PERSONAL_ACCESS.md](PERSONAL_ACCESS.md). Content documents and historical authors remain unchanged.
+Legacy profile documents are no longer authority and are denied to clients. Personal identity lives in Firebase Auth. Current permissions, scope and revocation live in server-managed `memberships/{uid}`; invitations, control state and immutable audit are defined in [PERSONAL_ACCESS.md](archive/PERSONAL_ACCESS.md). Content documents and historical authors remain unchanged.
 
 ### `quizzes/{quizId}`
 
 Quiz metadata: `title`, `description`, `status` (`draft`, `ready`, `archived`), ownership/audit fields, and timestamps.
 
-Reversible library deletion adds an independent `disposition: active | trash` overlay (missing means active), revision-checked trash/restore and trusted trash/restore actor timestamps on this same root. It never deletes nested content or changes the original status. See [QUIZ_TRASH.md](QUIZ_TRASH.md).
+Reversible library deletion adds an independent `disposition: active | trash` overlay (missing means active), revision-checked trash/restore and trusted trash/restore actor timestamps on this same root. It never deletes nested content or changes the original status. See [QUIZ_TRASH.md](archive/QUIZ_TRASH.md).
 
 Current required fields:
 
@@ -76,7 +76,7 @@ The existing `status` is an explicit organizational choice: metadata updates acc
 
 ### `quizzes/{quizId}/slides/{slideId}`
 
-Optional `defaultDesign`, `resultTemplates` and `printTemplate` on the quiz root are validated visual metadata, frozen into each event snapshot. Slide `design` and private `answerDesign` contain sparse overrides. Round-header design is also maintained on its derived round document for bounded live reads. Optional `hidden` is restricted to standalone information slides. Details and compatibility rules: [WHOLE_EVENING_DESIGN.md](WHOLE_EVENING_DESIGN.md).
+Optional `defaultDesign`, `resultTemplates` and `printTemplate` on the quiz root are validated visual metadata, frozen into each event snapshot. Slide `design` and private `answerDesign` contain sparse overrides. Round-header design is also maintained on its derived round document for bounded live reads. Optional `hidden` is restricted to standalone information slides. Details and compatibility rules: [WHOLE_EVENING_DESIGN.md](archive/WHOLE_EVENING_DESIGN.md).
 
 Private, globally ordered presentation source. It preserves every V1 slide, including non-question intro, agenda, recap, round content, and end slides. Fields include `position`, `kind`, `isQuestion`, title/text, options, classified media, presentation controls, optional `roundId`, moderator-only fields, and private `legacy.raw`. A private `correctAnswer` may be present for question slides. Public and projector clients never read this collection directly.
 
@@ -89,7 +89,7 @@ display time.
 
 Guided preflight repair does not add a persisted readiness flag or a new collection. A Choice repair receives only an option index, reads the authoritative `options`, and updates the private normalized `correctAnswer` on the slide and its derived private question record. A Video repair updates only normalized `clipStartSeconds` and `clipEndSeconds`. Both retain all other slide fields—including `legacy.raw` and unknown extensions—and increment the parent quiz `revision`. The original V1-derived raw value remains preserved under the private legacy payload.
 
-Known editor fields include `title`, `text`, `moderatorNote`, general string `options`, private `correctAnswer`, classified media references, and the known legacy presentation controls `videoStart`, `videoEnd`, `audioTrigger`, `backgroundOverlay`, `answerOverlay`, and `sourceQuestionNumber`. The projector foundation adds normalized `backgroundImage`, `questionImage`, `answerImage`, `mediaSource`, `clipStartSeconds`, `clipEndSeconds`, and top-level `backgroundOverlay`. It also stores derived `roundTitle`, `questionNumber`, and `questionCount` for an explicit within-round display contract. Compatibility mapping uses legacy media/presentation only when normalized fields are absent. An imported presentation range of exactly `videoStart: 0` and `videoEnd: 0`, with top-level start absent or `0` and no top-level end key, is a legacy unset sentinel rather than a playable zero-length clip: the editor maps it to `null/null`, and an unrelated save retains the existing stored timing keys instead of normalizing or deleting them. The editor supports validated legacy URLs and ready quiz-scoped owned image/audio/MP4 references; upload metadata and immutable generations are documented in MEDIA_STORAGE.md. `backgroundImage` and `backgroundOverlay` are renderable normalized fields, but the current editor has only partial URL/overlay authoring and no owned-background selection/upload workflow. A new round is represented by an explicit round-header slide with its own `roundId`; the user sees round settings rather than that implementation detail. Unknown slide/media values remain locked or fallback-rendered and are retained rather than guessed.
+Known editor fields include `title`, `text`, `moderatorNote`, general string `options`, private `correctAnswer`, classified media references, and the known legacy presentation controls `videoStart`, `videoEnd`, `audioTrigger`, `backgroundOverlay`, `answerOverlay`, and `sourceQuestionNumber`. The projector foundation adds normalized `backgroundImage`, `questionImage`, `answerImage`, `mediaSource`, `clipStartSeconds`, `clipEndSeconds`, and top-level `backgroundOverlay`. It also stores derived `roundTitle`, `questionNumber`, and `questionCount` for an explicit within-round display contract. Compatibility mapping uses legacy media/presentation only when normalized fields are absent. An imported presentation range of exactly `videoStart: 0` and `videoEnd: 0`, with top-level start absent or `0` and no top-level end key, is a legacy unset sentinel rather than a playable zero-length clip: the editor maps it to `null/null`, and an unrelated save retains the existing stored timing keys instead of normalizing or deleting them. The editor supports validated legacy URLs and ready quiz-scoped owned image/audio/MP4 references; upload metadata and immutable generations are documented in [MEDIA_STORAGE.md](archive/MEDIA_STORAGE.md). `backgroundImage` and `backgroundOverlay` are renderable normalized fields, but the current editor has only partial URL/overlay authoring and no owned-background selection/upload workflow. A new round is represented by an explicit round-header slide with its own `roundId`; the user sees round settings rather than that implementation detail. Unknown slide/media values remain locked or fallback-rendered and are retained rather than guessed.
 
 ### `quizzes/{quizId}/rounds/{roundId}`
 
@@ -151,7 +151,7 @@ set pricing or visibility.
 
 Frozen YouTube prompt clips can be rendered through an exact matching completed
 Drive import without changing this document tree. No binding collection or data
-migration is introduced; see [SNAPSHOT_DRIVE_CLIPS.md](SNAPSHOT_DRIVE_CLIPS.md).
+migration is introduced; see [SNAPSHOT_DRIVE_CLIPS.md](archive/SNAPSHOT_DRIVE_CLIPS.md).
 
 The PDF Print Center reads this existing immutable document tree through a trusted Function. Its registration adapter resolves accepted records server-side into transient `PrintTeam { id, name }` values.
 
@@ -159,7 +159,7 @@ The PDF Print Center reads this existing immutable document tree through a trust
 
 Private accepted/cancelled registration with normalized team name, member count, contact email, management-token hash, timestamps, and cancellation audit metadata. Staff reads are allowed; all browser writes are denied.
 
-Manual team records use this same collection with server-owned `source: manual`, nullable `contactEmail`, null `managementTokenHash`, actor fields, revision and immutable request fingerprint. The deterministic ID reserves the add request per event/staff UID, even after cancellation. Missing source means legacy online; no migration is needed. See `EVENT_TEAM_TOOLS.md`.
+Manual team records use this same collection with server-owned `source: manual`, nullable `contactEmail`, null `managementTokenHash`, actor fields, revision and immutable request fingerprint. The deterministic ID reserves the add request per event/staff UID, even after cancellation. Missing source means legacy online; no migration is needed. See [EVENT_TEAM_TOOLS.md](archive/EVENT_TEAM_TOOLS.md).
 
 ### Organizer intents in `events/{eventId}/emailIntents/{intentId}`
 
@@ -169,7 +169,7 @@ deterministic ID `owner_{registrationId}` and type
 recipient/owner UID, public-create provenance and creation timestamp, minimal
 event/team/count snapshot and its independent delivery state. It contains no team
 contact or management token and does not change the registration's participant
-delivery summary. See [TRANSACTIONAL_EMAIL.md](TRANSACTIONAL_EMAIL.md).
+delivery summary. See [TRANSACTIONAL_EMAIL.md](archive/TRANSACTIONAL_EMAIL.md).
 
 ### `events/{eventId}/registrationNames/{nameHash}`
 
@@ -191,17 +191,17 @@ Private live-control state. Required fields are `quizId`, safe display copy `qui
 
 ### `events/{eventId}/scores/{scoreId}`
 
-Implemented internal per-team/per-snapshot-round half-point value and monotonic revision. The stable pair key, append-only history child collection, server-only scoreOperations receipts, null/zero distinction and atomic transaction are specified in EVENT_SCORING.md. All client writes are denied; staff-only reads. Score mutations do not publish totals or rankings; separate staff confirmation is required.
+Implemented internal per-team/per-snapshot-round half-point value and monotonic revision. The stable pair key, append-only history child collection, server-only scoreOperations receipts, null/zero distinction and atomic transaction are specified in [EVENT_SCORING.md](archive/EVENT_SCORING.md). All client writes are denied; staff-only reads. Score mutations do not publish totals or rankings; separate staff confirmation is required.
 
 ### `quizzes/{quizId}/mediaAssets/{assetId}`
 
-Owned assets are implemented at quizzes/{quizId}/mediaAssets/{assetId}: private quiz/asset identity, kind/MIME/size, actor, request fingerprint, expiry and uploading/ready status; finalization records Storage generation and readyAt. Staff may read metadata; only server writes it. Immutable quiz-asset references remain in event snapshots. Objects have no client overwrite/delete path. MP4 finalization uses a private temporary upload and one server reservation (`finalizing` with source generation, SHA-256, MIME and size). Only its winner writes the canonical object; the temporary object is removed before the canonical generation becomes `ready`. No cleanup of existing ready assets is introduced. See MEDIA_STORAGE.md.
+Owned assets are implemented at quizzes/{quizId}/mediaAssets/{assetId}: private quiz/asset identity, kind/MIME/size, actor, request fingerprint, expiry and uploading/ready status; finalization records Storage generation and readyAt. Staff may read metadata; only server writes it. Immutable quiz-asset references remain in event snapshots. Objects have no client overwrite/delete path. MP4 finalization uses a private temporary upload and one server reservation (`finalizing` with source generation, SHA-256, MIME and size). Only its winner writes the canonical object; the temporary object is removed before the canonical generation becomes `ready`. No cleanup of existing ready assets is introduced. See [MEDIA_STORAGE.md](archive/MEDIA_STORAGE.md).
 
-The local demo image backup adds the server-derived optional `localImageIntegrityV3` descriptor for the current pinned generation. It stores the actual byte SHA-256, image dimensions and exact reference/generation/MIME/size/ETag binding after bounded Storage IO and fresh scoped authorization. It changes no slide, snapshot, status or object generation. An interrupted multi-image preparation may retain verified individual descriptors. A descriptor is never a publication or permission grant. Browser writes remain denied and the ordinary metadata read view does not add this field. See [LOCAL_IMAGE_BACKUP.md](LOCAL_IMAGE_BACKUP.md).
+The local demo image backup adds the server-derived optional `localImageIntegrityV3` descriptor for the current pinned generation. It stores the actual byte SHA-256, image dimensions and exact reference/generation/MIME/size/ETag binding after bounded Storage IO and fresh scoped authorization. It changes no slide, snapshot, status or object generation. An interrupted multi-image preparation may retain verified individual descriptors. A descriptor is never a publication or permission grant. Browser writes remain denied and the ordinary metadata read view does not add this field. See [LOCAL_IMAGE_BACKUP.md](archive/LOCAL_IMAGE_BACKUP.md).
 
 ## Public/sanitized data
 
-The offline runtime uses server-only `events/{eventId}/offlineExports/{exportId}` authority and import receipts. They hold bounded manifest descriptors, exact Storage pins, a baseline digest and the imported journal and decisions. Registration contacts stay in their original collection. Private slides remain in the immutable snapshot. Explicit event deletion owns these flat records. `offlineSigningKeys/demo-v1` is an emulator-only keyring. In the V2 activation path, signing material comes from a separate server-side binding and stays outside Firestore. Both Firestore paths remain denied to browser clients. See [offline operation](OFFLINE_MODE.md) and [release controls](OFFLINE_RELEASE.md).
+The offline runtime uses server-only `events/{eventId}/offlineExports/{exportId}` authority and import receipts. They hold bounded manifest descriptors, exact Storage pins, a baseline digest and the imported journal and decisions. Registration contacts stay in their original collection. Private slides remain in the immutable snapshot. Explicit event deletion owns these flat records. `offlineSigningKeys/demo-v1` is an emulator-only keyring. In the V2 activation path, signing material comes from a separate server-side binding and stays outside Firestore. Both Firestore paths remain denied to browser clients. See [offline operation](archive/OFFLINE_MODE.md) and [release controls](archive/OFFLINE_RELEASE.md).
 
 The server-only `events/{eventId}/registrationAbuse/{contactHash}` budget stores numeric tokens and update time. Its domain-separated SHA-256 key binds event and normalized contact; it is pseudonymous, not anonymous. Successful creates debit transactionally; failures, replay and cancellation do not refill it. Direct client access stays denied. Explicit permanent event deletion owns cleanup. The registration abuse implementation and emulator tests define the current local scope.
 
@@ -229,7 +229,7 @@ Anonymous clients may get one document when they already know its random session
 
 ### Confirmed interim results
 
-Event-bound sessions add private eventId/snapshotId and an interimResults version/page pointer. Private session child collections interimVersions and interimOperations hold immutable reviewed totals and idempotent audit receipts. The existing public session document contains only the currently published page of at most eight rank/teamName/halfPoints rows plus version/scope/page metadata. There is no public leaderboard subcollection. Hide/end/cancel/archive remove this payload. See [INTERIM_RESULTS.md](INTERIM_RESULTS.md).
+Event-bound sessions add private eventId/snapshotId and an interimResults version/page pointer. Private session child collections interimVersions and interimOperations hold immutable reviewed totals and idempotent audit receipts. The existing public session document contains only the currently published page of at most eight rank/teamName/halfPoints rows plus version/scope/page metadata. There is no public leaderboard subcollection. Hide/end/cancel/archive remove this payload. See [INTERIM_RESULTS.md](archive/INTERIM_RESULTS.md).
 
 Show interim versions additionally store private `rowTeamIds` and `teamRanks`;
 session `lastInterimVersionId` retains the last confirmed comparison after hide.
@@ -252,7 +252,7 @@ MIME and size are validated against the ready asset on assignment and reads.
 Configuring these fields advances the existing event revision;
 neither field is copied to publicEvents or immutable question snapshots. New cue
 configuration and media reads use trusted Functions, never direct browser writes.
-See [SHOW_MODE_IMPLEMENTATION.md](SHOW_MODE_IMPLEMENTATION.md).
+See [SHOW_MODE_IMPLEMENTATION.md](archive/SHOW_MODE_IMPLEMENTATION.md).
 
 ## Server-only registration flow
 
@@ -260,7 +260,7 @@ The public client calls a Function. The Function validates shape and limits, che
 
 ## Retention and audit
 
-Transactional registration email adds server-only event child collections `emailIntents` (operation snapshot and safe delivery audit), `emailSecrets` (authenticated ciphertext envelope only) and `registrationOperations` (payload fingerprints and replay receipts). The existing staff-readable registration contains a safe `emailDelivery` summary. Delivery progresses through `pending → processing → sent/failed`, with transient retries returning to pending. Intents store an expiring lease, at most five submission attempts, a nullable next-attempt timestamp and allowlisted error codes; terminal intents are never resent by queue replay. Neither a raw capability nor a secret URL enters those documents. Retention must coordinate encrypted token envelopes, creation receipts and decryption keys before cloud rollout. See [TRANSACTIONAL_EMAIL.md](TRANSACTIONAL_EMAIL.md).
+Transactional registration email adds server-only event child collections `emailIntents` (operation snapshot and safe delivery audit), `emailSecrets` (authenticated ciphertext envelope only) and `registrationOperations` (payload fingerprints and replay receipts). The existing staff-readable registration contains a safe `emailDelivery` summary. Delivery progresses through `pending → processing → sent/failed`, with transient retries returning to pending. Intents store an expiring lease, at most five submission attempts, a nullable next-attempt timestamp and allowlisted error codes; terminal intents are never resent by queue replay. Neither a raw capability nor a secret URL enters those documents. Retention must coordinate encrypted token envelopes, creation receipts and decryption keys before cloud rollout. See [TRANSACTIONAL_EMAIL.md](archive/TRANSACTIONAL_EMAIL.md).
 
 New eligible registration-update intents also receive an intent-bound encrypted
 management-token envelope in the existing emailSecrets child collection. No-op,
@@ -287,31 +287,31 @@ Contact data needs an explicit retention policy before launch. Important mutatio
 
 ## Referee access extension
 
-events/{eventId}/refereeAccess/{accessId} holds server-only label, expiry, version, revoked status, verifier, issuance fingerprint and organizer audit. refereeRateLimits holds server-only hashed-address request windows. Shared scores/history retain staff actorUid compatibility; referee writes use actorAccessId plus actorLabel, with the same scoreOperations receipts. No parallel scores collection or migration is introduced. See [REFEREE_ACCESS.md](REFEREE_ACCESS.md).
+events/{eventId}/refereeAccess/{accessId} holds server-only label, expiry, version, revoked status, verifier, issuance fingerprint and organizer audit. refereeRateLimits holds server-only hashed-address request windows. Shared scores/history retain staff actorUid compatibility; referee writes use actorAccessId plus actorLabel, with the same scoreOperations receipts. No parallel scores collection or migration is introduced. See [REFEREE_ACCESS.md](archive/REFEREE_ACCESS.md).
 
 
-Final reveal extends the same event-bound live session with private immutable finalVersions, revisioned finalOperations and an explicitly revealed public page. Staff confirmation, corrections, closure and moderator-only synthetic sound are documented in [FINAL_REVEAL.md](FINAL_REVEAL.md). No Rules, indexes or cloud data change is required by this implementation.
+Final reveal extends the same event-bound live session with private immutable finalVersions, revisioned finalOperations and an explicitly revealed public page. Staff confirmation, corrections, closure and moderator-only synthetic sound are documented in [FINAL_REVEAL.md](archive/FINAL_REVEAL.md). No Rules, indexes or cloud data change is required by this implementation.
 
 ## Event organizational email
 
-Admin-only preview/confirmation creates an immutable emailCampaigns record and recipient snapshots in the existing emailIntents outbox. The shared task worker delivers plain-text organizational messages without management capabilities or changes to registration confirmation status. All client campaign/intent access remains denied; safe history and status are exposed only through fresh-admin callables. Atomic recipient limits, snapshot/idempotence contracts and offline tests: [EVENT_TEAM_EMAIL.md](EVENT_TEAM_EMAIL.md).
+Admin-only preview/confirmation creates an immutable emailCampaigns record and recipient snapshots in the existing emailIntents outbox. The shared task worker delivers plain-text organizational messages without management capabilities or changes to registration confirmation status. All client campaign/intent access remains denied; safe history and status are exposed only through fresh-admin callables. Atomic recipient limits, snapshot/idempotence contracts and offline tests: [EVENT_TEAM_EMAIL.md](archive/EVENT_TEAM_EMAIL.md).
 
 ## Private migration import journals
 
 `migrationV1Imports/{quizId}` records a staging intent for a multi-batch library import. Its `state/complete` child is created atomically with the final `quizzes/{quizId}` root. Missing completion blocks re-import; the absent quiz root prevents library visibility while private children are staged. All journal client access is denied by existing default-deny Rules. No runtime application changes or synchronization are introduced.
 
-Media authoring extends the shared picker/gateway/renderer to question, private answer and background roles. Explicit empty fields detach without deleting legacy data or snapshot assets. See MEDIA_AUTHORING_RELEASE.md for the complete contract and deployment scope.
+Media authoring extends the shared picker/gateway/renderer to question, private answer and background roles. Explicit empty fields detach without deleting legacy data or snapshot assets. See [MEDIA_AUTHORING_RELEASE.md](archive/MEDIA_AUTHORING_RELEASE.md) for the complete contract and deployment scope.
 
 
-Complete editor extends the same private ordered stream with explicit draft/ready authoring, independent answer mode, default appearance, atomic round/recap creation and private in-memory rehearsal. Drafts remain editorial findings in optional preflight; saved drafts can be used for rehearsal and event snapshots through the same sanitized publication boundary. See [COMPLETE_EDITOR_RELEASE.md](COMPLETE_EDITOR_RELEASE.md) for field compatibility, authorization, verification and the integrated deployment manifest.
+Complete editor extends the same private ordered stream with explicit draft/ready authoring, independent answer mode, default appearance, atomic round/recap creation and private in-memory rehearsal. Drafts remain editorial findings in optional preflight; saved drafts can be used for rehearsal and event snapshots through the same sanitized publication boundary. See [COMPLETE_EDITOR_RELEASE.md](archive/COMPLETE_EDITOR_RELEASE.md) for field compatibility, authorization, verification and the integrated deployment manifest.
 
 ## Event management extension
 
 Event publication reuses `events.registrationPublished`, independently of quiz
 readiness and lifecycle. The public projection may additionally contain the safe
 `description` and `lifecycleStatus` fields. Existing projections without these
-optional fields remain compatible. See [EVENT_PUBLICATION.md](EVENT_PUBLICATION.md).
+optional fields remain compatible. See [EVENT_PUBLICATION.md](archive/EVENT_PUBLICATION.md).
 
-See [EVENT_MANAGEMENT.md](EVENT_MANAGEMENT.md) for the independent disposition overlay, scoped permission mapping, shared transactional guards, capability revocation and exact server-side deletion ownership/allowlist. No content backfill or Storage cleanup is introduced. Cloud team email remains disabled.
+See [EVENT_MANAGEMENT.md](archive/EVENT_MANAGEMENT.md) for the independent disposition overlay, scoped permission mapping, shared transactional guards, capability revocation and exact server-side deletion ownership/allowlist. No content backfill or Storage cleanup is introduced. Cloud team email remains disabled.
 
 Manual completion uses existing events roots and eventOperations/eventAudit receipts. The optional private completion object contains trusted at/by/reason; capabilityVersion and revision advance together. Ending one sessions document does not mutate its event root. Existing scores/history and confirmed result versions remain intact after either presentation END or event completion.

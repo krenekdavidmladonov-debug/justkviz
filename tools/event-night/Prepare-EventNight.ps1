@@ -43,10 +43,10 @@ try {
   Assert-EventNightPromotionClear $repoRoot $paths
   New-Item -ItemType Directory -Path $paths.DataDirectory -Force | Out-Null
   if (Test-Path -LiteralPath $paths.SnapshotDirectory) {
-    Throw-QaError 'Event-night snapshot už existuje; FIRST PREPARE jej nepřepíše.' 'Použijte START_EVENT_NIGHT.cmd. Reset musí být samostatné vědomé development rozhodnutí.'
+    Throw-QaError 'Event-night snapshot už existuje; FIRST PREPARE jej nepřepíše.' 'Použijte tools\legacy\START_EVENT_NIGHT.cmd. Reset musí být samostatné vědomé development rozhodnutí.'
   }
   if (Test-Path -LiteralPath $paths.StatePath) {
-    Throw-QaError 'Existuje event-night run-state.' 'Nejdřív bezpečně spusťte STOP_EVENT_NIGHT.cmd.'
+    Throw-QaError 'Existuje event-night run-state.' 'Nejdřív bezpečně spusťte tools\legacy\STOP_EVENT_NIGHT.cmd.'
   }
   $gitStatus = (& $gitTool.Path -C $repoRoot status --porcelain=v1 2>$null | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace($gitStatus)) {
@@ -113,7 +113,7 @@ try {
   Write-QaSuccess 'FIRST PREPARE dokončen. Žádná produkce nebyla kontaktována.'
   Write-Host "Candidate: $($health.candidateTitle)"
   Write-Host "Připravenost: $($health.readiness.status) — $($health.readiness.blockers) blockerů"
-  Write-Host 'Pro běžný start použijte START_EVENT_NIGHT.cmd.'
+  Write-Host 'Pro běžný start použijte tools\legacy\START_EVENT_NIGHT.cmd.'
   Complete-PrepareWindow
   exit 0
 } catch {

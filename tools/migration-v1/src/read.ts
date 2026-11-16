@@ -61,7 +61,7 @@ async function resolveInputFile(inputPath: string): Promise<string> {
   if (inputStat.isFile()) {
     if (inputPath.endsWith('.overall_export_metadata') || inputPath.endsWith('.export_metadata')) {
       throw new MigrationInputError(
-        'Managed Firestore exports use LevelDB logs and protobuf metadata. They are not parsed directly; follow docs/MIGRATION_V1.md.',
+        'Managed Firestore exports use LevelDB logs and protobuf metadata. They are not parsed directly; follow docs/archive/MIGRATION_V1.md.',
       );
     }
     return inputPath;

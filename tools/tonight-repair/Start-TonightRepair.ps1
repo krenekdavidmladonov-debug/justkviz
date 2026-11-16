@@ -100,8 +100,8 @@ try {
   Write-Host 'admin@example.test'
   Write-Host 'LocalQuiz123!'
   Write-Host ''
-  Write-Host 'Po opravách použij: VERIFY_TONIGHT_GO_NO_GO.cmd'
-  Write-Host 'Po skončení vždy použij: STOP_EVENT_NIGHT.cmd'
+  Write-Host 'Po opravách použij: tools\legacy\VERIFY_TONIGHT_GO_NO_GO.cmd'
+  Write-Host 'Po skončení vždy použij: tools\legacy\STOP_EVENT_NIGHT.cmd'
   if (-not $SkipBrowser) {
     Start-Process $repairUrl
     Write-QaSuccess 'Lokální repair route byla otevřena; heslo nebylo vyplněno automaticky.'
