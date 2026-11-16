@@ -15,7 +15,12 @@ import { quizMediaReadFailure, readQuizMediaBlob, uploadQuizMedia } from '../app
 import { MediaBlobCache, quizMediaBlobCache } from '../apps/web/src/features/media/mediaBlobCache';
 import { getFirebaseServices } from '../apps/web/src/services/firebase/client';
 
-vi.mock('../apps/web/src/services/firebase/app', () => ({ getFirebaseAppContext: () => ({ config: { useEmulators: true, options: { projectId: 'demo-media-video' } } }) }));
+vi.mock('../apps/web/src/services/firebase/app', () => ({
+  getFirebaseAppContext: () => ({
+    app: { options: { projectId: 'demo-media-video' } },
+    config: { useEmulators: true, options: { projectId: 'demo-media-video' } },
+  }),
+}));
 vi.mock('../apps/web/src/services/firebase/auth', () => ({ getFirebaseAuth: () => ({ currentUser: { getIdToken: () => Promise.resolve('synthetic-firebase-token') } }) }));
 vi.mock('../apps/web/src/services/firebase/client', () => ({ getFirebaseServices: vi.fn() }));
 vi.mock('../apps/web/src/features/access/api', () => ({ privateRead: vi.fn() }));

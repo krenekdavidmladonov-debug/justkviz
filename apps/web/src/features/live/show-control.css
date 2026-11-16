@@ -14,6 +14,12 @@
 /* The live workspace is the control desk; results are an action, not another page of settings. */
 .event-night-controls { display: grid; gap: .5rem; }
 .event-night-controls > button { width: 100%; }
+[data-local-image-control-status] input[type="file"] {
+  display: block;
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
 .moderator-context-details > summary { cursor: pointer; font-size: .8rem; padding-top: .5rem; color: var(--color-text-muted); }
 .moderator-audio-player.moderator-native-audio { height: auto; min-height: 0; background: transparent; }
 .moderator-native-audio > div { display: none; }
