@@ -1,5 +1,7 @@
 # Documentation index
 
+Firebase project `filmovy-kviz-v2-staging` and Hosting site `justkviz-v2` are production at https://justkviz.cz. Older staging test procedures are historical. See [AGENTS.md](../AGENTS.md) for current rules.
+
 This directory indexes JustKvíz V2 product, architecture, security, migration, editor, projector and event decisions. Implementation contracts describe local code; they do not establish current cloud readiness. Research and historical records do not override current implementation contracts or authorize deployment.
 
 ## Current local integration and release planning
@@ -122,7 +124,7 @@ The separate research branches are intentionally not part of `integration/v0.3-d
 
 These records preserve earlier planning, staging bootstrap and release/operational evidence. They do not establish today's cloud configuration, authorize deployment or override current implementation contracts:
 
-- [STAGING.md](STAGING.md) — historical staging bootstrap/runbook, including legacy claim roles and then-observed infrastructure; require fresh approved verification.
+- [STAGING.md](STAGING.md) — historical staging bootstrap/runbook, including legacy claim roles and then-observed infrastructure.
 - [ROADMAP_V03.md](ROADMAP_V03.md) — 2026-09-03 planning baseline, not the current implementation inventory.
 
 - [TOMORROW_RELEASE_CHECKLIST.md](TOMORROW_RELEASE_CHECKLIST.md)

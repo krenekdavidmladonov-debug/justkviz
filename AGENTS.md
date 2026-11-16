@@ -1,19 +1,23 @@
-# AGENTS.md
+# Pravidla pro práci na JustKvízu
 
-## Scope and safe local development
+## Produkce a testování
 
-JustKvíz is a quiz authoring, registration, scoring and presentation application. Existing production systems and live data are outside autonomous development scope.
+- Firebase projekt `filmovy-kviz-v2-staging` a Hosting site `justkviz-v2` obsluhují **PRODUKCI** se skutečnými daty na [justkviz.cz](https://justkviz.cz).
+- V produkci nic netestuj, nespouštěj seed, nic nemaž a neposílej e-maily. Původní aplikace V1 a její Firebase projekt jsou mimo rozsah.
+- Testuj pouze lokálně s Firebase Emulator Suite, explicitním projektem `demo-*` a adresami emulátorů na loopbacku. Seed musí skončit před inicializací SDK, pokud tyto podmínky neplatí.
+- Nasazuj pouze z commitu na `main` se zeleným CI a až po výslovném souhlasu Davida s konkrétním nasazením v aktuální konverzaci. Přístup k produkčnímu Firebase, zápisy do cloudu a změny IAM vyžadují výslovný souhlas Davida.
 
-- Local source changes, isolated tests and reversible local commits are allowed. Use a dedicated branch and preserve existing dirty work.
-- Public push, pull requests, merge, deployment, cloud writes, IAM, secrets and real emails require explicit approval for the concrete action. Historical approvals or release reports are not authorization.
-- Never commit secrets, credentials, environment files, personal or live data, private exports or internal operational records. Keep coordinator memory and evidence outside this public branch.
-- Use explicit demo-* Firebase projects and loopback emulator endpoints. Seed scripts must fail closed before SDK initialization.
-- Require current active server-managed membership, concrete permissions and matching resource scope. Role labels and legacy Auth claims grant no implicit authority.
-- Never send unrevealed answers, private notes or team contacts to public/projector clients. Treat browser input as untrusted.
-- Read architecture, data-model and security documentation before changing boundaries. Run pnpm check and relevant tests; authorization/Rules changes additionally require demo emulator Rules tests.
-- Coordinate disjoint file ownership for implementation and independent read-only QA/security review. Preserve meaningful tests, reproduce real defects, and distinguish emulator/browser evidence from physical or live-cloud acceptance.
-- Select the next feasible product task after each completed task. Skip unchanged completed work, record actual blocked inputs privately and continue independent work. Public source history must remain free of private automation, chat, worktree or claim records.
+## Větve a předání
 
-## Layout
+- Jeden úkol = jedna krátká větev = jeden PR do `main`. Pracuj v hlavním checkoutu a chraň rozpracované změny.
+- Nezakládej další worktrees ani autonomní běhy, ledgery, receipt soubory nebo nové reporty. Stav úkolu a výsledek kontrol zapisuj pouze do popisu PR.
+- Nemaž nic, co není na GitHubu. Veřejný push a otevření PR musí být součástí zadání od Davida. PR slučuje David.
+- Na konci úkolu česky uveď, co se změnilo, číslo PR a jak to David vyzkouší.
 
-apps/web contains the React/Vite client; functions contains the trusted Firebase boundary; packages contains shared domain modules. Public technical contracts are in docs.
+## Bezpečnost aplikace
+
+- Do Gitu neukládej tajné údaje, klíče, přihlašovací údaje, soubory `.env`, osobní a produkční data ani soukromé exporty.
+- Administrační operace vyžadují aktuální aktivní členství spravované serverem, konkrétní oprávnění a rozsah odpovídající dotčenému zdroji. Ověřuj je na serveru i v Security Rules. Přihlášení, název role ani historické Auth claims samy nepřidělují oprávnění.
+- Veřejnému klientu ani projektoru neposílej správné odpovědi před výslovným odhalením. Soukromé dokumenty kvízů, poznámky a kontakty týmů patří jen oprávněným uživatelům.
+- Vstup z prohlížeče považuj za nedůvěryhodný. Citlivé zápisy validuj v Cloud Functions a v Security Rules přiděluj nejmenší nutná oprávnění.
+- Před změnou datových nebo bezpečnostních hranic čti [architekturu](docs/ARCHITECTURE.md), [datový model](docs/DATA_MODEL.md) a [bezpečnost](docs/SECURITY.md). Spusť `pnpm check` a příslušné testy. Změny přístupu nebo Rules ověř také testy Security Rules v emulátorech.

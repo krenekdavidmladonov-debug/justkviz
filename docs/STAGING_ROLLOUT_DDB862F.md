@@ -2,7 +2,7 @@
 
 This preserves the operator proposal for frozen **`ddb862f946a7621e4ff9dbfb30f8976ad8d0e3ac`**. The owner subsequently approved the exact pause/deployment scope with **Ano**, and execution is complete in [STAGING_EXECUTION_DDB862F.md](STAGING_EXECUTION_DDB862F.md). Do not repeat these commands or request the same approval. Later documentation/operator-tool commits do not replace the application SHA. QA provisioning/content, cleanup, collaboration resume and email remain separate scope.
 
-The sole deployment target is `filmovy-kviz-v2-staging` (`177615774316`), Functions region `europe-west1`. Keep production and the original application out of scope. [AGENTS.md](../AGENTS.md), [SECURITY.md](SECURITY.md), [PERSONAL_ACCESS.md](PERSONAL_ACCESS.md) and [EVENT_MANAGEMENT.md](EVENT_MANAGEMENT.md) require active membership, concrete permissions and resource scope independently of role labels/legacy claims. Public answers require explicit reveal; contacts and private quiz data remain protected.
+The historical target was `filmovy-kviz-v2-staging` (`177615774316`), Functions region `europe-west1`. This project now serves production at https://justkviz.cz. [AGENTS.md](../AGENTS.md), [SECURITY.md](SECURITY.md), [PERSONAL_ACCESS.md](PERSONAL_ACCESS.md) and [EVENT_MANAGEMENT.md](EVENT_MANAGEMENT.md) require active membership, concrete permissions and resource scope independently of role labels/legacy claims. Public answers require explicit reveal; contacts and private quiz data remain protected.
 
 ## Frozen local evidence and remaining gates
 

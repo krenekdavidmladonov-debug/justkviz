@@ -1,12 +1,10 @@
-# V2 internet staging
+# V2 staging (historical)
 
-Dedicated project: `filmovy-kviz-v2-staging` (project number `177615774316`).
-Target URL: https://filmovy-kviz-v2-staging.web.app/
+**Production today:** Firebase project `filmovy-kviz-v2-staging` and Hosting site `justkviz-v2` serve real data at https://justkviz.cz. All tests and seeds belong on local `demo-*` emulators. See [AGENTS.md](../AGENTS.md) for current rules.
 
-Local development stays on `demo-filmovy-kviz-v2` and emulators. Staging is a real,
-publicly reachable HTTPS environment with separate Auth, Firestore and Functions.
-V1 remains production and must never be targeted by these tools. V2 production
-is not configured or supported by this deployment path.
+The sections below record the former staging setup and procedures. Treat the deployment, seed, smoke and reset commands as historical references only.
+
+Former Hosting URL: https://filmovy-kviz-v2-staging.web.app/
 
 ## Resources and safety
 
@@ -39,14 +37,11 @@ previous/new release/version for rollback investigation. No automatic rollback r
 
 ### Full staging deployment
 
-Use Node 22, installed workspace dependencies, and an operator Firebase CLI login.
-Safely fast-forward a clean main checkout after reviewing the merge, then run
-`DEPLOY_STAGING.cmd` from the repository. This prints the branch and exact target,
-reads only the staging web SDK configuration, builds in explicit staging mode,
-packages the compiled Functions and shared domain locally, and deploys only
-Firestore Rules/indexes, Functions and Hosting with explicit `--project` and config.
-The wrapper requires `.tools/node22/node.exe`; alternatively run with an installed
-Node 22: `node tools/staging/deploy.mjs filmovy-kviz-v2-staging`.
+The former full deployment used Node 22, installed workspace dependencies and
+an operator Firebase CLI login. It built in explicit staging mode, packaged
+Functions locally and deployed Firestore Rules/indexes, Functions and Hosting.
+The old launcher is now [DEPLOY_PRODUKCE_POZOR.cmd](../tools/legacy/DEPLOY_PRODUKCE_POZOR.cmd).
+The underlying Hosting deploy path has been retired.
 
 The generated Functions source is under `.local-data/staging/functions`. It contains
 compiled application/domain code and dependency metadata, not the rest of `.local-data`.
