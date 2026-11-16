@@ -52,6 +52,23 @@ export function requestedDirection(data: unknown): -1 | 1 {
   return data.direction;
 }
 
+export function requestedSlideMove(data: unknown):
+  | { readonly direction: -1 | 1 }
+  | { readonly beforeSlideId: string | null; readonly moveRound: boolean } {
+  if (!isObject(data)) throw new HttpsError('invalid-argument', 'Request data is required.');
+  if (!Object.hasOwn(data, 'beforeSlideId')) {
+    if (data.moveRound !== undefined) throw new HttpsError('invalid-argument', 'moveRound requires an exact move target.');
+    return { direction: requestedDirection(data) };
+  }
+  if (data.direction !== undefined || (data.moveRound !== undefined && typeof data.moveRound !== 'boolean')) {
+    throw new HttpsError('invalid-argument', 'Slide move is invalid.');
+  }
+  return {
+    beforeSlideId: data.beforeSlideId === null ? null : requiredId(data, 'beforeSlideId'),
+    moveRound: data.moveRound === true,
+  };
+}
+
 export function requestedRoundTitle(data: unknown): string {
   if (!isObject(data)) throw new HttpsError('invalid-argument', 'Request data is required.');
   return boundedString(data.title, 'round title', 300, false);
@@ -96,8 +113,9 @@ export function validatePrintTemplate(value: unknown): PrintTemplate {
   if (Object.keys(normalized).length !== Object.keys(value).length) throw new QuizEditorError('invalid-argument', 'Print template is invalid.');
   return normalized;
 }
-export function validateQuizMetadata(value: unknown): { readonly title: string; readonly description: string; readonly printTemplate?: PrintTemplate; readonly defaultDesign?: SlideDesign; readonly resultTemplates?: ResultTemplates; readonly defaultAppearance?: { readonly backgroundImage: string; readonly backgroundOverlay: number; readonly imageLayout: 'split' | 'stacked' } } {
+export function validateQuizMetadata(value: unknown): { readonly title: string; readonly description: string; readonly status?: 'draft' | 'ready'; readonly printTemplate?: PrintTemplate; readonly defaultDesign?: SlideDesign; readonly resultTemplates?: ResultTemplates; readonly defaultAppearance?: { readonly backgroundImage: string; readonly backgroundOverlay: number; readonly imageLayout: 'split' | 'stacked' } } {
   if (!isObject(value)) throw new QuizEditorError('invalid-argument', 'Quiz metadata is required.');
+  if (value.status !== undefined && value.status !== 'draft' && value.status !== 'ready') throw new QuizEditorError('invalid-argument', 'Quiz status is invalid.');
   let defaultAppearance;
   if (value.defaultAppearance !== undefined) {
     const appearance = value.defaultAppearance;
@@ -107,6 +125,7 @@ export function validateQuizMetadata(value: unknown): { readonly title: string; 
     defaultAppearance = {backgroundImage:validateNormalizedImage(appearance.backgroundImage,'default background'),backgroundOverlay:overlay,imageLayout:appearance.imageLayout as 'split' | 'stacked'};
   }
   return {
+    ...(value.status === undefined ? {} : { status: value.status }),
     ...(value.printTemplate === undefined ? {} : { printTemplate: validatePrintTemplate(value.printTemplate) }),
     ...(value.defaultDesign === undefined ? {} : { defaultDesign: validateSlideDesign(value.defaultDesign) }),
     ...(value.resultTemplates === undefined ? {} : { resultTemplates: validateResultTemplates(value.resultTemplates) }),
@@ -125,6 +144,22 @@ export function requestedQuizCreation(data: unknown): { readonly title: string; 
   return {
     title: boundedString(data.title, 'title', 300, false).trim(),
     requestId,
+  };
+}
+
+export function requestedQuizDuplication(data: unknown): {
+  readonly quizId: string;
+  readonly expectedRevision: number;
+  readonly title: string;
+  readonly requestId: string;
+} {
+  if (!isObject(data) || Object.keys(data).some(key => !['quizId', 'expectedRevision', 'title', 'requestId'].includes(key))) {
+    throw new QuizEditorError('invalid-argument', 'Quiz duplication request is invalid.');
+  }
+  return {
+    ...requestedQuizCreation({ title: data.title, requestId: data.requestId }),
+    quizId: requiredId(data, 'quizId'),
+    expectedRevision: expectedRevision(data),
   };
 }
 
@@ -169,7 +204,7 @@ function validateNormalizedImage(value: unknown, field: string): string {
 }
 
 function validateNormalizedMediaSource(value: unknown): string {
-  const source = value === undefined ? '' : boundedString(value, 'mediaSource', 4_096);
+  const source = boundedString(value, 'mediaSource', 4_096);
   if (source === '' || parseQuizAsset(source) || /^[\w-]{11}$/u.test(source)) return source;
   try {
     const parsed = new URL(source);
@@ -273,7 +308,7 @@ export function validateSlideInput(value: unknown): EditorSlideInput {
     backgroundImage: validateNormalizedImage(value.backgroundImage, 'backgroundImage'),
     questionImage: validateNormalizedImage(value.questionImage, 'questionImage'),
     answerImage: validateNormalizedImage(value.answerImage, 'answerImage'),
-    mediaSource: validateNormalizedMediaSource(value.mediaSource),
+    ...(value.mediaSource === undefined ? {} : { mediaSource: validateNormalizedMediaSource(value.mediaSource) }),
     backgroundOverlay: value.backgroundOverlay === undefined
       ? presentation.backgroundOverlay
       : nullableNumber(value.backgroundOverlay, 'backgroundOverlay', 100),

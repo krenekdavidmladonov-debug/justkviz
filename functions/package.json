@@ -12,6 +12,15 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
     "lint": "eslint src --max-warnings 0"
   },
+  "overrides": {
+    "uuid": "11.1.1",
+    "@grpc/grpc-js": "1.14.7",
+    "proxy-addr": "2.0.8",
+    "body-parser": {
+      ".": "1.20.9"
+    },
+    "qs": "6.17.1"
+  },
   "dependencies": {
     "@filmovy-kviz/quiz-domain": "workspace:*",
     "@fontsource/noto-sans": "^5.3.0",

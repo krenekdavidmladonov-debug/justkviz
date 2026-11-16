@@ -25,7 +25,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-const PRESENTATION_KEYS = ['layout', 'showLogo', 'showInstructions'] as const;
+const PRESENTATION_KEYS = ['layout', 'colorMode', 'showLogo', 'showInstructions'] as const;
 
 function assertExactKeys(value: Record<string, unknown>, allowed: readonly string[], presentation = false): void {
   const allowedSet = new Set([...allowed, ...(presentation ? PRESENTATION_KEYS : [])]);
@@ -38,6 +38,9 @@ function presentationOptions(value: Record<string, unknown>): PrintPresentationO
   if (value.layout !== undefined && value.layout !== 'compact' && value.layout !== 'spacious') {
     throw new PrintCenterError(400, 'invalid-layout', 'Vyberte úsporné nebo prostorné archy.');
   }
+  if (value.colorMode !== undefined && value.colorMode !== 'color' && value.colorMode !== 'grayscale') {
+    throw new PrintCenterError(400, 'invalid-presentation', 'Vyberte barevný nebo černobílý tisk.');
+  }
   for (const key of ['showLogo', 'showInstructions'] as const) {
     if (value[key] !== undefined && typeof value[key] !== 'boolean') {
       throw new PrintCenterError(400, 'invalid-presentation', 'Nastavení tisku není platné.');
@@ -45,6 +48,7 @@ function presentationOptions(value: Record<string, unknown>): PrintPresentationO
   }
   return {
     ...(value.layout === undefined ? {} : { layout: value.layout }),
+    ...(value.colorMode === undefined ? {} : { colorMode: value.colorMode }),
     ...(value.showLogo === undefined ? {} : { showLogo: value.showLogo as boolean }),
     ...(value.showInstructions === undefined ? {} : { showInstructions: value.showInstructions as boolean }),
   };
@@ -56,7 +60,7 @@ function parseDisposition(value: unknown): PrintDisposition {
 }
 
 function parseArtifactType(value: unknown): PrintArtifactType {
-  if (value === 'team-sheets' || value === 'answer-key' || value === 'score-table') return value;
+  if (value === 'team-sheets' || value === 'organizer-sheets' || value === 'answer-key' || value === 'score-table') return value;
   throw new PrintCenterError(400, 'invalid-artifact', 'Neplatný typ dokumentu.');
 }
 
@@ -98,7 +102,7 @@ export function parsePrintRequestOptions(value: unknown): PrintRequestOptions {
   const artifactType = parseArtifactType(value.artifactType);
   const disposition = parseDisposition(value.disposition);
   const presentation = presentationOptions(value);
-  if (artifactType === 'answer-key' || artifactType === 'score-table') {
+  if (artifactType === 'answer-key' || artifactType === 'organizer-sheets' || artifactType === 'score-table') {
     assertExactKeys(value, ['artifactType', 'disposition'], true);
     return { artifactType, disposition, ...presentation };
   }
@@ -122,7 +126,7 @@ export function parsePrintOptions(value: unknown): PrintOptions {
   const disposition = parseDisposition(value.disposition);
   const presentation = presentationOptions(value);
 
-  if (artifactType === 'answer-key') {
+  if (artifactType === 'answer-key' || artifactType === 'organizer-sheets') {
     assertExactKeys(value, ['artifactType', 'disposition'], true);
     return { artifactType, disposition, ...presentation };
   }
@@ -153,6 +157,6 @@ export function parsePrintOptions(value: unknown): PrintOptions {
 
 export function authorizePrintArtifact(role: unknown, artifactType: PrintArtifactType): void {
   if (role === 'admin') return;
-  if (role === 'moderator' && artifactType !== 'answer-key') return;
+  if (role === 'moderator' && (artifactType === 'team-sheets' || artifactType === 'score-table')) return;
   throw new PrintCenterError(403, 'permission-denied', 'Pro tento dokument nemáte oprávnění.');
 }

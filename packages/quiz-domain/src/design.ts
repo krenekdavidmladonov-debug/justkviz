@@ -91,7 +91,7 @@ export function mergeStoredDesign(current: unknown, input: SlideDesign): Record<
 }
 
 export function canHideInfoSlide(slide: { readonly kind: string; readonly isQuestion?: boolean; readonly roundId?: string }): boolean {
-  return slide.isQuestion !== true && slide.roundId === undefined && ['intro', 'agenda', 'rules', 'end', 'title', 'info'].includes(slide.kind.toLowerCase());
+  return slide.isQuestion !== true && slide.roundId === undefined && ['intro', 'agenda', 'rules', 'thank-you', 'end', 'title', 'info'].includes(slide.kind.toLowerCase());
 }
 /** Legacy defaults are fallbacks; new design overrides are resolved separately. */
 export function resolveLegacySlideAppearance(defaultAppearance: unknown, slide: { readonly backgroundImage?: unknown; readonly backgroundOverlay?: unknown; readonly imageLayout?: unknown; readonly presentation?: unknown; readonly media?: readonly unknown[] }): { backgroundImage: string; backgroundOverlay: number; imageLayout: 'split' | 'stacked' } {

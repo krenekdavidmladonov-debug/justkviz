@@ -62,6 +62,7 @@ export function humanSlideLabel(slide?: LiveControlSlide): string {
   if (kind === 'rules') return 'Pravidla';
   if (kind === 'recap') return 'Rekapitulace';
   if (kind === 'end') return 'Závěr kvízu';
+  if (kind === 'thank-you') return 'Poděkování před vyhlášením';
   if (kind === 'pl') return 'Pravda / lež';
   return 'Obsah kvízu';
 }

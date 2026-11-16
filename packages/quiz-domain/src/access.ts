@@ -60,7 +60,7 @@ export function canDelegate(actor: Membership, grant: AccessGrant): boolean {
     && scopeContains(actor.quizzes, grant.quizzes) && scopeContains(actor.events, grant.events);
 }
 
-/** Existing owners gain only the new owner-default deletion right; no claim grants it. */
+/** Presets supply defaults; editable role labels never add implicit permissions. */
 export function hasPermission(member: AccessGrant, permission: Permission): boolean {
-  return member.permissions.includes(permission) || (member.role === 'owner' && permission === 'event.delete');
+  return member.permissions.includes(permission);
 }

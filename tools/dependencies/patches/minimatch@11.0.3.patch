@@ -1,0 +1,12 @@
+diff --git a/dist/commonjs/index.js b/dist/commonjs/index.js
+index eb1c915f43b2debf5faa7ac3a73c262a161c7a4f..5a14fb7ccee1fbcdda337446b4c7f427957f1a88 100644
+--- a/dist/commonjs/index.js
++++ b/dist/commonjs/index.js
+@@ -1547,4 +1547,7 @@ Object.defineProperty(exports, "unescape", { enumerable: true, get: function ()
+ exports.minimatch.Minimatch = Minimatch;
+ exports.minimatch.escape = escape_js_1.escape;
+ exports.minimatch.unescape = unescape_js_1.unescape;
++// Preserve the pre-v6 callable CommonJS API for existing CLI dependencies.
++// Matching and all named exports still come from the upstream patched engine.
++module.exports = Object.assign(exports.minimatch, exports);
+ //# sourceMappingURL=index.js.map

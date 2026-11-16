@@ -6,6 +6,10 @@
   "hosting": {
     "public": "apps/web/dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "headers": [{ "source": "/{offline.html,offline-sw.js,offline.webmanifest}", "headers": [
+      { "key": "Cache-Control", "value": "no-cache, max-age=0, must-revalidate" },
+      { "key": "X-Content-Type-Options", "value": "nosniff" }
+    ] }],
     "rewrites": [{ "source": "**", "destination": "/index.html" }]
   },
   "firestore": {

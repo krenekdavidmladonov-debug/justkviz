@@ -1,0 +1,12 @@
+import { spawn, spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { requireFullEmulatorEnvironment } from '../../tools/local-emulator-environment.mjs';
+const { projectId } = requireFullEmulatorEnvironment(process.env, 'Print browser preview');
+const root = process.cwd(), source = path.join(root, 'apps/web'), out = path.join(root, '.local-data/print-redesign/hosting');
+const env = { ...process.env, VITE_APP_ENV: 'local', VITE_FIREBASE_API_KEY: 'demo-api-key', VITE_FIREBASE_AUTH_DOMAIN: projectId + '.firebaseapp.com', VITE_FIREBASE_PROJECT_ID: projectId, VITE_FIREBASE_USE_EMULATORS: 'true', VITE_FIREBASE_STORAGE_BUCKET: projectId + '.appspot.com', VITE_FIREBASE_MESSAGING_SENDER_ID: '000000000000', VITE_FIREBASE_APP_ID: '1:000000000000:web:demo', VITE_ENABLE_TEAM_EMAIL: 'false' };
+const vite = path.join(root, 'apps/web/node_modules/vite/bin/vite.js');
+const built = spawnSync(process.execPath, [vite, 'build', source, '--outDir', out], { env, stdio: 'inherit', windowsHide: true });
+if (built.status !== 0) process.exit(built.status || 1);
+const child = spawn(process.execPath, [vite, 'preview', source, '--outDir', out, '--host', '127.0.0.1', '--port', '5220', '--strictPort'], { env, stdio: 'inherit', windowsHide: true });
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));
+child.on('exit', code => { process.exitCode = code || 0; });

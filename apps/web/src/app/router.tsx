@@ -1,8 +1,8 @@
+import { PrivacyPage } from '../routes/PrivacyPage';
 import { lazyAdminRoute } from './lazyAdminRoute';
-import { PermissionGate } from '../features/access/PermissionGate';
 import { RefereePage } from '../routes/referee/RefereePage';
 import { lazy, Suspense } from 'react';
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter } from 'react-router-dom';
 
 import { AdminPage } from '../routes/admin/AdminPage';
 import { AdminLoginPage } from '../routes/admin/AdminLoginPage';
@@ -15,9 +15,9 @@ import { ManageRegistrationPage } from '../routes/events/ManageRegistrationPage'
 import { NotFoundPage } from '../routes/NotFoundPage';
 import { AdminShell } from './AdminShell';
 import { AppLayout } from './AppLayout';
-import { AccountPage } from '../routes/AccountPage';
-import { UsersAccessPage } from '../routes/admin/UsersAccessPage';
-import { AdminSettingsPage } from '../routes/admin/AdminSettingsPage';
+import { RouteErrorPage } from './RouteErrorPage';
+import { QuizLoading } from '../features/quizzes/QuizLoading';
+import { DriveConnectionCallback } from '../features/drive/DriveConnectionCallback';
 import '../styles/access.css';
 
 const ProjectorPage = lazy(async () => {
@@ -29,13 +29,28 @@ function LazyProjectorRoute() {
   return <Suspense fallback={<section className="projector-stage projector-message"><h1>Načítám projektor…</h1></section>}><ProjectorPage /></Suspense>;
 }
 
+function PublicRouteLoading() {
+  return <QuizLoading label="Načítám stránku…" />;
+}
+
+const lazyAccountRoute = async () => {
+  const { AccountPage } = await import('../routes/AccountPage');
+  return { Component: AccountPage };
+};
+
+function isCurrentCreationEntry(entryKey: string): boolean {
+  return router.state.location.key === entryKey && router.state.navigation.state === 'idle';
+}
+
 export const router = createBrowserRouter([
-  { path: 'referee/:eventId', element: <RefereePage /> },
-  { path: 'projector', element: <LazyProjectorRoute /> },
-  { path: 'projector/:sessionId', element: <LazyProjectorRoute /> },
+  { path: 'admin/settings/drive/callback', element: <DriveConnectionCallback />, errorElement: <RouteErrorPage /> },
+  { path: 'referee/:eventId', element: <RefereePage />, errorElement: <RouteErrorPage /> },
+  { path: 'projector', element: <LazyProjectorRoute />, errorElement: <RouteErrorPage /> },
+  { path: 'projector/:sessionId', element: <LazyProjectorRoute />, errorElement: <RouteErrorPage /> },
   {
     path: 'admin',
     element: <RequireStaff />,
+    errorElement: <RouteErrorPage />,
     HydrateFallback: AdminLoading,
     children: [
       { path: 'live/:sessionId', lazy: lazyAdminRoute(() => import('../routes/admin/LiveControlPage').then(module => module.LiveControlPage), ['event.live']) },
@@ -44,15 +59,21 @@ export const router = createBrowserRouter([
         element: <AdminShell />,
         children: [
           { index: true, element: <AdminPage /> },
-          { path: 'settings', element: <AdminSettingsPage /> },
-          { path: 'users', element: <PermissionGate requires={['users.manage']}><UsersAccessPage /></PermissionGate> },
+          { path: 'settings', lazy: async () => ({ Component: (await import('../routes/admin/AdminSettingsPage')).AdminSettingsPage }) },
+          { path: 'users', lazy: lazyAdminRoute(() => import('../routes/admin/UsersAccessPage').then(module => module.UsersAccessPage), ['users.manage']) },
           { path: 'quizzes', lazy: lazyAdminRoute(() => import('../routes/admin/QuizLibraryPage').then(module => module.QuizLibraryPage), ['quiz.read']) },
-          { path: 'quizzes/new', lazy: lazyAdminRoute(() => import('../routes/admin/QuizCreatePage').then(module => module.QuizCreatePage), ['quiz.create']) },
+          { path: 'quizzes/new', lazy: lazyAdminRoute(async () => {
+            const { QuizCreatePage } = await import('../routes/admin/QuizCreatePage');
+            return function QuizCreateRoute() { return <QuizCreatePage isCurrentEntry={isCurrentCreationEntry} />; };
+          }, ['quiz.create']) },
           { path: 'quizzes/:quizId', lazy: lazyAdminRoute(() => import('../routes/admin/QuizDetailPage').then(module => module.QuizDetailPage), ['quiz.read']) },
           { path: 'quizzes/:quizId/readiness', lazy: lazyAdminRoute(() => import('../routes/admin/QuizPreflightPage').then(module => module.QuizPreflightPage), ['quiz.read', 'quiz.answers.read']) },
           { path: 'quizzes/:quizId/readiness/repair', lazy: lazyAdminRoute(() => import('../routes/admin/QuizRepairPage').then(module => module.QuizRepairPage), ['quiz.edit', 'quiz.answers.edit']) },
           { path: 'events', lazy: lazyAdminRoute(() => import('../routes/admin/AdminEventsPage').then(module => module.AdminEventsPage), ['event.read']) },
-          { path: 'events/new', lazy: lazyAdminRoute(() => import('../routes/admin/AdminEventCreatePage').then(module => module.AdminEventCreatePage), ['event.create']) },
+          { path: 'events/new', lazy: lazyAdminRoute(async () => {
+            const { AdminEventCreatePage } = await import('../routes/admin/AdminEventCreatePage');
+            return function EventCreateRoute() { return <AdminEventCreatePage isCurrentEntry={isCurrentCreationEntry} />; };
+          }, ['event.create']) },
           { path: 'events/:eventId/scoring', lazy: lazyAdminRoute(() => import('../routes/admin/AdminEventScoringPage').then(module => module.AdminEventScoringPage), ['event.read']) },
           { path: 'events/:eventId/results', lazy: lazyAdminRoute(() => import('../routes/admin/AdminEventResultsPage').then(module => module.AdminEventResultsPage), ['event.read']) },
           { path: 'events/:eventId', lazy: lazyAdminRoute(() => import('../routes/admin/AdminEventDetailPage').then(module => module.AdminEventDetailPage), ['event.read']) },
@@ -65,12 +86,14 @@ export const router = createBrowserRouter([
   },
   {
     element: <AppLayout />,
+    errorElement: <RouteErrorPage />,
     children: [
-      { index: true, element: <Navigate to="/events" replace /> },
+      { index: true, element: <EventsPage /> },
       { path: 'admin/login', element: <AdminLoginPage /> },
       { path: 'admin/no-access', element: <AdminNoAccessPage /> },
-      { path: 'account', element: <AccountPage /> },
-      { path: 'invite/:inviteId', element: <AccountPage /> },
+      { path: 'account', lazy: lazyAccountRoute, HydrateFallback: PublicRouteLoading },
+      { path: 'invite/:inviteId', lazy: lazyAccountRoute, HydrateFallback: PublicRouteLoading },
+      { path: 'privacy', element: <PrivacyPage /> },
       { path: 'events', element: <EventsPage /> },
       { path: 'events/:eventId', element: <PublicEventPage /> },
       { path: 'events/:eventId/registration/manage', element: <ManageRegistrationPage /> },

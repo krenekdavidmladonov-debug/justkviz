@@ -81,7 +81,7 @@ assert(samePath(process.cwd(), artifact), 'CLI cwd must be exact frozen artifact
 const cliPath = require.resolve('firebase-tools/lib/bin/firebase.js');
 assert(samePath(fs.realpathSync(process.argv[1]), fs.realpathSync(cliPath)));
 assert.deepEqual(process.argv.slice(2), receipt.phases[0], 'Only exact receipt Functions phase accepted');
-assert.equal(require('firebase-tools/package.json').version, '15.28.2', 'Pinned CLI required');
+assert.equal(require('firebase-tools/package.json').version, '15.34.2', 'Pinned CLI required');
 function checkArtifact() {
   assert.equal(hash(read(path.join(artifact, 'receipt.json'))), policy.RECEIPT_SHA256);
   const actual = {};

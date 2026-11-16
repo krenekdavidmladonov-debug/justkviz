@@ -1,5 +1,6 @@
 import { validateQuestion, mapEditorSlide, directMediaKind, youtubeVideoId, parseQuizAsset, mergeStoredDesign, canHideInfoSlide, type ResultTemplates } from '@filmovy-kviz/quiz-domain';
 import { createHash } from 'node:crypto';
+import { DocumentReference } from 'firebase-admin/firestore';
 
 import { QuizEditorError } from './errors.js';
 import type {
@@ -41,15 +42,45 @@ export function assertRevision(data: Record<string, unknown>, expected: number):
   return current;
 }
 
+function creationDigest(value: unknown): string {
+  return createHash('sha256').update(JSON.stringify(value)).digest('hex');
+}
+
 export function quizCreationIdentity(actorUid: string, requestId: string, title: string): {
   readonly quizId: string;
   readonly fingerprint: string;
 } {
-  const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
   return {
-    quizId: `quiz_${digest([actorUid, requestId])}`,
-    fingerprint: digest({ title }),
+    quizId: `quiz_${creationDigest([actorUid, requestId])}`,
+    fingerprint: creationDigest({ title }),
   };
+}
+
+export function quizDuplicationIdentity(
+  actorUid: string, requestId: string, sourceQuizId: string, expectedRevision: number, title: string,
+): ReturnType<typeof quizCreationIdentity> {
+  const intent = [actorUid, 'duplicateQuiz', requestId];
+  return {
+    quizId: `quiz_${creationDigest(intent)}`,
+    fingerprint: creationDigest([...intent, sourceQuizId, expectedRevision, title]),
+  };
+}
+
+/** Includes normalized fields, authoring defaults, legacy media and private Drive asset shapes. */
+export function hasQuizScopedMedia(value: unknown): boolean {
+  if (typeof value === 'string') {
+    const decodeEscapes = (text: string) => text.replace(/%([a-f0-9]{2})/giu, (_escape, byte: string) => String.fromCharCode(Number.parseInt(byte, 16)));
+    const reference = decodeEscapes(decodeEscapes(value));
+    return /(?:^|[=/?])(?:quiz-asset:|quiz-assets\/|quizzes\/[^/?]+\/mediaAssets\/)/iu.test(reference);
+  }
+  if (value instanceof DocumentReference) return hasQuizScopedMedia(value.path);
+  if (Array.isArray(value)) return value.some(hasQuizScopedMedia);
+  if (!isObject(value)) return false;
+  const prototype: unknown = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  if (value.storageBackend === 'drive' || (typeof value.generation === 'string' && value.generation.startsWith('drive:'))
+    || (typeof value.quizId === 'string' && typeof value.assetId === 'string')) return true;
+  return Object.values(value).some(hasQuizScopedMedia);
 }
 
 export function isQuestionKind(kind: EditorSlideKind): boolean {
@@ -164,7 +195,6 @@ function preserveRedactedFields(current: Record<string, unknown>, input: EditorS
   for (const key of ['title', 'text'] as const) {
     if (Object.hasOwn(current, key) && typeof current[key] !== 'string' && input[key] === '') updated[key] = current[key];
   }
-  if (Array.isArray(current.mediaSource) && input.mediaSource === '') updated.mediaSource = current.mediaSource;
   if (Array.isArray(current.options) && current.options.length === input.options.length) {
     const stored: unknown[] = current.options;
     const merged = updated.options as unknown[];
@@ -204,17 +234,19 @@ export function applyKnownSlideUpdate(
   for (const field of ['backgroundImage', 'questionImage', 'answerImage', 'mediaSource'] as const) {
     // Equal mapped values mean no edit, retaining absent, malformed and legacy fields.
     // Explicit empty replacement shadows the legacy role without deleting its history.
-    if (mapped[field] !== input[field]) result[field] = input[field];
+    if (input[field] !== undefined && mapped[field] !== input[field]) result[field] = input[field];
   }
   for (const field of ['authoringStatus','answerMode','imageLayout','answerExplanation'] as const) if (input[field] !== undefined) result[field] = input[field];
   if (result.authoringStatus !== undefined && result.isQuestion !== true) throw new QuizEditorError('invalid-argument', 'Only questions can be drafts.');
   const timed = ['audio', 'music', 'video', 'youtube'].includes(input.kind);
-  if (timed && input.mediaSource !== '' && mapped.mediaSource !== input.mediaSource && youtubeVideoId(input.mediaSource) === undefined
-      && directMediaKind(input.mediaSource) !== (['audio', 'music'].includes(input.kind) ? 'audio' : 'video')
-      && !(['audio', 'music'].includes(input.kind) && parseQuizAsset(input.mediaSource))) {
+  const source = input.mediaSource;
+  const newTimedSource = timed && source !== undefined && source !== '' && mapped.mediaSource !== source;
+  if (newTimedSource && youtubeVideoId(source) === undefined
+      && directMediaKind(source) !== (['audio', 'music'].includes(input.kind) ? 'audio' : 'video')
+      && !parseQuizAsset(source)) {
     throw new QuizEditorError('invalid-argument', 'Nepodporovaný zdroj ukázky.');
   }
-  if (input.authoringStatus !== 'draft' && timed && input.mediaSource !== '' && mapped.mediaSource !== input.mediaSource
+  if (input.authoringStatus !== 'draft' && newTimedSource
       && (input.clipStartSeconds === null || input.clipEndSeconds === null || input.clipEndSeconds <= input.clipStartSeconds)) {
     throw new QuizEditorError('invalid-argument', 'Změna zdroje vyžaduje platný začátek a konec ukázky.');
   }
@@ -283,6 +315,47 @@ export function sortedSlides(slides: readonly StoredEditorSlide[]): readonly Sto
     }
   });
   return result;
+}
+
+/** Move a slide or its round as an exact block in the presentation order. */
+export function moveSlidesBefore(
+  slides: readonly StoredEditorSlide[],
+  slideId: string,
+  beforeSlideId: string | null,
+  moveRound = false,
+): readonly StoredEditorSlide[] {
+  if (new Set(slides.map(slide => slide.id)).size !== slides.length) {
+    throw new QuizEditorError('failed-precondition', 'Slide identities must be unique.');
+  }
+  const source = slides.find(slide => slide.id === slideId);
+  if (!source) throw new QuizEditorError('not-found', 'Quiz slide was not found.');
+  const roundId = typeof source.data.roundId === 'string' && source.data.roundId.length > 0 ? source.data.roundId : undefined;
+  if (moveRound && (roundId === undefined || source.data.isQuestion === true
+    || !(isRoundKind(source.data.kind as EditorSlideKind) || source.data.kind === 'intro'))) {
+    throw new QuizEditorError('invalid-argument', 'Moving a round requires its introduction slide.');
+  }
+  const moved = moveRound ? slides.filter(slide => slide.data.roundId === roundId) : [source];
+  const movedIds = new Set(moved.map(slide => slide.id));
+  if (beforeSlideId !== null && movedIds.has(beforeSlideId)) {
+    throw new QuizEditorError('invalid-argument', 'The move target cannot be part of the moved slides.');
+  }
+  if (moved.some(slide => slide.data.kind === 'thank-you')) {
+    throw new QuizEditorError('failed-precondition', 'The thank-you slide has a fixed place before the finale.');
+  }
+
+  const remaining = slides.filter(slide => !movedIds.has(slide.id));
+  const thankYouIndex = remaining.findIndex(slide => slide.data.kind === 'thank-you');
+  const isClosing = (slide: StoredEditorSlide) => typeof slide.data.kind === 'string' && slide.data.kind.toLowerCase() === 'end';
+  const movesClosing = moved.some(isClosing);
+  const targetIndex = beforeSlideId === null
+    ? (thankYouIndex >= 0 && !movesClosing ? thankYouIndex : remaining.length)
+    : remaining.findIndex(slide => slide.id === beforeSlideId);
+  if (targetIndex < 0) throw new QuizEditorError('not-found', 'Target quiz slide was not found.');
+  if (thankYouIndex >= 0 && (targetIndex <= thankYouIndex ? movesClosing : !moved.every(isClosing))) {
+    throw new QuizEditorError('failed-precondition', 'The thank-you slide must stay between the program and the closing.');
+  }
+
+  return [...remaining.slice(0, targetIndex), ...moved, ...remaining.slice(targetIndex)];
 }
 
 export function validateExistingRoundHeaderTarget(slides: readonly StoredEditorSlide[], roundId: string, position: number): void {

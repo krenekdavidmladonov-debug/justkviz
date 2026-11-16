@@ -65,8 +65,18 @@ function requireRoundType(data: DocumentData): RoundType {
 }
 
 export function mapQuizSummary(id: string, data: DocumentData): QuizSummary {
+  const disposition: unknown = data.disposition;
+  const revision: unknown = data.revision;
+  if (disposition !== undefined && disposition !== 'active' && disposition !== 'trash') {
+    throw new Error('Invalid Firestore field: disposition');
+  }
+  if (revision !== undefined && (typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0)) {
+    throw new Error('Invalid Firestore field: revision');
+  }
   return {
     id,
+    revision: revision ?? 0,
+    disposition: disposition ?? 'active',
     title: requireString(data, 'title'),
     description: requireString(data, 'description'),
     status: requireQuizStatus(data),

@@ -1,8 +1,35 @@
 # Initial Firestore data model
 
+Existing imported-image provenance derives original HTTPS sources without
+rewriting quiz or event snapshot records. Backups remain retained; see
+[ORIGINAL_IMAGE_SOURCES.md](ORIGINAL_IMAGE_SOURCES.md).
+
 This is a first design, not a migration contract. Fields should be introduced only with validation, rules, and indexes required by an implemented feature.
 
 ## Private operational data
+
+### `driveConnections/{uid}` and `driveOAuthStates/{stateHash}`
+
+Server-only connection metadata, encrypted OAuth credentials and expiring,
+single-use authorization state for the owner-directed Drive connection. Direct
+client reads and writes remain denied by the existing default-deny Rules. Only
+allowlisted connection status is returned through freshly authorized callables.
+No Drive credentials or folder details enter quiz snapshots or public projections.
+See [GOOGLE_DRIVE_CONNECTION.md](GOOGLE_DRIVE_CONNECTION.md) for lifecycle and
+activation requirements. The separately gated media pipeline adds
+`driveMediaJobs/{jobId}` (server-only source fingerprint, connection/account/member
+binding, lease, reserved Drive file ID, output digest, status), Drive-backed ready
+`quizzes/{quizId}/mediaAssets/{assetId}` records and private per-field
+`slides/{slideId}.driveImportProvenance`. Their exact contract and retention are
+in [GOOGLE_DRIVE_MEDIA.md](GOOGLE_DRIVE_MEDIA.md). No new browser write access is granted.
+
+Optional local preparation adds server-only `driveMediaCompanions/{deviceId}`
+(one owner-bound device, token digest, revocation/expiry, current authority and
+connection binding, active claim) and `driveMediaPairings/{codeHash}` (five-minute,
+single-use pairing). `driveMediaJobs.execution: local` separates YouTube device
+claims from cloud photo work; missing execution retains historical cloud mode.
+No capability secret, device record or source provenance enters public data.
+See [LOCAL_MEDIA_COMPANION.md](LOCAL_MEDIA_COMPANION.md).
 
 ### `users/{uid}`
 
@@ -11,6 +38,8 @@ Legacy profile documents are no longer authority and are denied to clients. Pers
 ### `quizzes/{quizId}`
 
 Quiz metadata: `title`, `description`, `status` (`draft`, `ready`, `archived`), ownership/audit fields, and timestamps.
+
+Reversible library deletion adds an independent `disposition: active | trash` overlay (missing means active), revision-checked trash/restore and trusted trash/restore actor timestamps on this same root. It never deletes nested content or changes the original status. See [QUIZ_TRASH.md](QUIZ_TRASH.md).
 
 Current required fields:
 
@@ -23,9 +52,27 @@ Current required fields:
 
 The admin-only `createQuiz` workflow creates an empty private root with `schemaVersion: 1`, `description: ''`, `status: draft`, `revision: 0`, and all three counters at `0`; it does not create placeholder rounds, questions, slides, snapshots, or public projections. Its opaque quiz ID is deterministic for the authenticated admin UID plus client `requestId`. New roots also keep an immutable private `creationFingerprint` over the normalized title, allowing an identical retry to return the same root while rejecting reuse of that request ID for different content. Trusted timestamps and actor fields come from the Function.
 
+`duplicateQuiz` creates a separate private draft at revision 0 from an exact
+saved source revision. It copies ordered slides, rounds, questions, designs,
+templates and every referenced quiz asset. Child IDs remain scoped to the new
+root. Media references point to separately owned, generation-pinned Storage
+objects with ready metadata under the new root. The actor, source revision and
+normalized title are bound to the creation fingerprint. Events, sessions,
+registrations and existing snapshots stay with their existing records.
+
+For a copy with media, the server-only `quizDuplicationAttempts/{targetId}`
+record binds the request to the exact asset revisions before transfer. The
+final transaction rechecks the source, creates the complete draft and ready
+asset records, grants its scope and replaces transfer progress with a compact
+completion receipt.
+Interrupted attempts can reuse private objects from the same pinned plan.
+Partial copies have no quiz root or readable asset metadata. The same limit as
+offline preparation applies to media volume, 256 files and 512 MiB, within the
+overall editor transaction limit.
+
 V1-migrated drafts may additionally contain private `legacy: { source, metadata }`. Version-2 imports retain only explicitly allowlisted compatibility metadata and extend the same legacy object with source project/collection/ID and export/content fingerprints. It is never copied into a public projection. See tools/migration-v1/CLOUD_IMPORT.md.
 
-Quiz readiness is intentionally not stored on this document. `PreflightResult` is derived from the current bounded private quiz model so it cannot become a stale duplicate truth such as `isQuizValid: true`.
+The existing `status` is an explicit organizational choice: metadata updates accept `draft` or `ready`, preserve it when omitted, and cannot restore `archived`. It is independent of content validation and grants no publication authority. Quiz readiness is intentionally not stored on this document. `PreflightResult` is derived from the current bounded private quiz model so it cannot become a stale duplicate truth such as `isQuizValid: true`.
 
 ### `quizzes/{quizId}/slides/{slideId}`
 
@@ -35,9 +82,14 @@ Private, globally ordered presentation source. It preserves every V1 slide, incl
 
 The separate slide stream is intentionally lossless, presentation-oriented, and authoritative for editor order. The nested rounds/questions remain an operational projection for the library and future scoring logic. The editor derives its round-first facade rather than migrating this stream. Trusted slide, round, and question Functions refresh known derived fields after every structural mutation while merge-preserving private legacy extensions.
 
+The optional `thank-you` slide is a standalone non-question stored once per
+quiz, before the closing slide when one exists. Event snapshots retain the
+authored screen. Its upcoming dates are read from published `publicEvents` at
+display time.
+
 Guided preflight repair does not add a persisted readiness flag or a new collection. A Choice repair receives only an option index, reads the authoritative `options`, and updates the private normalized `correctAnswer` on the slide and its derived private question record. A Video repair updates only normalized `clipStartSeconds` and `clipEndSeconds`. Both retain all other slide fields—including `legacy.raw` and unknown extensions—and increment the parent quiz `revision`. The original V1-derived raw value remains preserved under the private legacy payload.
 
-Known editor fields include `title`, `text`, `moderatorNote`, general string `options`, private `correctAnswer`, classified media references, and the known legacy presentation controls `videoStart`, `videoEnd`, `audioTrigger`, `backgroundOverlay`, `answerOverlay`, and `sourceQuestionNumber`. The projector foundation adds normalized `backgroundImage`, `questionImage`, `answerImage`, `mediaSource`, `clipStartSeconds`, `clipEndSeconds`, and top-level `backgroundOverlay`. It also stores derived `roundTitle`, `questionNumber`, and `questionCount` for an explicit within-round display contract. Compatibility mapping uses legacy media/presentation only when normalized fields are absent. An imported presentation range of exactly `videoStart: 0` and `videoEnd: 0`, with top-level start absent or `0` and no top-level end key, is a legacy unset sentinel rather than a playable zero-length clip: the editor maps it to `null/null`, and an unrelated save retains the existing stored timing keys instead of normalizing or deleting them. The editor supports validated legacy URLs and ready quiz-scoped owned image/audio references; upload metadata and immutable generations are documented in MEDIA_STORAGE.md. `backgroundImage` and `backgroundOverlay` are renderable normalized fields, but the current editor has only partial URL/overlay authoring and no owned-background selection/upload workflow. A new round is represented by an explicit round-header slide with its own `roundId`; the user sees round settings rather than that implementation detail. Unknown slide/media values remain locked or fallback-rendered and are retained rather than guessed.
+Known editor fields include `title`, `text`, `moderatorNote`, general string `options`, private `correctAnswer`, classified media references, and the known legacy presentation controls `videoStart`, `videoEnd`, `audioTrigger`, `backgroundOverlay`, `answerOverlay`, and `sourceQuestionNumber`. The projector foundation adds normalized `backgroundImage`, `questionImage`, `answerImage`, `mediaSource`, `clipStartSeconds`, `clipEndSeconds`, and top-level `backgroundOverlay`. It also stores derived `roundTitle`, `questionNumber`, and `questionCount` for an explicit within-round display contract. Compatibility mapping uses legacy media/presentation only when normalized fields are absent. An imported presentation range of exactly `videoStart: 0` and `videoEnd: 0`, with top-level start absent or `0` and no top-level end key, is a legacy unset sentinel rather than a playable zero-length clip: the editor maps it to `null/null`, and an unrelated save retains the existing stored timing keys instead of normalizing or deleting them. The editor supports validated legacy URLs and ready quiz-scoped owned image/audio/MP4 references; upload metadata and immutable generations are documented in MEDIA_STORAGE.md. `backgroundImage` and `backgroundOverlay` are renderable normalized fields, but the current editor has only partial URL/overlay authoring and no owned-background selection/upload workflow. A new round is represented by an explicit round-header slide with its own `roundId`; the user sees round settings rather than that implementation detail. Unknown slide/media values remain locked or fallback-rendered and are retained rather than guessed.
 
 ### `quizzes/{quizId}/rounds/{roundId}`
 
@@ -55,9 +107,51 @@ The local seed uses stable quiz, round, and question IDs. It is development data
 
 ### `events/{eventId}`
 
-Authoritative event record implemented by Events Foundation: `schemaVersion`, title/start/time zone, private venue configuration, separate team/people capacities, accepted team/people counters, per-event team-size bounds, registration window/publication/status, lifecycle status, nullable immutable quiz assignment, fixed-point scoring foundation (`unitScale: 2`, `rankingMode: dense`, server-owned `started`), monotonic revision, and trusted audit fields. Staff may read the root; every client write is denied and mutations use trusted Functions.
+New keyed `createEvent` calls accept an optional `requestId` (1–150 ASCII letters,
+digits, `_` or `-`). They derive `event_` + SHA-256 of the JSON array
+`[actorUid, requestId]` and add a private immutable `creationFingerprint` to the
+root. Its v1 input is the explicit normalized creation configuration in
+`functions/src/events/creation.ts`; keep that input stable for old retries.
+No migration is required; callers omitting the ID keep random IDs and existing
+records need no new field. The fingerprint is omitted from the public projection.
+
+An identical retry rechecks current active membership, `event.create`,
+`event.read`, event scope and readable disposition in the transaction. It returns
+the original creation acknowledgement (revision 1, scheduled lifecycle and
+registration), without modifying later edits, counters, projection or scope.
+Read the current event before a subsequent mutation. A changed normalized payload
+under the same key is rejected. Trash/deleting records and existing
+`eventTombstones/{eventId}` block replay or recreation.
+
+The create form records the actor-bound request and complete submitted values in
+per-user tab session storage before dispatch. Ambiguous responses retain them for
+an exact retry after remount/reload; they survive switching to another account in
+the same tab. Unavailable or unreadable storage blocks a new dispatch with an
+actionable message. Starting a different attempt requires explicitly checking the
+event list first. Closing the tab or clearing its storage ends this recovery;
+check the event list before a new attempt in that case. This is reload recovery
+within the tab, not a cross-browser draft store. Legacy no-ID callers do not gain
+lost-response deduplication.
+
+Authoritative event record implemented by Events Foundation: `schemaVersion`, title/start/time zone, private venue configuration, team capacity, retained legacy people capacity, accepted team/people counters, per-event team-size bounds (up to four for new settings and new/edited registrations), registration window/publication/status, lifecycle status, nullable immutable quiz assignment, fixed-point scoring foundation (`unitScale: 2`, `rankingMode: dense`, server-owned `started`), monotonic revision, and trusted audit fields. Staff may read the root; every client write is denied and mutations use trusted Functions.
+
+Event `pricing` is `{ mode: 'per-team' | 'per-event' | 'agreement', amountCzk, hidden? }`.
+Numeric modes require integer CZK from 0 to 1,000,000; agreement requires null.
+Absent historical pricing means 350 CZK per team. Creates persist that default;
+an update omitting pricing preserves the current authoritative value. Missing
+`hidden` means visible; older updates omitting the flag preserve current visibility,
+even when they supply a price. Explicit false unhides it. Hidden prices retain
+their actual mode and amount privately; public projections contain only
+`{ mode: 'agreement', amountCzk: null, hidden: true }`. This benign redaction remains
+readable by cached older clients. The current public UI omits the price entirely.
+Registration and lifecycle rebuilds preserve this boundary; registrations cannot
+set pricing or visibility.
 
 ### `quizSnapshots/{snapshotId}`
+
+Frozen YouTube prompt clips can be rendered through an exact matching completed
+Drive import without changing this document tree. No binding collection or data
+migration is introduced; see [SNAPSHOT_DRIVE_CLIPS.md](SNAPSHOT_DRIVE_CLIPS.md).
 
 The PDF Print Center reads this existing immutable document tree through a trusted Function. Its registration adapter resolves accepted records server-side into transient `PrintTeam { id, name }` values.
 
@@ -66,6 +160,16 @@ The PDF Print Center reads this existing immutable document tree through a trust
 Private accepted/cancelled registration with normalized team name, member count, contact email, management-token hash, timestamps, and cancellation audit metadata. Staff reads are allowed; all browser writes are denied.
 
 Manual team records use this same collection with server-owned `source: manual`, nullable `contactEmail`, null `managementTokenHash`, actor fields, revision and immutable request fingerprint. The deterministic ID reserves the add request per event/staff UID, even after cancellation. Missing source means legacy online; no migration is needed. See `EVENT_TEAM_TOOLS.md`.
+
+### Organizer intents in `events/{eventId}/emailIntents/{intentId}`
+
+Organizer notifications reuse server-only `events/{eventId}/emailIntents` with
+deterministic ID `owner_{registrationId}` and type
+`registration-organizer-notification`. The intent contains the explicit runtime
+recipient/owner UID, public-create provenance and creation timestamp, minimal
+event/team/count snapshot and its independent delivery state. It contains no team
+contact or management token and does not change the registration's participant
+delivery summary. See [TRANSACTIONAL_EMAIL.md](TRANSACTIONAL_EMAIL.md).
 
 ### `events/{eventId}/registrationNames/{nameHash}`
 
@@ -91,9 +195,15 @@ Implemented internal per-team/per-snapshot-round half-point value and monotonic 
 
 ### `quizzes/{quizId}/mediaAssets/{assetId}`
 
-Owned assets are implemented at quizzes/{quizId}/mediaAssets/{assetId}: private quiz/asset identity, kind/MIME/size, actor, request fingerprint, expiry and uploading/ready status; finalization records Storage generation and readyAt. Staff may read metadata; only server writes it. Immutable quiz-asset references remain in event snapshots. Objects have no client overwrite/delete path and no automatic cleanup. See MEDIA_STORAGE.md.
+Owned assets are implemented at quizzes/{quizId}/mediaAssets/{assetId}: private quiz/asset identity, kind/MIME/size, actor, request fingerprint, expiry and uploading/ready status; finalization records Storage generation and readyAt. Staff may read metadata; only server writes it. Immutable quiz-asset references remain in event snapshots. Objects have no client overwrite/delete path. MP4 finalization uses a private temporary upload and one server reservation (`finalizing` with source generation, SHA-256, MIME and size). Only its winner writes the canonical object; the temporary object is removed before the canonical generation becomes `ready`. No cleanup of existing ready assets is introduced. See MEDIA_STORAGE.md.
+
+The local demo image backup adds the server-derived optional `localImageIntegrityV3` descriptor for the current pinned generation. It stores the actual byte SHA-256, image dimensions and exact reference/generation/MIME/size/ETag binding after bounded Storage IO and fresh scoped authorization. It changes no slide, snapshot, status or object generation. An interrupted multi-image preparation may retain verified individual descriptors. A descriptor is never a publication or permission grant. Browser writes remain denied and the ordinary metadata read view does not add this field. See [LOCAL_IMAGE_BACKUP.md](LOCAL_IMAGE_BACKUP.md).
 
 ## Public/sanitized data
+
+The offline runtime uses server-only `events/{eventId}/offlineExports/{exportId}` authority and import receipts. They hold bounded manifest descriptors, exact Storage pins, a baseline digest and the imported journal and decisions. Registration contacts stay in their original collection. Private slides remain in the immutable snapshot. Explicit event deletion owns these flat records. `offlineSigningKeys/demo-v1` is an emulator-only keyring. In the V2 activation path, signing material comes from a separate server-side binding and stays outside Firestore. Both Firestore paths remain denied to browser clients. See [offline operation](OFFLINE_MODE.md) and [release controls](OFFLINE_RELEASE.md).
+
+The server-only `events/{eventId}/registrationAbuse/{contactHash}` budget stores numeric tokens and update time. Its domain-separated SHA-256 key binds event and normalized contact; it is pseudonymous, not anonymous. Successful creates debit transactionally; failures, replay and cancellation do not refill it. Direct client access stays denied. Explicit permanent event deletion owns cleanup. The registration abuse implementation and emulator tests define the current local scope.
 
 ### `publicEvents/{eventId}`
 
@@ -193,8 +303,15 @@ Admin-only preview/confirmation creates an immutable emailCampaigns record and r
 Media authoring extends the shared picker/gateway/renderer to question, private answer and background roles. Explicit empty fields detach without deleting legacy data or snapshot assets. See MEDIA_AUTHORING_RELEASE.md for the complete contract and deployment scope.
 
 
-Complete editor extends the same private ordered stream with explicit draft/ready authoring, independent answer mode, default appearance, atomic round/recap creation and private in-memory rehearsal. Drafts block preflight, snapshot lock and live publication. See [COMPLETE_EDITOR_RELEASE.md](COMPLETE_EDITOR_RELEASE.md) for field compatibility, authorization, verification and the integrated deployment manifest.
+Complete editor extends the same private ordered stream with explicit draft/ready authoring, independent answer mode, default appearance, atomic round/recap creation and private in-memory rehearsal. Drafts remain editorial findings in optional preflight; saved drafts can be used for rehearsal and event snapshots through the same sanitized publication boundary. See [COMPLETE_EDITOR_RELEASE.md](COMPLETE_EDITOR_RELEASE.md) for field compatibility, authorization, verification and the integrated deployment manifest.
 
 ## Event management extension
 
+Event publication reuses `events.registrationPublished`, independently of quiz
+readiness and lifecycle. The public projection may additionally contain the safe
+`description` and `lifecycleStatus` fields. Existing projections without these
+optional fields remain compatible. See [EVENT_PUBLICATION.md](EVENT_PUBLICATION.md).
+
 See [EVENT_MANAGEMENT.md](EVENT_MANAGEMENT.md) for the independent disposition overlay, scoped permission mapping, shared transactional guards, capability revocation and exact server-side deletion ownership/allowlist. No content backfill or Storage cleanup is introduced. Cloud team email remains disabled.
+
+Manual completion uses existing events roots and eventOperations/eventAudit receipts. The optional private completion object contains trusted at/by/reason; capabilityVersion and revision advance together. Ending one sessions document does not mutate its event root. Existing scores/history and confirmed result versions remain intact after either presentation END or event completion.

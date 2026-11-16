@@ -7,3 +7,34 @@
 .score-history span { display: block; font-size: .85rem; color: var(--color-text-muted); }
 .score-row .team-tool-actions { flex-wrap: wrap; }
 @media (max-width: 560px) { .score-fields { grid-template-columns: 1fr; } }
+.score-round-row > th, .score-round-row > td { padding: 12px 6px; vertical-align: middle; border-bottom: 1px solid var(--color-border); }
+.score-round-row > th { text-align: left; overflow-wrap: anywhere; }
+.score-round-label { display: block; width: 100%; min-height: 44px; padding: 4px 0; color: inherit; font-weight: 700; text-align: left; border: 0; background: none; cursor: pointer; }
+.score-round-label span { color: var(--color-text-muted); font-size: .75rem; }
+.score-round-number { display: block; margin-bottom: 4px; color: var(--color-text-muted); font-size: .75rem; font-weight: 500; }
+.score-round-input { width: 100%; min-width: 0; min-height: 44px; padding: 10px 8px; border: 1px solid var(--color-border-strong); border-radius: 9px; color: var(--color-text); background: var(--color-surface-subtle); font-size: 16px; }
+.score-round-value { display: block; padding-inline: 8px; font-size: 1.05rem; }
+.score-round-row form { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.score-round-row form button { min-height: 44px; width: 100%; padding: 10px 8px; margin: 0; font-size: .88rem; }
+.score-round-saved { color: var(--color-success); font-size: .8rem; }
+.score-round-confirmation { display: block; margin-top: 4px; color: var(--color-text-muted); font-size: .72rem; }
+.score-round-details > td { padding: 8px 6px 16px; border-bottom: 1px solid var(--color-border); overflow-wrap: anywhere; }
+.score-round-details .form-field input { min-height: 44px; }
+.score-round-options { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.score-round-options button { min-height: 44px; padding: 10px; margin: 0; font-size: .85rem; }
+.score-round-details .score-conflict { margin: 12px 0; padding: 12px; }
+.score-round-details .score-conflict button { min-height: 44px; }
+.round-score-form { min-width: 0; }
+.round-score-head, .round-score-entry { display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 130px); gap: 16px; align-items: center; }
+.round-score-head { color: var(--color-text-muted); font-size: .85rem; padding: 10px 0; }
+.round-score-team { border-top: 1px solid var(--color-border); padding: 12px 0; }
+.round-score-entry label { font-weight: 600; overflow-wrap: anywhere; }
+.round-score-entry small { display: block; color: var(--color-text-muted); font-weight: 400; margin-top: 4px; }
+.round-score-entry input { width: 100%; min-width: 0; min-height: 46px; box-sizing: border-box; padding: 10px; border: 1px solid var(--color-border-strong); border-radius: 9px; background: var(--color-surface-subtle); color: var(--color-text); font-size: 18px; }
+.round-score-reason { margin-top: 12px; }
+.round-score-details { margin-top: 6px; font-size: .85rem; }
+.round-score-details summary { min-height: 36px; align-content: center; cursor: pointer; color: var(--color-text-muted); }
+.round-score-save { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 0 max(12px, env(safe-area-inset-bottom)); background: var(--color-surface); border-top: 1px solid var(--color-border); }
+.round-score-save p { flex-basis: 100%; margin: 0; font-size: .85rem; }
+.round-score-save button { min-height: 46px; }
+@media (max-width: 480px) { .round-score-entry, .round-score-head { gap: 12px; grid-template-columns: minmax(0, 1fr) 100px; } .round-score-save .primary-button { width: 100%; } }

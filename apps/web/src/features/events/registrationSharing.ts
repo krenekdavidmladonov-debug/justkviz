@@ -1,24 +1,20 @@
 import QRCode from 'qrcode';
 import type { EventRecord } from './types';
+import { registrationPresentation } from './eventPresentation';
+import { publicAppOrigin, type PublicAppConfig } from '../../services/publicAppOrigin';
 
-export function publicRegistrationUrl(eventId: string, config: { projectId: string; useEmulators: boolean }, localOrigin: string): string {
+export function publicRegistrationUrl(eventId: string, config: PublicAppConfig, localOrigin: string): string {
   if (!/^[A-Za-z0-9_-]{1,1500}$/u.test(eventId)) throw new Error('Neplatné ID akce.');
-  let origin: string;
-  if (!config.useEmulators && config.projectId === 'filmovy-kviz-v2-staging') origin = 'https://filmovy-kviz-v2-staging.web.app';
-  else if (config.useEmulators && config.projectId.startsWith('demo-')) {
-    const local = new URL(localOrigin);
-    if (!['localhost', '127.0.0.1', '[::1]'].includes(local.hostname) || !['http:', 'https:'].includes(local.protocol) || local.username || local.password) throw new Error('Neplatný lokální origin.');
-    origin = local.origin;
-  } else throw new Error('Veřejný origin není nakonfigurován.');
-  return `${origin}/events/${eventId}`;
+  return `${publicAppOrigin(config, localOrigin)}/events/${eventId}`;
+}
+
+export function registrationManagementUrl(eventId: string, registrationId: string, token: string, config: { projectId: string; useEmulators: boolean }, localOrigin: string): string {
+  return publicRegistrationUrl(eventId, config, localOrigin) + '/registration/manage#registration=' + encodeURIComponent(registrationId) + '&token=' + encodeURIComponent(token);
 }
 
 export function registrationSharingState(event: EventRecord, now = Date.now()) {
   const available = event.registrationPublished && !['cancelled', 'archived'].includes(event.lifecycleStatus);
-  const open = available
-    && event.registrationOpensAt !== undefined && event.registrationClosesAt !== undefined
-    && now >= event.registrationOpensAt.getTime() && now < event.registrationClosesAt.getTime()
-    && event.acceptedTeams < event.teamCapacity && event.acceptedPeople < event.peopleCapacity;
+  const open = registrationPresentation(event, now).canRegister;
   return { available, message: !available ? 'Akce nemá zveřejněné přihlášení.' : open ? 'Přihlášky jsou otevřené.' : 'Stránka je dostupná, přihlášky jsou nyní uzavřené.' };
 }
 

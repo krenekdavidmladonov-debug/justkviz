@@ -1,50 +1,99 @@
-.print-center-page { width: min(1200px, 100%); margin-inline: auto; }
-.print-center-page .event-page-heading { align-items: center; gap: 20px; }
-.print-center-page .event-page-heading h1 { margin-block: 6px 10px; }
+.print-center-page { width: min(1440px, 100%); min-width: 0; margin-inline: auto; display: grid; gap: 18px; }
+.print-center-page > * { min-width: 0; }
+.print-center-page .event-page-heading { align-items: center; gap: 16px; }
+.print-center-page .event-page-heading h1 { margin-block: 4px 8px; font-size: clamp(1.7rem, 2.6vw, 2.4rem); }
+.print-center-page .event-page-heading .lead { margin-block: 0; font-size: 1rem; line-height: 1.5; }
 .print-center-page .event-page-heading .eyebrow { max-width: 75ch; overflow-wrap: anywhere; }
-.print-center-page .print-artifact-grid { gap: 12px; }
-.print-center-page .print-artifact-card { min-height: 120px; padding: 20px; gap: 10px; border-radius: 12px; }
-.print-center-page .print-artifact-card strong { line-height: 1.35; }
-.print-center-page .print-artifact-card span { font-size: .9rem; line-height: 1.5; }
-.print-center-page .print-artifact-card.is-selected { background: var(--color-surface-elevated); border-color: var(--color-accent); box-shadow: inset 0 3px 0 var(--color-accent); }
-.print-center-page .print-artifact-card:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; }
-.print-center-page .print-document-summary { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px 24px; color: var(--color-text-muted); font-size: .9rem; line-height: 1.6; }
+.print-center-page .print-preview-jump { display: none; }
+.print-center-page .print-document-summary { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 20px; color: var(--color-text-muted); font-size: .85rem; line-height: 1.5; }
 .print-center-page .print-document-summary strong { color: var(--color-text); }
-.print-center-page .print-empty-roster { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; align-items: center; padding: 20px 24px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
-.print-center-page .print-empty-roster h2 { margin: 0 0 8px; font-size: 1rem; }
-.print-center-page .print-empty-roster p { margin: 0; max-width: 75ch; color: var(--color-text-muted); line-height: 1.6; }
-.print-center-page .print-inline-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
-.print-center-page .print-preview-panel { overflow: hidden; border: 1px solid var(--color-border); border-radius: 14px; background: var(--color-surface); }
-.print-center-page .print-preview-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px; padding: 20px 24px; border-bottom: 1px solid var(--color-border); }
-.print-center-page .print-preview-heading h2 { margin: 0 0 6px; font-size: 1.1rem; }
-.print-center-page .print-preview-heading p { margin: 0; color: var(--color-text-muted); font-size: .85rem; }
+.print-center-page .print-workspace { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 20px; align-items: start; min-width: 0; }
+.print-center-page .print-controls { display: grid; gap: 20px; min-width: 0; padding: 18px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
+.print-center-page .print-artifact-section { display: grid; gap: 10px; min-width: 0; }
+.print-center-page .print-artifact-section > h2 { margin: 0; font-size: 1rem; }
+.print-center-page .print-artifact-grid { grid-template-columns: 1fr; gap: 10px; }
+.print-center-page .print-artifact-card { width: 100%; min-width: 0; min-height: 0; padding: 12px; gap: 5px; border-radius: 9px; overflow-wrap: anywhere; }
+.print-center-page .print-artifact-card strong { font-size: .95rem; line-height: 1.35; }
+.print-center-page .print-artifact-card span { font-size: .8rem; line-height: 1.4; }
+.print-center-page .print-artifact-card.is-selected { background: var(--color-surface-elevated); border-color: var(--color-accent); box-shadow: inset 3px 0 0 var(--color-accent); }
+.print-center-page .print-artifact-card:focus-visible,
+.print-center-page .print-answer-key:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; }
+.print-center-page .print-private-choice { display: grid; gap: 6px; }
+.print-center-page .print-private-choice .print-artifact-card span { color: var(--color-warning); }
+.print-center-page .print-answer-key { justify-self: start; max-width: 100%; min-height: 36px; padding: 7px 10px; font-size: .8rem; text-align: left; white-space: normal; }
+.print-center-page .print-answer-key.is-selected { border-color: var(--color-accent); background: var(--color-surface-elevated); box-shadow: inset 3px 0 0 var(--color-accent); }
+.print-center-page .print-private-badge { display: inline-block; width: fit-content; padding: 3px 6px; border: 1px solid currentColor; border-radius: 5px; color: var(--color-warning); font-size: .7rem; font-weight: 800; letter-spacing: .03em; }
+.print-center-page .print-mode { gap: 9px; }
+.print-center-page .print-mode legend { margin-bottom: 10px; font-size: .9rem; }
+.print-center-page .print-mode label { gap: 8px; font-size: .85rem; line-height: 1.4; }
+.print-center-page .print-mode input { flex: 0 0 auto; }
+.print-center-page .print-color-field { min-width: 0; display: grid; gap: 8px; }
+.print-center-page .field-help { margin: 0; color: var(--color-text-muted); font-size: .8rem; line-height: 1.5; }
+.print-center-page .print-advanced { min-width: 0; border-top: 1px solid var(--color-border); }
+.print-center-page .print-advanced > summary { padding-top: 14px; cursor: pointer; font-size: .85rem; font-weight: 700; }
+.print-center-page .print-advanced > summary:focus-visible,
+.print-template-settings summary:focus-visible { outline: 3px solid var(--color-focus); outline-offset: 3px; border-radius: 3px; }
+.print-center-page .print-advanced-content { min-width: 0; padding-top: 14px; display: grid; gap: 14px; align-items: start; }
+.print-center-page .print-advanced-content > button { justify-self: start; max-width: 100%; white-space: normal; text-align: left; font-size: .8rem; }
+.print-center-page .print-empty-roster { display: grid; gap: 10px; border-top: 1px solid var(--color-border); padding-top: 16px; }
+.print-center-page .print-empty-roster h2 { margin: 0; font-size: .9rem; line-height: 1.4; }
+.print-center-page .print-empty-roster p { margin: 0; color: var(--color-text-muted); font-size: .85rem; line-height: 1.5; }
+.print-center-page .print-empty-roster .secondary-button { max-width: 100%; white-space: normal; }
+.print-center-page .print-preview-panel { overflow: hidden; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
+.print-center-page .print-preview-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--color-border); }
+.print-center-page .print-preview-heading > div { min-width: 0; }
+.print-center-page .print-preview-heading h2 { margin: 0 0 6px; font-size: 1rem; overflow-wrap: anywhere; }
+.print-center-page .print-preview-heading p { margin: 0; color: var(--color-text-muted); font-size: .75rem; line-height: 1.5; }
+.print-center-page .print-preview-heading p + p { margin-top: 4px; }
 .print-center-page .print-actions { align-items: center; gap: 10px; }
-.print-center-page .print-actions a { text-decoration: none; }
+.print-center-page .print-actions a { max-width: 100%; white-space: normal; text-align: center; text-decoration: none; }
 .print-center-page .print-actions [aria-disabled="true"] { pointer-events: none; opacity: .5; }
-.print-center-page .print-preview-frame { display: block; width: 100%; height: clamp(540px, 76vh, 900px); border: 0; border-radius: 0; background: #e8ebef; color-scheme: light; }
-.print-center-page .print-preview-message { min-height: 420px; padding: 32px 24px; display: grid; place-content: center; justify-items: center; gap: 12px; text-align: center; color: var(--color-text-muted); }
+.print-center-page .print-preview-frame { display: block; width: 100%; height: clamp(560px, 77vh, 1000px); border: 0; border-radius: 0; background: #e8ebef; color-scheme: light; }
+.print-center-page .print-preview-message { min-height: 540px; padding: 28px 20px; display: grid; place-content: center; justify-items: center; gap: 12px; text-align: center; color: var(--color-text-muted); }
 .print-center-page .print-preview-message strong { color: var(--color-text); font-size: 1.05rem; }
 .print-center-page .print-preview-message p { margin: 0; max-width: 60ch; line-height: 1.6; }
-.print-center-page .print-private-note { margin: 0; padding: 12px 24px; border-bottom: 1px solid var(--color-border); color: var(--color-warning); font-size: .9rem; line-height: 1.6; }
-.print-center-page .print-advanced { border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); }
-.print-center-page .print-advanced > summary { padding: 18px 24px; cursor: pointer; font-weight: 700; }
-.print-center-page .print-advanced-content { padding: 4px 24px 24px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px 24px; align-items: start; }
-.print-center-page .print-advanced-content .print-mode { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px 24px; }
-.print-center-page .print-mode legend { margin-bottom: 14px; }
-.print-center-page .print-mode label { gap: 8px; line-height: 1.5; }
-.print-center-page .print-advanced-content .field-help { margin: 0; align-self: center; line-height: 1.6; }
-.print-center-page .print-advanced-content > button { justify-self: start; }
+.print-center-page .print-private-note { margin: 0; padding: 10px 18px; border-bottom: 1px solid var(--color-border); color: var(--color-warning); font-size: .8rem; line-height: 1.6; }
 .print-center-page .print-lock-message { display: grid; gap: 24px; }
 .print-center-page .print-lock-message h2 { margin-top: 0; }
 .print-center-page .print-lock-message p { max-width: 75ch; line-height: 1.6; }
+
+/* Print controls use a real field grid. The former editor-field/editor-card
+   classes had no styles, leaving labels, textareas and selects inline. */
+.print-template-settings { min-width: 0; display: grid; gap: 16px; }
+.print-template-settings h3 { margin: 0 0 8px; }
+.print-template-settings .field-help { margin: 0; line-height: 1.6; overflow-wrap: anywhere; }
+.print-template-settings .print-template-custom { min-width: 0; border: 1px solid var(--color-border); border-radius: 10px; }
+.print-template-settings .print-template-custom > summary { padding: 14px 16px; font-weight: 700; cursor: pointer; }
+.print-template-settings .print-template-custom-content { min-width: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 18px; padding: 4px 16px 18px; }
+.print-template-settings .print-wide-field { grid-column: 1 / -1; min-width: 0; }
+.print-template-settings .print-toggle { display: flex; align-items: center; align-self: center; gap: 10px; min-width: 0; line-height: 1.5; }
+.print-template-settings .print-toggle input { width: auto; flex: 0 0 auto; accent-color: var(--color-accent); }
+.print-template-settings .secondary-button { justify-self: start; max-width: 100%; white-space: normal; text-align: left; }
+.print-template-settings .form-field,
+.print-center-page .form-field { display: grid; gap: 8px; min-width: 0; align-content: start; overflow-wrap: anywhere; }
+.print-template-settings .form-field > input,
+.print-template-settings .form-field > textarea,
+.print-template-settings .form-field > select,
+.print-center-page .form-field > select { display: block; box-sizing: border-box; width: 100%; min-width: 0; max-width: 100%; min-height: 44px; padding: 11px 12px; color: var(--color-text); background: var(--color-surface-subtle); border: 1px solid var(--color-border-strong); border-radius: 9px; font: inherit; font-weight: 400; }
+.print-template-settings .form-field > textarea { resize: vertical; min-height: 100px; line-height: 1.6; }
+.print-template-settings .form-field > input[type="color"] { padding: 4px; cursor: pointer; }
+.print-template-settings .form-field > :focus-visible,
+.print-center-page .form-field > :focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.print-template-settings .form-field > :disabled { opacity: .58; cursor: not-allowed; }
+
+@media (max-width: 900px) {
+  .print-center-page .print-workspace { grid-template-columns: 260px minmax(0, 1fr); gap: 16px; }
+  .print-center-page .print-controls { padding: 14px; }
+}
 @media (max-width: 760px) {
-  .print-center-page .print-artifact-grid { grid-template-columns: 1fr; }
-  .print-center-page .print-artifact-card { min-height: 0; padding: 16px; }
-  .print-center-page .print-empty-roster { grid-template-columns: 1fr; padding: 20px; }
-  .print-center-page .print-preview-heading { align-items: stretch; padding: 20px; }
+  .print-center-page { gap: 14px; }
+  .print-center-page .print-preview-jump { display: inline-flex; justify-self: start; font-size: .85rem; }
+  .print-center-page .print-workspace { grid-template-columns: 1fr; }
+  .print-center-page .print-controls { gap: 16px; }
+  .print-center-page .print-preview-heading { align-items: stretch; padding: 16px; }
   .print-center-page .print-actions { width: 100%; }
   .print-center-page .print-actions .primary-button { flex: 1; text-align: center; }
   .print-center-page .print-preview-frame { height: 560px; }
-  .print-center-page .print-advanced-content { grid-template-columns: 1fr; padding: 4px 20px 20px; }
-  .print-center-page .print-advanced-content .print-mode { display: grid; }
+  .print-center-page .print-preview-message { min-height: 360px; }
+  .print-template-settings .print-template-custom-content { grid-template-columns: 1fr; }
 }

@@ -23,7 +23,7 @@ const eventInput = (title) => ({
   teamCapacity: 30,
   peopleCapacity: 180,
   teamSizeMin: 2,
-  teamSizeMax: 6,
+  teamSizeMax: 4,
 });
 
 async function request(eventId, options, token) {

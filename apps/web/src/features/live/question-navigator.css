@@ -1,0 +1,12 @@
+.live-question-navigator { width: min(600px, calc(100vw - 24px)); max-height: calc(100dvh - 32px); margin: auto; padding: 20px; overflow: auto; border: 1px solid var(--color-border-strong); border-radius: 16px; background: var(--color-surface); color: var(--color-text); }
+.live-question-navigator::backdrop { background: rgb(0 0 0 / 70%); }
+.live-question-navigator > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.live-question-navigator h2 { margin: 4px 0 0; font-size: 1.35rem; }
+.live-question-navigator > p { color: var(--color-text-muted); line-height: 1.45; font-size: .9rem; }
+.live-question-groups { display: grid; gap: 18px; }
+.live-question-groups h3 { margin: 0 0 10px; font-size: 1rem; overflow-wrap: anywhere; }
+.live-question-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 8px; }
+.live-question-grid > button { min-height: 44px; padding: 8px; }
+.live-question-grid > button[aria-current="page"] { border-color: var(--color-accent); background: var(--color-selected); color: var(--color-accent); }
+.live-question-navigator > footer { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--color-border); }
+@media (max-width: 420px) { .live-question-navigator { padding: 14px; } .live-question-navigator > header { align-items: center; } .live-question-navigator > header > button { padding-inline: 10px; } }

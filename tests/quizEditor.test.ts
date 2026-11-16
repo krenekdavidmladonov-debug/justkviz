@@ -5,6 +5,7 @@ import { QuizEditorError } from '../functions/src/editor/errors';
 import {
   applyKnownSlideUpdate,
   assertRevision,
+  hasQuizScopedMedia,
   mergeEditorMedia,
   quizCreationIdentity,
   sortedSlides,
@@ -36,6 +37,21 @@ function slideInput(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+test('whole-quiz copying rejects nested private asset references including escaped transport URLs', () => {
+  expect(hasQuizScopedMedia({ resultTemplates: { final: { design: { logoImage: 'quiz-asset:source/media' } } } })).toBe(true);
+  expect(hasQuizScopedMedia({ media: [{ generation: 'drive:sample', storageBackend: 'drive' }] })).toBe(true);
+  expect(hasQuizScopedMedia('https://example.test/media?ref=quiz%252Dasset%253Asource%252Fmedia')).toBe(true);
+  expect(hasQuizScopedMedia({ media: ['https://www.youtube.com/watch?v=synthetic01', 'https://example.test/images/logo.png'] })).toBe(false);
+});
+
+describe('organizational quiz status', () => {
+  test('accepts explicit draft/ready independently of content review and preserves omission', () => {
+    for (const status of ['draft', 'ready'] as const) expect(validateQuizMetadata({ title: 'Quiz', description: '', status }).status).toBe(status);
+    expect(validateQuizMetadata({ title: 'Quiz', description: '' })).not.toHaveProperty('status');
+    for (const status of ['archived', '', null, true, {}, 'READY']) expect(() => validateQuizMetadata({ title: 'Quiz', description: '', status })).toThrow();
+  });
+});
 
 describe('bounded slide design authoring', () => {
   test('legacy defaults agree across preview and publication; reset clears known overrides only', () => {
@@ -112,6 +128,49 @@ describe('bounded slide design authoring', () => {
 });
 
 describe('quiz editor lossless model', () => {
+  test.each([
+    { kind: 'audio', source: 'https://example.test/audio.mp3' },
+    { kind: 'video', source: 'https://example.test/video.mp4' },
+  ])('keeps a legacy $kind source across partial and full editor saves', ({ kind, source }) => {
+    const opaque = [{ private: 'RAW_PRIVATE_SENTINEL' }];
+    const storedMedia = [{ role: 'prompt', kind, value: source }];
+    const current = {
+      position: 1,
+      kind,
+      isQuestion: true,
+      mediaSource: opaque,
+      media: storedMedia,
+      presentation: { videoStart: 1, videoEnd: 3 },
+    };
+    const view = slideView('q', current, false, false);
+    expect(view.mediaSource).toBe(source);
+    expect(JSON.stringify(view)).not.toContain('RAW_PRIVATE_SENTINEL');
+
+    const input = slideInput({
+      kind,
+      media: view.media,
+      presentation: view.presentation,
+      clipStartSeconds: view.clipStartSeconds,
+      clipEndSeconds: view.clipEndSeconds,
+    });
+    const omitted = validateSlideInput(input);
+    expect(omitted).not.toHaveProperty('mediaSource');
+    const canonical = applyKnownSlideUpdate({ ...current, mediaSource: source }, omitted);
+    expect(canonical.mediaSource).toBe(source);
+    for (const saved of [applyKnownSlideUpdate(current, omitted),
+      applyKnownSlideUpdate(current, validateSlideInput({ ...input, mediaSource: source }))]) {
+      expect(saved.mediaSource).toEqual(opaque);
+      expect(saved.media).toEqual(storedMedia);
+      expect(saved.presentation).toEqual(current.presentation);
+      expect(mapEditorSlide('q', saved).mediaSource).toBe(source);
+    }
+
+    const detached = applyKnownSlideUpdate(current, validateSlideInput({ ...input, mediaSource: '' }));
+    expect(detached.mediaSource).toBe('');
+    expect(slideView('q', detached, false, false).mediaSource).toBe('');
+    expect(detached.media).toEqual(storedMedia);
+  });
+
   test('updates known fields while preserving legacy.raw and unknown fields exactly', () => {
     const legacy = { raw: { unexplained: ['keep', 42], correct: 'private sentinel' } };
     const current = {

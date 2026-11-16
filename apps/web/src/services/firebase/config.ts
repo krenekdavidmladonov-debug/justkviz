@@ -5,17 +5,16 @@ export interface FirebaseRuntimeConfig {
   readonly useEmulators: boolean;
 }
 
-const requiredKeys = [
-  'VITE_FIREBASE_API_KEY',
-  'VITE_FIREBASE_AUTH_DOMAIN',
-  'VITE_FIREBASE_PROJECT_ID',
-  'VITE_FIREBASE_STORAGE_BUCKET',
-  'VITE_FIREBASE_MESSAGING_SENDER_ID',
-  'VITE_FIREBASE_APP_ID',
-] as const;
-
 export function readFirebaseConfig(): FirebaseRuntimeConfig {
-  const missingKeys = requiredKeys.filter((key) => !import.meta.env[key]);
+  const publicEnv = {
+    VITE_FIREBASE_API_KEY: import.meta.env.VITE_FIREBASE_API_KEY,
+    VITE_FIREBASE_AUTH_DOMAIN: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+    VITE_FIREBASE_PROJECT_ID: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+    VITE_FIREBASE_STORAGE_BUCKET: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+    VITE_FIREBASE_MESSAGING_SENDER_ID: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+    VITE_FIREBASE_APP_ID: import.meta.env.VITE_FIREBASE_APP_ID,
+  };
+  const missingKeys = Object.keys(publicEnv).filter(key => !publicEnv[key as keyof typeof publicEnv]);
 
   if (missingKeys.length > 0) {
     throw new Error(`Firebase is not configured. Missing: ${missingKeys.join(', ')}`);

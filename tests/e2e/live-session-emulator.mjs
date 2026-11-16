@@ -108,11 +108,17 @@ async function run() {
     () => invoke('goToSlide', { sessionId, position: 99, expectedRevision: 0 }),
     'functions/invalid-argument',
   );
+  for (const payload of [{ direction: 0 }, { direction: '1' }, { direction: 1, position: 1 }]) {
+    await expectFunctionError(
+      () => invoke('goToSlide', { sessionId, expectedRevision: 0, ...payload }),
+      'functions/invalid-argument',
+    );
+  }
 
   await assert.rejects(getDoc(doc(projectorDb, 'sessions', sessionId)), /permission-denied/u);
   await assert.rejects(getDoc(doc(projectorDb, 'quizzes', 'live-session-e2e', 'slides', 'slide-002')), /permission-denied/u);
 
-  let control = await invoke('nextSlide', { sessionId, expectedRevision: 0 });
+  let control = await invoke('goToSlide', { sessionId, direction: 1, expectedRevision: 0 });
   assert.equal(control.currentSlidePosition, 1);
   state = await publicState(sessionId);
   assert.equal(state.slideKind, 'intro');
@@ -131,6 +137,18 @@ async function run() {
   assertPublicSafe(state, true);
   assert.equal(state.revealedAnswer, 'Syntetická odpověď');
   assert.equal(state.answerImage, 'https://example.test/answer.jpg');
+
+  const beforeReturnRevision = control.revision;
+  control = await invoke('goToSlide', { sessionId, direction: -1, expectedRevision: beforeReturnRevision });
+  assert.equal(control.currentSlidePosition, 1);
+  assertPublicSafe(await publicState(sessionId), false);
+  await expectFunctionError(
+    () => invoke('goToSlide', { sessionId, direction: 1, expectedRevision: beforeReturnRevision }),
+    'functions/aborted',
+  );
+  control = await invoke('goToSlide', { sessionId, direction: 1, expectedRevision: control.revision });
+  assert.equal(control.currentSlidePosition, 2);
+  assertPublicSafe(await publicState(sessionId), false);
 
   control = await invoke('nextSlide', { sessionId, expectedRevision: control.revision });
   state = await publicState(sessionId);

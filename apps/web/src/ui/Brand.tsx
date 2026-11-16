@@ -1,6 +1,6 @@
-import { productConfig } from '../config/product';
+import { brand, brandArtwork } from '@filmovy-kviz/quiz-domain';
 
-/** Typographic placeholder; replace the artwork here once the final logo is supplied. */
+/** Shared outlined artwork: scales cleanly without downloading or substituting fonts. */
 export function Brand() {
-  return <span className="brand-wordmark">{productConfig.name.slice(0, 4)}<span className="brand-wordmark-accent">{productConfig.name.slice(4)}</span></span>;
+  return <span className="brand-wordmark"><svg viewBox={`0 0 ${brandArtwork.viewBox.width} ${brandArtwork.viewBox.height}`} role="img" aria-label={brand.name} focusable="false"><title>{brand.name}</title>{brandArtwork.paths.map((path, index) => <path key={index} d={path.d} fill={path.ink === 'primary' ? 'var(--brand-ink, #F8FAFC)' : 'var(--brand-accent, #FFC107)'} />)}</svg></span>;
 }

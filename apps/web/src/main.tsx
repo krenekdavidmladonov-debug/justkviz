@@ -4,6 +4,7 @@ import { RouterProvider } from 'react-router-dom';
 
 import { router } from './app/router';
 import { AuthProvider } from './auth/AuthProvider';
+import { DriveConnectionSessionGuard } from './features/drive/DriveConnectionCallback';
 import { productConfig } from './config/product';
 import { pageTitle } from './config/pageTitle';
 import './styles/global.css';
@@ -23,6 +24,7 @@ if (!rootElement) {
 createRoot(rootElement).render(
   <StrictMode>
     <AuthProvider>
+      <DriveConnectionSessionGuard />
       <RouterProvider router={router} />
     </AuthProvider>
   </StrictMode>,

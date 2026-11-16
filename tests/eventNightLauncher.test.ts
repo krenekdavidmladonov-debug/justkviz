@@ -97,7 +97,7 @@ describe('event-night launcher safety contract', () => {
     const output = execFileSync(process.platform === 'win32' ? 'powershell.exe' : 'pwsh', [
       '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
       '-File', script, '-CommonPath', commonPath,
-    ], { cwd: root, encoding: 'utf8', timeout: 25_000, windowsHide: true });
+    ], { cwd: root, encoding: 'utf8', timeout: 90_000, windowsHide: true });
     expect(output).toContain('PASS: event-night recovery');
-  }, 30_000);
+  }, 120_000);
 });

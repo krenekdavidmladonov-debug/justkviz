@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
 import { collection, doc, getDoc, getDocs, setDoc, updateDoc, Timestamp, query, where, documentId } from 'firebase/firestore';
-import { ref, uploadBytes, getBytes } from 'firebase/storage';
+import { ref, uploadBytes, getBytes, listAll, updateMetadata } from 'firebase/storage';
 import { beforeAll, afterAll, beforeEach, expect, test } from 'vitest';
 import { permissions, rolePresets, type Membership } from '../../packages/quiz-domain/src/access.js';
 
@@ -30,7 +30,7 @@ beforeEach(async () => {
     await setDoc(doc(db, 'quizSnapshots/snapshot'), { quizId: 'a' });
     await setDoc(doc(db, 'quizSnapshots/snapshot/slides/question'), { correctAnswer: 'PRIVATE' });
     await setDoc(doc(db, 'publicSessions/known'), { title: 'Public question' });
-    await setDoc(doc(db, 'publicEvents/listed'), { title: 'Public event' });
+    await setDoc(doc(db, 'publicEvents/listed'), { title: 'Public event', registrationPublished: true });
     await setDoc(doc(db, 'memberships/creator'), member('creator'));
     await setDoc(doc(db, 'memberships/viewer'), member('viewer', { role: 'viewer', permissions: [...rolePresets.viewer] }));
     await setDoc(doc(db, 'memberships/owner'), member('owner', { role: 'owner', permissions: [...permissions], quizzes: { mode: 'all', ids: [] }, events: { mode: 'all', ids: [] } }));
@@ -145,7 +145,8 @@ test('relocking revokes direct historical snapshot get and list without granting
 test('anonymous projector and public events remain available with private writes denied', async () => {
   const db = env.unauthenticatedContext().firestore();
   await assertSucceeds(getDoc(doc(db, 'publicSessions/known')));
-  await assertSucceeds(getDocs(collection(db, 'publicEvents')));
+  await assertSucceeds(getDocs(query(collection(db, 'publicEvents'), where('registrationPublished', '==', true))));
+  await assertFails(getDocs(collection(db, 'publicEvents')));
   await assertFails(getDocs(collection(db, 'publicSessions')));
   await assertFails(setDoc(doc(db, 'publicSessions/known'), { revealedAnswer: 'Forged' }));
 });
@@ -165,4 +166,47 @@ test('Storage enforces current membership, scope and upload grant version', asyn
   await assertFails(uploadBytes(stale, bytes, { contentType: 'image/png' }));
   await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'memberships/creator'), { version: 1, status: 'suspended' }));
   await assertFails(uploadBytes(stale, bytes, { contentType: 'image/png' }));
+});
+
+test('Storage permits only the exact current MP4 create grant and protects pending and ready bytes', async () => {
+  // Rules constrain path, actor, MIME and size. Real MP4 bytes/signatures are exercised in media-emulator.mjs.
+  const bytes = new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112]);
+  const creator = client('creator').storage();
+  const target = (id: string) => ref(creator, `quiz-assets/a/${id}/upload`);
+  async function grant(assetId: string, contentType = 'video/mp4', size = bytes.byteLength) {
+    await env.withSecurityRulesDisabled(context => setDoc(doc(context.firestore(), `quizzes/a/mediaAssets/${assetId}`), {
+      quizId: 'a', assetId, createdBy: 'creator', membershipVersion: 1, status: 'uploading',
+      uploadExpiresAt: Timestamp.fromMillis(Date.now() + 60000), kind: 'video', contentType, size,
+    }));
+    return target(assetId);
+  }
+  const metadata = { contentType: 'video/mp4' };
+  await assertFails(uploadBytes(target('no-video-grant'), bytes, metadata));
+  const file = await grant('owned-video');
+  const canonical = ref(creator, 'quiz-assets/a/owned-video/source');
+  await assertFails(uploadBytes(canonical, bytes, metadata));
+  await assertFails(uploadBytes(ref(env.unauthenticatedContext().storage(), file.fullPath), bytes, metadata));
+  await assertFails(uploadBytes(ref(client('other').storage(), file.fullPath), bytes, metadata));
+  await assertFails(uploadBytes(ref(creator, file.fullPath.replace('quiz-assets/a/', 'quiz-assets/b/')), bytes, metadata));
+  await assertFails(uploadBytes(file, bytes, { contentType: 'video/webm' }));
+  await assertFails(uploadBytes(file, bytes.subarray(0, -1), metadata));
+  await assertSucceeds(uploadBytes(file, bytes, metadata));
+  // These must already fail while the grant is still uploading.
+  await assertFails(uploadBytes(canonical, bytes, metadata));
+  await assertFails(uploadBytes(file, bytes, metadata));
+  await assertFails(updateMetadata(file, { contentType: 'video/webm' }));
+  await assertFails(getBytes(file));
+  await assertFails(getBytes(canonical));
+  await assertFails(listAll(ref(creator, 'quiz-assets/a')));
+  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'quizzes/a/mediaAssets/owned-video'), { status: 'ready' }));
+  await assertFails(getBytes(file));
+  await assertFails(uploadBytes(file, bytes, metadata));
+  const wrongMime = await grant('wrong-video-mime', 'video/webm');
+  await assertFails(uploadBytes(wrongMime, bytes, { contentType: 'video/webm' }));
+  const tooLarge = new Uint8Array(25 * 1024 * 1024 + 1);
+  const oversize = await grant('too-large-video', 'video/mp4', tooLarge.byteLength);
+  await assertFails(uploadBytes(oversize, tooLarge, metadata));
+  const stale = await grant('stale-video');
+  await env.withSecurityRulesDisabled(context => updateDoc(doc(context.firestore(), 'memberships/creator'), { version: 2 }));
+  await assertFails(uploadBytes(stale, bytes, metadata));
 });

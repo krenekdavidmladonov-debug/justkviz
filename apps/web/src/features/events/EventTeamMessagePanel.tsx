@@ -1,4 +1,5 @@
 import { readTeamMessageRecovery } from './teamMessageRecovery';
+import { Brand } from '../../ui/Brand';
 import { useEffect, useRef, useState } from 'react';
 import { createTeamMessage, resetTeamMessageRequest, getTeamMessage, listTeamMessages, previewTeamMessage, teamMessageError,
   type TeamMessagePreview, type TeamMessageReceipt, type TeamMessageRequest, type TeamMessageStatus } from './teamMessageApi';
@@ -57,7 +58,7 @@ export function EventTeamMessagePanel({ eventId, actorId, canCreate }: { eventId
         </fieldset>
       </form>}
       {preview && <section aria-label="Náhled zprávy">
-        <h3>{preview.subject}</h3><p>{preview.eventTitle}</p><p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{preview.message}</p><p>JustKvíz</p>
+        <h3>{preview.subject}</h3><p>{preview.eventTitle}</p><p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{preview.message}</p><p><Brand /></p>
         <p>Počet příjemců: <strong>{preview.total}</strong></p>
         <label><input type="checkbox" checked={confirmed} disabled={pending || Boolean(request)} onChange={e => setConfirmed(e.target.checked)} /> Potvrzuji obsah a odeslání všem uvedeným příjemcům.</label>
         <p><button className="primary-button" type="button" disabled={pending || !confirmed || preview.total === 0} onClick={() => void action(send)}>{request ? 'Ověřit stejný požadavek' : 'Odeslat týmům'}</button></p>

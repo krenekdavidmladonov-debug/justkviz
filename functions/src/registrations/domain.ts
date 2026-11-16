@@ -21,8 +21,7 @@ export function hasCapacity(capacity: RegistrationCapacity, teamDelta: number, p
   const next = capacityAfter(capacity, teamDelta, peopleDelta);
   return next.acceptedTeams >= 0
     && next.acceptedPeople >= 0
-    && next.acceptedTeams <= next.maximumTeams
-    && next.acceptedPeople <= next.maximumPeople;
+    && next.acceptedTeams <= next.maximumTeams;
 }
 
 export function effectiveRegistrationStatus(input: {
@@ -36,7 +35,6 @@ export function effectiveRegistrationStatus(input: {
   if (!input.published || input.lifecycleStatus === 'cancelled' || input.lifecycleStatus === 'archived') return 'closed';
   if (input.nowMillis < input.opensAtMillis) return 'scheduled';
   if (input.nowMillis >= input.closesAtMillis) return 'closed';
-  if (input.capacity.acceptedTeams >= input.capacity.maximumTeams
-    || input.capacity.acceptedPeople >= input.capacity.maximumPeople) return 'full';
+  if (input.capacity.acceptedTeams >= input.capacity.maximumTeams) return 'full';
   return 'open';
 }

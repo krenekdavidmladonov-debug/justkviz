@@ -56,7 +56,7 @@ export function qaStore(inputPlan, clients) {
 }
 
 export async function connectQaStore(plan, cli) {
-  demand(cli('package').version === '15.28.2', 'PINNED_CLI_REQUIRED');
+  demand(cli('package').version === '15.34.2', 'PINNED_CLI_REQUIRED');
   const account = cli('auth').getGlobalDefaultAccount();
   demand(account?.user?.email === plan.approval.operatorEmail, 'REVIEWED_CLI_OPERATOR_REQUIRED');
   let authenticatedEmail;

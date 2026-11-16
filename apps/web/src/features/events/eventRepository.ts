@@ -3,7 +3,8 @@ import {
   doc,
   getDocFromServer,
   getDocsFromServer,
-  orderBy,
+  onSnapshot,
+  where,
   query,
 } from 'firebase/firestore';
 
@@ -26,17 +27,40 @@ export async function getEvent(eventId: string): Promise<EventRecord | null> {
   return mapEvent(result.id, result.data);
 }
 
-export async function listPublicEvents(): Promise<readonly PublicEventRecord[]> {
-  const snapshot = await getDocsFromServer(query(
+function publicEventsQuery() {
+  return query(
     collection(getFirebaseFirestore(), 'publicEvents'),
-    orderBy('startsAt', 'asc'),
-  ));
-  return snapshot.docs.map((item) => mapPublicEvent(item.id, item.data()));
+    where('registrationPublished', '==', true),
+  );
+}
+
+export async function listPublicEvents(): Promise<readonly PublicEventRecord[]> {
+  const snapshot = await getDocsFromServer(publicEventsQuery());
+  return snapshot.docs.map((item) => mapPublicEvent(item.id, item.data())).sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
+}
+
+export function subscribePublishedEvents(onChange: (events: readonly PublicEventRecord[] | null) => void) {
+  return onSnapshot(publicEventsQuery(), { includeMetadataChanges: true }, (snapshot) => {
+    if (snapshot.metadata.fromCache) {
+      onChange(null);
+      return;
+    }
+    const events = snapshot.docs.flatMap(item => {
+      try { return [mapPublicEvent(item.id, item.data())]; }
+      catch { return []; }
+    });
+    onChange(events);
+  }, () => onChange(null));
 }
 
 export async function getPublicEvent(eventId: string): Promise<PublicEventRecord | null> {
-  const snapshot = await getDocFromServer(doc(getFirebaseFirestore(), 'publicEvents', eventId));
-  return snapshot.exists() ? mapPublicEvent(snapshot.id, snapshot.data()) : null;
+  try {
+    const snapshot = await getDocFromServer(doc(getFirebaseFirestore(), 'publicEvents', eventId));
+    return snapshot.exists() && snapshot.data().registrationPublished === true ? mapPublicEvent(snapshot.id, snapshot.data()) : null;
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'permission-denied') return null;
+    throw error;
+  }
 }
 
 export async function listEventRegistrations(eventId: string): Promise<readonly RegistrationRecord[]> {

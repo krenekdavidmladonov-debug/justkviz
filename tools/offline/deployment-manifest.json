@@ -1,0 +1,20 @@
+{
+  "projectId": "filmovy-kviz-v2-staging",
+  "hostingSite": "justkviz-v2",
+  "origins": ["https://justkviz.cz", "https://justkviz-v2.web.app"],
+  "region": "europe-west1",
+  "newCallableFunctions": [
+    "readOfflineTrust", "prepareOfflineEvent", "authorizeOfflineEvent",
+    "previewOfflineSync", "commitOfflineSync"
+  ],
+  "existingFunctionsToUpdate": ["readQuizMedia"],
+  "compatibleMediaPrerequisitesIfMissing": ["beginQuizMediaUpload", "finalizeQuizMediaUpload"],
+  "compatibleDeletionRegistryIfMissing": ["deleteEvent"],
+  "firestoreRulesChange": false,
+  "firestoreIndexesChange": false,
+  "storageRulesIfMp4PrerequisiteMissing": "storage.rules",
+  "hostingConfig": "firebase.offline-hosting.json",
+  "hostingEntries": ["index.html", "offline.html", "offline.webmanifest", "offline-sw.js"],
+  "default": "disabled",
+  "activationRequiresSeparateApproval": true
+}

@@ -30,6 +30,10 @@ async function waitForCallable(page: Page, callableName: string, action: () => P
 
 async function selectOnlyQuestion(page: Page): Promise<ReturnType<Page['getByLabel']>> {
   await expect(page.locator('.round-first-editor')).toBeVisible();
+  await expect(page.locator('.outline-round').first()).toBeVisible();
+  while (await page.locator('.outline-collapse[aria-expanded="false"]').count()) {
+    await page.locator('.outline-collapse[aria-expanded="false"]').first().click();
+  }
   await expect(page.locator('.outline-question')).toHaveCount(1);
   await page.locator('.outline-question').click();
   const prompt = page.getByLabel('Otázka *');
@@ -38,6 +42,29 @@ async function selectOnlyQuestion(page: Page): Promise<ReturnType<Page['getByLab
 }
 
 test.describe.configure({ mode: 'serial' });
+
+test('creates an independent whole-quiz copy from the detail page @seeded @duplicate-quiz', async ({ browser }) => {
+  const context = await browser.newContext();
+  await restrictToLocalhost(context);
+  const page = await context.newPage();
+  try {
+    await login(page);
+    const original = '/admin/quizzes/editor-core-imported-e2e';
+    await page.goto(original);
+    const initialTitle = await page.locator('.quiz-detail h1').innerText();
+    await page.getByRole('button', { name: `Duplikovat kvíz ${initialTitle}`, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Duplikovat kvíz' });
+    await expect(dialog.getByLabel('Název kopie')).toHaveValue(`${initialTitle} (kopie)`);
+    await dialog.getByLabel('Název kopie').fill('Browserová kopie celého kvízu');
+    await waitForCallable(page, 'duplicateQuiz', () => dialog.getByRole('button', { name: 'Vytvořit kopii' }).click());
+    await expect(page).toHaveURL(/\/admin\/quizzes\/quiz_[a-f0-9]{64}\/edit$/u);
+    await expect(page.getByLabel('Název kvízu *')).toHaveValue('Browserová kopie celého kvízu');
+    await page.goto(original);
+    await expect(page.locator('.quiz-detail h1')).toHaveText(initialTitle);
+  } finally {
+    await context.close();
+  }
+});
 
 test('empty library exposes the new-quiz CTA @empty-library', async ({ browser }) => {
   const context = await browser.newContext();
@@ -130,7 +157,6 @@ test('library CTA creates an empty quiz and carries its first round and free que
     await waitForCallable(page, 'createQuizRound', () => page.getByRole('button', { name: '+ Přidat kolo' }).click());
     await expect(page.locator('.outline-round')).toHaveCount(1);
     await page.getByRole('button', { name: '+ Přidat otázku' }).click();
-    await page.getByRole('dialog', { name: /Typ otázky/u }).getByRole('button', { name: 'Volná odpověď' }).click();
     await page.getByLabel('Otázka *').fill(question);
     await page.getByLabel('Správná odpověď *').fill(answer);
     await waitForCallable(page, 'createQuizSlide', () => page.getByRole('button', { name: 'Uložit vše', exact: true }).click());
@@ -144,6 +170,8 @@ test('library CTA creates an empty quiz and carries its first round and free que
     await expect(page.getByRole('link', { name: title, exact: true })).toBeVisible();
     await page.getByRole('link', { name: title, exact: true }).click();
     await page.getByRole('link', { name: 'Otevřít editor' }).click();
+    await expect(page.locator('.outline-round').first()).toBeVisible();
+    while (await page.locator('.outline-collapse[aria-expanded="false"]').count()) await page.locator('.outline-collapse[aria-expanded="false"]').first().click();
     await page.locator('.outline-question').filter({ hasText: question }).click();
     await expect(page.getByLabel('Otázka *')).toHaveValue(question);
     await expect(page.getByLabel('Správná odpověď *')).toHaveValue(answer);

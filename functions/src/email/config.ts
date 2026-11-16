@@ -39,9 +39,10 @@ export function registrationTokenVault(): TokenVault {
 }
 
 export function cloudEmailOrigin(): string {
-  // Only the existing V2 staging surface is prepared in this slice. No V1 target.
-  if (!registrationEmailActivation() || process.env.EMAIL_PUBLIC_ORIGIN !== 'https://filmovy-kviz-v2-staging.web.app') throw new EmailDeliveryError('configuration-invalid', false);
-  return process.env.EMAIL_PUBLIC_ORIGIN;
+  // Exact V2 origins only; retain the Firebase addresses for old links and rollback.
+  const origin = process.env.EMAIL_PUBLIC_ORIGIN;
+  if (!registrationEmailActivation() || !origin || !['https://justkviz.cz', 'https://justkviz-v2.web.app', 'https://filmovy-kviz-v2-staging.web.app'].includes(origin)) throw new EmailDeliveryError('configuration-invalid', false);
+  return origin;
 }
 
 export function cloudGmailTransport(): GmailEmailTransport {

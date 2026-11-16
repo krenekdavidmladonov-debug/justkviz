@@ -5,7 +5,7 @@ import { authorizeStaff, parseSession, loadSlide } from '../live/callables.js';
 import { buildPublicSessionState, publicResultTemplate } from '../live/publication.js';
 import { applyLiveSessionAction } from '../live/session-machine.js';
 import type { PrivateLiveSession } from '../live/types.js';
-import { calculateResults, calculateFinalResults, fingerprint } from './model.js';
+import { calculateResults, calculateFinalResults, calculateCurrentResults, fingerprint } from './model.js';
 import { normalizeResultPagination, resultPagination, type PublicResultRow, type ShowCue } from '@filmovy-kviz/quiz-domain';
 import { attachResultMovement, captureInterimReturn, makeShowCue, restoreInterimReturn, staticInterimBackdrop } from '../live/show-mode.js';
 import type { PrivateSlide } from '../live/types.js';
@@ -75,7 +75,7 @@ export const createEventLiveSession = securedOnCall('createEventLiveSession', op
         return { sessionId: sessionRef.id };
     });
 });
-export async function previewIn(tx: Transaction, eventId: string, sessionId: string, throughRoundId: string | null) {
+export async function previewIn(tx: Transaction, eventId: string, sessionId: string, throughRoundId: string | null, scope: 'selected' | 'current' = 'selected') {
     const { session } = await bound(tx, eventId, sessionId);
     const rounds = await tx.get(db().collection(`quizSnapshots/${session.snapshotId}/rounds`));
     const teams = await tx.get(db().collection(`events/${eventId}/registrations`).where('status', '==', 'accepted'));
@@ -83,7 +83,8 @@ export async function previewIn(tx: Transaction, eventId: string, sessionId: str
     const roundValues = rounds.docs.map(d => ({ id: d.id, title: String(d.data().title), position: Number(d.data().position) }));
     const teamValues = teams.docs.map(d => ({ id: d.id, name: String(d.data().teamName), revision: Number(d.data().revision ?? 0) }));
     const scoreValues = scores.docs.filter(d => d.data().snapshotId === session.snapshotId).map(d => ({ teamId: String(d.data().teamId), roundId: String(d.data().roundId), halfPoints: d.data().halfPoints as number | null, revision: Number(d.data().revision) }));
-    const result = throughRoundId === null ? calculateFinalResults(roundValues, teamValues, scoreValues) : calculateResults(roundValues, throughRoundId, teamValues, scoreValues);
+    const result = scope === 'current' ? calculateCurrentResults(roundValues, teamValues, scoreValues)
+        : throughRoundId === null ? calculateFinalResults(roundValues, teamValues, scoreValues) : calculateResults(roundValues, throughRoundId, teamValues, scoreValues);
     return { session, result: { ...result, sourceFingerprint: fingerprint([eventId, session.snapshotId, result.sourceFingerprint]) } };
 }
 export const previewInterimResults = securedOnCall('previewInterimResults', options, async (request) => {
@@ -103,13 +104,13 @@ export const controlInterimResults = securedOnCall('controlInterimResults', opti
     const uid = authorizeStaff(request.auth).uid, data = object(request.data);
     const eventId = id(data, 'eventId'), sessionId = id(data, 'sessionId'), requestId = id(data, 'requestId');
     const action = data.action;
-    if (!['publish', 'hide', 'page', 'static'].includes(action as string))
+    if (!['publish', 'current', 'hide', 'page', 'static'].includes(action as string))
         throw new HttpsError('invalid-argument', 'Neplatný příkaz výsledků.');
     const allowed = ['eventId', 'sessionId', 'requestId', 'expectedRevision', 'action', ...(action === 'publish' ? ['throughRoundId', 'sourceFingerprint', 'presentationStyle', 'motion'] : action === 'page' ? ['page'] : [])];
     if (Object.keys(data).some(k => !allowed.includes(k)))
         throw new HttpsError('invalid-argument', 'Nepovolená pole.');
     let requestedPagination;
-    try { requestedPagination = resultPagination(data.presentationStyle); }
+    try { requestedPagination = resultPagination(action === 'current' ? 'show' : data.presentationStyle); }
     catch { throw new HttpsError('invalid-argument', 'Neplatný režim výsledků.'); }
     if (data.motion !== undefined && data.motion !== 'animate' && data.motion !== 'static') throw new HttpsError('invalid-argument', 'Neplatný pohyb.');
     const expected = revision(data), operationId = fingerprint([uid, sessionId, requestId]), commandFingerprint = fingerprint([eventId, sessionId, action, data.expectedRevision, data.throughRoundId ?? null, data.sourceFingerprint ?? null, data.page ?? null,
@@ -137,11 +138,11 @@ export const controlInterimResults = securedOnCall('controlInterimResults', opti
         let rows: PublicResultRow[] = [];
         let restoreSlide: PrivateSlide | undefined;
         let returnRestored = true;
-        if (action === 'publish') {
-            const { result } = await previewIn(tx, eventId, sessionId, id(data, 'throughRoundId'));
-            if (!result.complete)
+        if (action === 'publish' || action === 'current') {
+            const { result } = await previewIn(tx, eventId, sessionId, action === 'current' ? null : id(data, 'throughRoundId'), action === 'current' ? 'current' : 'selected');
+            if (action === 'publish' && !result.complete)
                 throw new HttpsError('failed-precondition', 'Neúplné nebo prázdné výsledky nelze zveřejnit.');
-            if (data.sourceFingerprint !== result.sourceFingerprint)
+            if (action === 'publish' && data.sourceFingerprint !== result.sourceFingerprint)
                 throw new HttpsError('aborted', 'Náhled je zastaralý. Načtěte novou podobu.');
             const slide = await loadSlide(tx, session.quizId, session.currentSlidePosition, session.snapshotId);
             // Existing navigation lifecycle stops media, clears recap/reveal, preserves position.
@@ -155,6 +156,8 @@ export const controlInterimResults = securedOnCall('controlInterimResults', opti
                 lastInterimVersionId: operationId,
                 interimResults: { versionId: operationId, roundNumber: result.roundNumber, page: 0, pageCount: Math.ceil(rows.length / requestedPagination.pageSize), ...requestedPagination } };
             publication = { eventId, sessionId, snapshotId: session.snapshotId, sourceFingerprint: result.sourceFingerprint, includedRounds: result.includedRounds, rows,
+                ...(action === 'current' ? { scope: 'current', complete: result.complete, expectedScoreCount: result.includedRounds.length * result.rows.length,
+                    missingScoreCount: result.missing.length, presentScoreCount: result.includedRounds.length * result.rows.length - result.missing.length } : {}),
                 teamRanks: result.teamRanks, rowTeamIds: result.rowTeamIds, ...requestedPagination, actorUid: uid, createdAt: now, versionId: operationId };
         }
         else if (action === 'page' || action === 'static') {
@@ -184,7 +187,7 @@ export const controlInterimResults = securedOnCall('controlInterimResults', opti
         }
         const pageConfig = updated.interimResults ? normalizeResultPagination(updated.interimResults) : undefined;
         const backdrop = action !== 'hide' && pageConfig?.presentationStyle === 'show' ? staticInterimBackdrop(updated, await loadSlide(tx, session.quizId, updated.currentSlidePosition, session.snapshotId)) : undefined;
-        const cue = action !== 'hide' && pageConfig?.presentationStyle === 'show' ? makeShowCue(operationId, 'interim', event.showPreferences, now.toMillis(), action === 'publish' ? data.motion : 'static') : undefined;
+        const cue = action !== 'hide' && pageConfig?.presentationStyle === 'show' ? makeShowCue(operationId, 'interim', event.showPreferences, now.toMillis(), action === 'publish' || action === 'current' ? data.motion : 'static') : undefined;
         if (cue) updated = { ...updated, showCue: cue };
         const template = action === 'hide' ? {} : publicResultTemplate((await tx.get(db().doc('quizSnapshots/' + session.snapshotId))).data() ?? {}, 'interim');
         const publicState = action === 'hide' ? buildPublicSessionState(updated, restoreSlide) : {

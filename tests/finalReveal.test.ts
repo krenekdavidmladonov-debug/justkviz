@@ -7,6 +7,21 @@ const teams = ['Alfa', 'Beta', 'Gama', 'Delta'].map((name, i) => ({ id: 't' + i,
 const scores = teams.flatMap((t, i) => rounds.map((r, n) => ({ teamId: t.id, roundId: r.id, halfPoints: n === 0 ? 20 : n === 1 ? [20, 15, 15, 10][i]! : 0, revision: 1 })));
 const version = 'a'.repeat(64);
 describe('final totals and manual reveal', () => {
+  test('two entered scores across two teams and six rounds leave ten missing cells', () => {
+    const sixRounds = Array.from({ length: 6 }, (_, index) => ({ id: 'round-' + index, title: 'Synthetic round ' + index, position: index + 1 }));
+    const twoTeams = teams.slice(0, 2);
+    const entered = twoTeams.map((team, index) => ({ teamId: team.id, roundId: sixRounds[0]!.id, halfPoints: index === 0 ? 4 : 0, revision: 1 }));
+    const before = structuredClone(entered);
+    const preview = calculateFinalResults(sixRounds, twoTeams, entered);
+    expect(preview.complete).toBe(false);
+    expect(preview.rows).toHaveLength(2);
+    expect(preview.includedRounds).toHaveLength(6);
+    expect(preview.missing).toHaveLength(10);
+    expect(preview.missing.filter(item => item.roundId === sixRounds[0]!.id)).toEqual([]);
+    for (const round of sixRounds.slice(1)) expect(preview.missing.filter(item => item.roundId === round.id)).toHaveLength(2);
+    expect(preview.rows.length * preview.includedRounds.length - preview.missing.length).toBe(2);
+    expect(entered).toEqual(before);
+  });
   test('all rounds, exact half points, dense ties and stable order; interim restriction unchanged', () => {
     const result = calculateFinalResults(rounds, [...teams].reverse(), scores);
     expect(result.rows).toEqual([{ rank: 1, teamName: 'Alfa', halfPoints: 40 }, { rank: 2, teamName: 'Beta', halfPoints: 35 }, { rank: 2, teamName: 'Gama', halfPoints: 35 }, { rank: 3, teamName: 'Delta', halfPoints: 30 }]);

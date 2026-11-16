@@ -70,20 +70,20 @@ describe('unified slide render model', () => {
 
   test('VIDEO shows the question before play, uses one player while playing, and returns after stop or finish', () => {
     const model = buildSlideRenderModel(slide({ kind: 'video', mediaSource: 'abcdefghijk', clipStartSeconds: 7, clipEndSeconds: 24 }));
-    expect(projectorMediaPlan(model, 'idle')).toMatchObject({ mountPlayer: false, showQuestion: true });
+    expect(projectorMediaPlan(model, 'idle')).toMatchObject({ mountPlayer: true, showQuestion: true });
     expect(projectorMediaPlan(model, 'play')).toMatchObject({ mountPlayer: true, showQuestion: false, startSeconds: 7, endSeconds: 24 });
-    expect(projectorMediaPlan(model, 'stop')).toMatchObject({ mountPlayer: false, showQuestion: true });
+    expect(projectorMediaPlan(model, 'stop')).toMatchObject({ mountPlayer: true, showQuestion: true });
     expect(projectorMediaPlan(model, 'replay')).toMatchObject({ mountPlayer: true, startSeconds: 7 });
-    expect(projectorMediaPlan(model, 'play', 'finished', true)).toMatchObject({ mountPlayer: false, showQuestion: true });
+    expect(projectorMediaPlan(model, 'play', 'finished', true)).toMatchObject({ mountPlayer: true, showQuestion: true });
   });
 
-  test('RECAP publishes a prominent selected answer and A/V starts at zero without a clip end', () => {
+  test('RECAP publishes a selected answer and preserves clip timing until original is explicitly selected', () => {
     const model = buildSlideRenderModel(slide({
       kind: 'audio', mediaSource: 'abcdefghijk', clipStartSeconds: 12, clipEndSeconds: 30,
       answerImage: 'https://example.test/answer.jpg', revealedAnswer: 'Sanitizovaná odpověď',
     }), 'recap');
     expect(model).toMatchObject({ renderMode: 'recap', revealedAnswer: 'Sanitizovaná odpověď', answerImage: 'https://example.test/answer.jpg' });
-    expect(projectorMediaPlan(model, 'idle')).toEqual({ mountPlayer: true, showQuestion: true, vinylPlaying: false, startSeconds: 0 });
+    expect(projectorMediaPlan(model, 'idle')).toEqual({ mountPlayer: true, showQuestion: true, vinylPlaying: false, startSeconds: 12, endSeconds: 30 });
   });
 
   test('PL remains a legacy-only render kind with Czech truth labels', () => {
@@ -97,6 +97,19 @@ describe('unified slide render model', () => {
     expect(generatedAgendaOptions([{ title: 'První téma' }, { title: '  Druhé téma  ' }, { title: '' }])).toEqual([
       '1. KOLO – První téma', '2. KOLO – Druhé téma', '3. KOLO',
     ]);
+  });
+
+  test('automatic agenda keeps visible announcements in saved program order', () => {
+    const rounds = [{ id: 'r1', title: 'První' }, { id: 'r2', title: 'Druhé' }];
+    const slides = [
+      { id: 'start', position: 1, kind: 'intro', title: 'Vítejte', text: '', isQuestion: false },
+      { id: 'r1-head', position: 2, kind: 'round', roundId: 'r1', title: 'První', text: '', isQuestion: false },
+      { id: 'info', position: 3, kind: 'info', title: 'Přestávka', text: '', isQuestion: false },
+      { id: 'hidden', position: 4, kind: 'info', title: 'Skryté', text: '', isQuestion: false, hidden: true },
+      { id: 'r2-head', position: 5, kind: 'round', roundId: 'r2', title: 'Druhé', text: '', isQuestion: false },
+      { id: 'thanks', position: 6, kind: 'thank-you', title: 'Děkujeme', text: '', isQuestion: false },
+    ] as const;
+    expect(generatedAgendaOptions(rounds, slides)).toEqual(['1. KOLO – První', 'Přestávka', '2. KOLO – Druhé']);
   });
 
   test('legacy timing accepts zero start, rejects a non-increasing end, and parses supported YouTube sources', () => {
@@ -181,6 +194,21 @@ describe('same-device public channel security', () => {
     expect(parseProjectorChannelMessage({
       type: 'playback-state', sessionId: 'safe-session', mediaGeneration: 1, playbackState: 'PLAYING', extra: true,
     })).toBeUndefined();
+  });
+
+  test('accepts only allowlisted diagnostic observations without source details', () => {
+    const observation = {
+      type: 'media-diagnostic', sessionId: 'safe-session', mediaGeneration: 3,
+      target: 'question-image', reason: 'slow-load',
+    };
+    expect(parseProjectorChannelMessage(observation)).toEqual(observation);
+    expect(parseProjectorChannelMessage({ ...observation, reason: 'recovered' })).toEqual({ ...observation, reason: 'recovered' });
+    for (const patch of [
+      { target: 'unknown-image' }, { reason: 'https://example.test/private?token=secret' },
+      { source: 'https://example.test/private' }, { mediaGeneration: -1 }, { mediaGeneration: 0.5 },
+      { mediaGeneration: Number.MAX_SAFE_INTEGER + 1 }, { sessionId: '' },
+      { playbackState: 'error' },
+    ]) expect(parseProjectorChannelMessage({ ...observation, ...patch })).toBeUndefined();
   });
 
   test('fast path rejects stale, future, equal, and wrong-session revisions', () => {

@@ -1,4 +1,10 @@
 .event-actions { position: relative; min-width: 10rem; }
+.event-quick-actions { display:flex; flex-wrap:wrap; align-items:flex-start; gap:8px; }
+.event-quick-action { display:grid; gap:6px; max-width:18rem; }
+.event-quick-action > button { display:flex; align-items:center; justify-content:center; gap:7px; min-height:44px; }
+.event-quick-action > small { color:var(--color-text-muted); line-height:1.4; }
+.event-card:has(.event-quick-actions) { align-items:flex-start; }
+@media(max-width:760px) { .event-card:has(.event-quick-actions) { flex-direction:column; } .event-quick-actions { width:100%; } }
 .event-actions summary { cursor: pointer; padding: .65rem .85rem; border: 1px solid var(--border); border-radius: .6rem; }
 .event-action-menu { padding: .65rem; display: grid; gap: .65rem; min-width: 16rem; }
 .event-action-menu button, .event-action-menu a { text-align: left; display: block; width: 100%; padding: .5rem; }
@@ -22,4 +28,12 @@
 .event-action-menu small { margin-top:3px; padding:0 10px 6px; color:var(--color-text-muted); font-size:.72rem; line-height:1.5; }
 .event-action-menu button:focus-visible, .event-action-menu a:focus-visible, .event-actions summary:focus-visible { outline:2px solid var(--color-focus); outline-offset:2px; }
 .event-card-main { min-width:0; }
+.event-library .event-card-list { grid-template-columns:repeat(auto-fit, minmax(min(100%, 320px), 1fr)); }
+.event-library .event-card { min-width:0; flex-direction:column; }
+.event-library .event-card-main { width:100%; flex-direction:column; justify-content:flex-start; }
+.event-library .event-card-main > div { min-width:0; max-width:100%; overflow-wrap:anywhere; }
+.event-library .event-card-meta { justify-items:start; text-align:left; }
+.event-library .event-quick-actions { width:100%; min-width:0; margin-top:auto; padding-top:16px; border-top:1px solid var(--color-border); }
+.event-library .event-quick-action { min-width:0; max-width:100%; }
+.event-library .event-actions summary { white-space:normal; }
 @media(max-width:760px) { .event-actions, .event-action-menu { width:100%; } .admin-shell .section-heading { padding-left:12px; } }

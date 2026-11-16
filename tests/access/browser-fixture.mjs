@@ -21,7 +21,7 @@ export async function browserFixture() {
   }
   const quizA = await quiz('Přidělený kvíz A'), quizB = await quiz('Nepřístupný kvíz B');
   async function event(title) {
-    const created = await owner.call('createEvent', { expectedRevision: 0, event: { title, startsAt: '2031-10-20T17:00:00Z', timeZone: 'Europe/Prague', venue: { name: 'Syntetický sál', publicLocation: 'Praha' }, teamCapacity: 20, peopleCapacity: 120, teamSizeMin: 2, teamSizeMax: 6 } });
+    const created = await owner.call('createEvent', { expectedRevision: 0, event: { title, startsAt: '2031-10-20T17:00:00Z', timeZone: 'Europe/Prague', venue: { name: 'Syntetický sál', publicLocation: 'Praha' }, teamCapacity: 20, peopleCapacity: 120, teamSizeMin: 2, teamSizeMax: 4 } });
     const eventId = created.eventId; paths.push(`events/${eventId}`, `publicEvents/${eventId}`);
     await owner.call('lockEventQuiz', { eventId, quizId: quizA, expectedRevision: created.revision, expectedQuizRevision: 5, acknowledgeWarnings: true });
     const snapshotId = (await db.doc(`events/${eventId}`).get()).get('quizAssignment.snapshotId'); paths.push(`quizSnapshots/${snapshotId}`);

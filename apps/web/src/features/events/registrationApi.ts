@@ -2,7 +2,7 @@ import { pragueInstant } from '@filmovy-kviz/quiz-domain';
 import { FunctionsError, httpsCallable } from 'firebase/functions';
 
 import { getFirebaseServices } from '../../services/firebase/client';
-import type { RegistrationMutationResponse } from './types';
+import type { EventLifecycleStatus, RegistrationMutationResponse, RegistrationStatus } from './types';
 
 export interface RegistrationFormValues {
   readonly teamName: string;
@@ -18,7 +18,7 @@ export function configureEventRegistration(
   expectedRevision: number,
   registrationOpensAt: string,
   registrationClosesAt: string,
-  published: boolean,
+  published: boolean | undefined,
   opensOffset?: string,
   closesOffset?: string,
 ) {
@@ -27,8 +27,16 @@ export function configureEventRegistration(
     expectedRevision,
     registrationOpensAt: pragueInstant(registrationOpensAt, opensOffset),
     registrationClosesAt: pragueInstant(registrationClosesAt, closesOffset),
-    published,
+    ...(published === undefined ? {} : { published }),
   });
+}
+
+export function setEventPublication(eventId: string, expectedRevision: number, published: boolean) {
+  return invoke<{
+    eventId: string; revision: number; registrationStatus: RegistrationStatus;
+    lifecycleStatus: EventLifecycleStatus; registrationPublished: boolean;
+    registrationOpensAt: string | null; registrationClosesAt: string | null;
+  }>('configureEventRegistration', { eventId, expectedRevision, published, ...(published ? { openRegistrationsNow: true } : {}) });
 }
 
 export function newRegistrationRetryKey(): string {

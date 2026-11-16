@@ -59,7 +59,7 @@ export function AdminLoginPage() {
           <span className="secure-badge" aria-hidden="true">{productConfig.shortName}</span>
           <div>
             <h2>Vítejte zpět</h2>
-            <p>Přihlaste se svým pracovním účtem.</p>
+            <p>Přihlaste se osobním účtem s přiděleným přístupem. <Link to="/privacy">Ochrana osobních údajů</Link></p>
           </div>
         </div>
 

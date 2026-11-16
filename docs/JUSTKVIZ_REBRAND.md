@@ -1,5 +1,9 @@
 # JustKvíz: rebranding existing V2
 
+## Vector logo update, 2026-10-16
+
+The owner has selected the JK speech-bubble direction. The shared brand now uses outlined SVG artwork, including a permanent browser icon and exports for light/dark backgrounds and print. See [BRAND.md](BRAND.md) for the current assets and integration. The original rollout record below describes the earlier typographic placeholder and its historical approval scope; it does not authorize deployment of the vector logo update.
+
 Public spelling is **JustKvíz**. This is the same application and data on the existing `filmovy-kviz-v2-staging` project, site and media bucket. The URL remains unchanged.
 
 ## Presentation
@@ -14,13 +18,7 @@ Public spelling is **JustKvíz**. This is the same application and data on the e
 
 ## Scope and release
 
-Base: deployed complete editor `384b21f03fcf9235197f8ed85731e7d4dfe686ff`, branch `codex/complete-quiz-editor`, PR #28. Before this work, live Hosting release was `1789323294987000`, version `ff915284633d6ab4`. The rebrand Draft PR targets that branch because main does not contain the complete editor. PR #28 and all prior release artifacts remain unchanged.
 
-Required before deployment: review the diff; `pnpm check`; unit and Security Rules suites; existing complete-editor, private-draft and media regressions; and Quality gate CI for the exact new SHA. The workflow additionally accepts the actual PR base. It does not deploy.
-
-Allowed deployment scope: existing staging Hosting and only `generatePrintArtifact`. Read current live release/source immediately before each deployment and stop on an unreviewed change. Preserve Hosting headers and SPA rewrite, media gateway, CORS, Function configuration and runtime identity. Do not deploy Rules, indexes, other Functions or email modules. Record the new SHA, CI URL, exact uploaded file hashes and readback in the separate ignored run evidence, not in historical manifests.
-
-Cloud display-name updates must read, patch only their named field and read back. Firebase rejects Czech diacritics in the project display-name field: verified fallback is `JustKviz - staging`; the existing web app accepts `JustKvíz - web staging`. Record Authentication/OAuth presentation results independently; never change providers, permissions, sender addresses, callback URLs or template variables to rename a brand.
 
 ## Deliberately retained names
 

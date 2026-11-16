@@ -2,8 +2,10 @@ import { privateRead, type PrivateDocument } from '../access/api';
 import { mapQuizQuestion, mapQuizRound, mapQuizSummary } from './quizMappers';
 import type { QuizDetail, QuizSummary } from './types';
 
-export async function listQuizzes(): Promise<readonly QuizSummary[]> {
-  const result = await privateRead<PrivateDocument[]>('quizzes');
+export async function listQuizzes(options: { includeTrash?: boolean } = {}): Promise<readonly QuizSummary[]> {
+  const result = options.includeTrash
+    ? await privateRead<PrivateDocument[]>('quizzes', { includeTrash: true })
+    : await privateRead<PrivateDocument[]>('quizzes');
   return result.map(item => mapQuizSummary(item.id, item.data)).sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
 }
 

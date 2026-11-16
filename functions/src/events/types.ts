@@ -12,6 +12,7 @@ export interface EventVenueInput {
 }
 
 export interface EventConfigurationInput {
+  readonly pricing?: EventPricing;
   readonly description?: string;
   readonly title: string;
   readonly startsAt: Date;
@@ -22,6 +23,11 @@ export interface EventConfigurationInput {
   readonly teamSizeMin: number;
   readonly teamSizeMax: number;
 }
+
+export type EventPricing = (
+  | { readonly mode: 'per-team' | 'per-event'; readonly amountCzk: number }
+  | { readonly mode: 'agreement'; readonly amountCzk: null }
+) & { readonly hidden?: boolean };
 
 export interface EventScoringConfiguration {
   readonly unitScale: 2;
@@ -46,13 +52,16 @@ export interface EventMutationResponse {
   readonly registrationStatus: RegistrationStatus;
   readonly snapshotId?: string;
   readonly preflight?: {
-    readonly status: 'READY' | 'READY_WITH_WARNINGS';
-    readonly blockerCount: 0;
+    readonly status: 'BLOCKED' | 'READY' | 'READY_WITH_WARNINGS';
+    readonly blockerCount: number;
     readonly warningCount: number;
   };
 }
 
 export interface PublicEventProjectionInput {
+  readonly pricing?: unknown;
+  readonly description?: string;
+  readonly lifecycleStatus?: EventLifecycleStatus;
   readonly title: string;
   readonly startsAt: unknown;
   readonly timeZone: string;

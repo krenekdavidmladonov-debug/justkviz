@@ -35,7 +35,7 @@ export async function emailFixture({ gmail = false } = {}) {
   await signInWithEmailAndPassword(admin.auth, loginEmail, loginPassword);
   const { eventId } = await admin.call('createEvent', { expectedRevision: 0, event: {
     title: 'Syntetický emailový večer', startsAt: '2031-11-20T18:00:00Z', timeZone: 'Europe/Prague',
-    venue: { name: 'Syntetický sál', publicLocation: 'Praha' }, teamCapacity: 30, peopleCapacity: 120, teamSizeMin: 2, teamSizeMax: 6,
+    venue: { name: 'Syntetický sál', publicLocation: 'Praha' }, teamCapacity: 30, peopleCapacity: 120, teamSizeMin: 2, teamSizeMax: 4,
   } });
   await admin.call('configureEventRegistration', { eventId, expectedRevision: 1, published: true,
     registrationOpensAt: '2020-01-01T00:00:00Z', registrationClosesAt: '2030-01-01T00:00:00Z' });

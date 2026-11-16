@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 const unauthorizedAnswer = 'UNAUTHORIZED-RECAP-ANSWER-MUST-NEVER-RENDER';
 const confirmedAnswer = 'Syntetická odpověď';
-const fastPathQuestion = 'SAFE-QUESTION-FAST-PATH';
+const unauthorizedQuestion = 'UNAUTHORIZED-QUESTION-MUST-NEVER-RENDER';
 
 async function installAnswerRenderCounter(page: Page, channelName: string): Promise<void> {
   await page.evaluate(({ channel, unauthorizedMarker, confirmedMarker }) => {
@@ -68,6 +68,9 @@ async function postCandidate(page: Page, state: Record<string, unknown>): Promis
 
 test('answer-bearing BroadcastChannel state renders zero times on two projectors', async ({ browser, baseURL }) => {
   const context = await browser.newContext();
+  await context.route('https://example.test/**', route => route.fulfill({
+    contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>',
+  }));
   const moderator = await context.newPage();
   await moderator.goto(`${baseURL}/admin/login`);
   await moderator.getByLabel('E-mail').fill('admin@example.test');
@@ -76,9 +79,7 @@ test('answer-bearing BroadcastChannel state renders zero times on two projectors
   await expect(moderator).toHaveURL(/\/admin$/u);
 
   await moderator.goto(`${baseURL}/admin/quizzes/projector-lifecycle-e2e`);
-  await moderator.getByRole('link', { name: 'Spustit kvíz' }).click();
-  await moderator.getByRole('button', { name: 'Spustit i tak' }).click();
-  await moderator.getByRole('button', { name: 'Potvrdit a spustit' }).click();
+  await moderator.getByRole('button', { name: 'Spustit kvíz' }).click();
   await expect(moderator).toHaveURL(/\/admin\/live\/[^/]+$/u);
   const sessionId = new URL(moderator.url()).pathname.split('/').at(-1);
   expect(sessionId).toBeTruthy();
@@ -98,12 +99,12 @@ test('answer-bearing BroadcastChannel state renders zero times on two projectors
   const recap = await latestState(projectorA);
   const nextRevision = Number(recap.revision) + 1;
 
-  const safeQuestionState: Record<string, unknown> = {
+  const forgedQuestionState: Record<string, unknown> = {
     ...recap,
     slidePosition: 2,
     slideKind: 'question',
-    title: fastPathQuestion,
-    text: 'Syntetický bezpečný fast-path prompt',
+    title: unauthorizedQuestion,
+    text: 'Syntetický podvržený stav projekce',
     options: ['A', 'B'],
     media: [],
     presentation: {},
@@ -114,14 +115,14 @@ test('answer-bearing BroadcastChannel state renders zero times on two projectors
     answerRevealed: false,
     revision: nextRevision,
   };
-  delete safeQuestionState.recapQuestionPosition;
-  delete safeQuestionState.revealedAnswer;
-  delete safeQuestionState.answerImage;
-  await postCandidate(projectorA, safeQuestionState);
-  await expect(projectorA.getByText(fastPathQuestion, { exact: true })).toBeVisible();
-  await expect(projectorB.getByText(fastPathQuestion, { exact: true })).toBeVisible();
-  await expect(projectorA.getByText('Rekapitulace', { exact: true })).toBeVisible({ timeout: 3_000 });
-  await expect(projectorB.getByText('Rekapitulace', { exact: true })).toBeVisible({ timeout: 3_000 });
+  delete forgedQuestionState.recapQuestionPosition;
+  delete forgedQuestionState.revealedAnswer;
+  delete forgedQuestionState.answerImage;
+  await postCandidate(projectorA, forgedQuestionState);
+  await expect(projectorA.getByText('Rekapitulace', { exact: true })).toBeVisible();
+  await expect(projectorB.getByText('Rekapitulace', { exact: true })).toBeVisible();
+  await expect(projectorA.getByText(unauthorizedQuestion, { exact: true })).toHaveCount(0);
+  await expect(projectorB.getByText(unauthorizedQuestion, { exact: true })).toHaveCount(0);
 
   const authoritativeCandidate = {
     ...recap,

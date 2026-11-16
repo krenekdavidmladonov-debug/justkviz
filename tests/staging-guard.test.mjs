@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assertStagingEnvironment, assertStagingProject, STAGING_PROJECT, STAGING_APP } from '../tools/staging/guard.mjs';
 import { readFileSync } from 'node:fs';
-import { deploymentMode, assertHostingOnlyConfig, hostingOnlyArgs, assertFrontendFiles, teamToolFunctionArgs } from '../tools/staging/hosting-only.mjs';
+import { deploymentMode, assertNoObsoleteHostingDeployment, assertHostingOnlyConfig, hostingOnlyArgs, assertFrontendFiles, teamToolFunctionArgs } from '../tools/staging/hosting-only.mjs';
 
 const valid = { VITE_FIREBASE_PROJECT_ID: STAGING_PROJECT, VITE_APP_ENV: 'staging',
   VITE_FIREBASE_AUTH_DOMAIN: `${STAGING_PROJECT}.firebaseapp.com`, VITE_FIREBASE_APP_ID: STAGING_APP,
@@ -39,11 +39,9 @@ test('team tooling backend deploy accepts only the two exact callables with no h
   assert.throws(() => teamToolFunctionArgs(STAGING_PROJECT, valid, { ...stagingConfig, functions: { ...stagingConfig.functions, predeploy: ['seed'] } }, 'x'));
   assert.throws(() => teamToolFunctionArgs(STAGING_PROJECT, valid, { ...stagingConfig, functions: { ...stagingConfig.functions, source: '.' } }, 'x'));
 });
-test('Hosting-only is fixed to the staging site, frontend and official hosting scope', () => {
+test('obsolete Hosting execution is retired while target and resource overrides stay forbidden', () => {
   assert.equal(deploymentMode([STAGING_PROJECT, '--hosting-only']), 'hosting-only');
-  assert.deepEqual(hostingOnlyArgs(STAGING_PROJECT, valid, stagingConfig, 'generated.json'), [
-    'deploy', '--project', STAGING_PROJECT, '--config', 'generated.json', '--only', 'hosting', '--non-interactive',
-  ]);
+  assert.throws(() => hostingOnlyArgs(STAGING_PROJECT, valid, stagingConfig, 'generated.json'), /obsolete|retired/i);
   assert.throws(() => deploymentMode(['filmovy-kviz', '--hosting-only']));
   for (const override of ['functions', 'firestore:rules', 'storage', 'seed', '--force']) {
     assert.throws(() => deploymentMode([STAGING_PROJECT, '--hosting-only', override]));
@@ -72,4 +70,26 @@ test('only generated frontend files without private artifacts can be published',
   for (const text of ['-----BEGIN PRIVATE KEY-----', '{"private_key":"secret"}', '{"refresh_token":"secret"}', '.local-data/seed.json']) {
     assert.throws(() => assertFrontendFiles([entry, { name: 'assets/app.js', text }]));
   }
+});
+
+test('deployment entry rejects obsolete Hosting immediately after reading configuration', () => {
+  const source = readFileSync(new URL('../tools/staging/deploy.mjs', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const configRead = source.indexOf("const config = JSON.parse(readFileSync('firebase.staging.json', 'utf8'));");
+  const retirementGuard = source.indexOf('assertNoObsoleteHostingDeployment(mode, config);', configRead);
+  const environmentRead = source.indexOf('await stagingWebConfig()');
+  assert.ok(configRead >= 0);
+  assert.ok(retirementGuard > configRead && retirementGuard < environmentRead);
+  assert.match(source.slice(configRead, retirementGuard), /^const config = [^\n]+;\n$/);
+});
+
+test('retirement blocks both Hosting modes without mutating the frozen template or Functions scope', () => {
+  const before = JSON.stringify(stagingConfig);
+  for (const mode of ['full', 'hosting-only']) {
+    assert.throws(() => assertNoObsoleteHostingDeployment(mode, stagingConfig), /obsolete.*retired/i);
+  }
+  assert.doesNotThrow(() => assertNoObsoleteHostingDeployment('team-tools-functions', stagingConfig));
+  assert.doesNotThrow(() => assertHostingOnlyConfig(stagingConfig));
+  assert.equal(JSON.stringify(stagingConfig), before);
+  const unreadableEnvironment = new Proxy({}, { get() { throw new Error('Environment must not be read'); } });
+  assert.throws(() => hostingOnlyArgs(STAGING_PROJECT, unreadableEnvironment, stagingConfig, 'generated.json'), /obsolete.*retired/i);
 });

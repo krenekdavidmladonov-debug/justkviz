@@ -42,7 +42,7 @@ async function run() {
         teamCapacity: 20,
         peopleCapacity: 120,
         teamSizeMin: 2,
-        teamSizeMax: 6,
+        teamSizeMax: 4,
       },
     });
     try {

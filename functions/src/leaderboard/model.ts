@@ -78,3 +78,15 @@ export function calculateFinalResults(rounds: ResultRound[], teams: ResultTeam[]
     if (!last) throw new HttpsError('failed-precondition', 'Připravený kvíz nemá kola.');
     return calculateResults(rounds, last.id, teams, scores, 'final');
 }
+/** Current standings include every saved cell, including later/final rounds.
+ * Missing cells remain missing: only the derived total starts at zero.
+ */
+export function calculateCurrentResults(rounds: ResultRound[], teams: ResultTeam[], scores: ResultScore[]) {
+    const result = calculateFinalResults(rounds, teams, scores);
+    const expectedScoreCount = result.includedRounds.length * teams.length;
+    const missingScoreCount = result.missing.length;
+    const presentScoreCount = expectedScoreCount - missingScoreCount;
+    if (!result.rows.length || presentScoreCount === 0)
+        throw new HttpsError('failed-precondition', 'Pro zobrazení aktuálních bodů nejprve zapište alespoň jedno skóre přijatého týmu.');
+    return { ...result, expectedScoreCount, missingScoreCount, presentScoreCount };
+}

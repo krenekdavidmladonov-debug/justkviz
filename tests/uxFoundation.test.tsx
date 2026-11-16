@@ -86,7 +86,7 @@ function moderatorMarkup({
         onOpenProjector={noOp}
         onPrevious={noOp}
         onNext={noOp}
-        onStartIntro={noOp}
+        onGoToSlide={noOp}
         onSelectRecap={noOp}
         onPlay={noOp}
         onStop={noOp}
@@ -137,7 +137,7 @@ describe('UX foundation contracts', () => {
     expect(ordinary).not.toContain('Pustit znovu');
 
     const intro: LiveControlSlide = { ...baseSlides[0]!, kind: 'intro' };
-    expect(moderatorMarkup({ current: intro, presented: intro })).toContain('Spustit intro');
+    expect(moderatorMarkup({ current: intro, presented: intro })).not.toContain('Spustit intro');
 
     for (const kind of ['audio', 'video'] as const) {
       const media = { ...question(`q-${kind}`, 3, kind), mediaSource: 'abcdefghijk' };

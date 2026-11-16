@@ -1,5 +1,33 @@
 # Personal accounts and scoped access
 
+## Listing users and granting access
+
+The user list contains server-managed memberships, not the Firebase Auth account
+directory. Signup grants no permissions and creates no administrator approval
+request. To grant access to a new or existing verified account, an authorized
+manager with current `users.manage` permission creates a same-email invitation,
+shares its one-use link, and the user accepts it. The current issuer, permission
+dependencies, resource scopes and
+activation are checked again by the server. Accepting the invitation creates the
+membership; registering or signing in alone does not.
+
+Users/invitations and audit load and retry independently. A failed or delayed audit
+request does not hide an available user list. Retrying reads preserves filters,
+the access editor and a newly created invitation link. Responses from an earlier
+identity or superseded request cannot restore protected data. An authorization
+denial from the user-list request clears protected user and audit results.
+
+Audit accepts stored Firestore timestamps and legacy ISO strings and normalizes
+them to ISO strings without rewriting history; an invalid time is returned as
+`null` and displayed as unavailable. Mixed stored types retain Firestore's existing
+type-based query ordering, so the bounded audit query does not guarantee
+chronological ordering across those types.
+
+The overview reports the strict activation boolean; a paused/unconfirmed module
+disables creation/reissue while existing memberships and revocation remain
+manageable. Read/mutation errors identify the callable and error code; callable
+errors retain their original type, code and details.
+
 This module extends the existing JustKvíz Firebase Authentication, editor, event, projector and registration system. It adds no identity provider, email delivery infrastructure, organization hierarchy or GCP IAM role.
 
 ## Identity and personal setup

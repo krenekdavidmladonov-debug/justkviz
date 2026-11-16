@@ -19,6 +19,8 @@ export function syntheticPrintEvent(): PrintEvent {
           return {
             number: questionIndex + 1,
             kind,
+            answerMode: kind === 'pl' ? 'true-false' : kind === 'choice' ? 'choice' : 'open',
+            ...(kind === 'choice' ? { choiceCount: 4 as const } : {}),
             answer,
             ...(kind === 'choice' ? { choiceLabel: 'B' } : {}),
           };
@@ -61,4 +63,27 @@ export function syntheticSnapshotDocuments() {
     };
   }));
   return { rounds, slides };
+}
+
+/** Six rounds and 67 questions, covering every supported response/media combination. */
+export function longSyntheticPrintEvent(): PrintEvent {
+  const event = syntheticPrintEvent();
+  event.title = 'JustKvíz / Filmový večer';
+  event.quiz.rounds = Array.from({ length: 6 }, (_, roundIndex) => ({
+    number: roundIndex + 1,
+    title: roundIndex === 3 ? 'Obrazy, hudba a příběhy z filmového světa' : 'Filmové kolo ' + (roundIndex + 1),
+    questions: Array.from({ length: roundIndex === 0 ? 12 : 11 }, (_, questionIndex) => {
+      const index = roundIndex * 11 + questionIndex;
+      const kind: PrintQuestionKind = ['choice', 'free', 'audio', 'video', 'image', 'pl'][index % 6] as PrintQuestionKind;
+      const choice = kind !== 'free' && kind !== 'pl' && index % 3 !== 0;
+      return {
+        number: questionIndex + 1,
+        kind,
+        answerMode: kind === 'pl' ? 'true-false' : choice ? 'choice' : 'open',
+        ...(choice ? { choiceCount: (2 + index % 5) as 2 | 3 | 4 | 5 | 6, choiceLabel: 'B' } : {}),
+        answer: kind === 'pl' ? 'Pravda' : 'TAJNÁ ODPOVĚĎ ' + (index + 1),
+      };
+    }),
+  }));
+  return event;
 }

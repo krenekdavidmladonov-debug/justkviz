@@ -7,6 +7,7 @@ export type LivePresentationMode = 'slide' | 'recap';
 export type LiveRenderMode = 'question' | 'recap' | 'roundIntro' | 'agenda' | 'rules' | 'end';
 
 export interface LiveControlState {
+  readonly mediaPlaybackMode?: 'original';
   readonly showPreferences?: ShowPreferences;
   readonly showCue?: ShowCue;
   readonly sessionId: string;
@@ -38,6 +39,7 @@ export interface LiveControlMedia {
 }
 
 export interface LiveControlSlide {
+  readonly originalMediaSource?: string;
   readonly hidden?: boolean;
   readonly design?: SlideDesign;
   readonly answerDesign?: SlideDesign;
@@ -74,6 +76,7 @@ export interface PublicMedia {
 }
 
 export interface PublicLiveState {
+  readonly mediaPlaybackMode?: 'original';
   readonly showCue?: ShowCue;
   readonly interimBackdrop?: InterimBackdrop;
   readonly design?: SlideDesign;

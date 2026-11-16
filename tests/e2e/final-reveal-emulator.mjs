@@ -99,7 +99,7 @@ try {
       await other.startFinal(q); const r = await other.command('reveal'); assert.equal(r.winnerRevealed, true);
       assert.equal((await other.rawPublic()).finalReveal.rank, 1);
       // Archive accepts only a closed event; finish it through the real server path.
-      if (action === 'archiveEvent') { const session = await other.session(); await other.admin.call('endLiveSession', { sessionId: other.sessionId, expectedRevision: session.revision }); }
+      if (action === 'archiveEvent') { const session = await other.session(); await other.admin.call('endLiveSession', { sessionId: other.sessionId, expectedRevision: session.revision }); const before=(await other.db.doc('events/'+other.eventId).get()).data(); await other.admin.call('completeEvent',{eventId:other.eventId,expectedRevision:before.revision,requestId:randomUUID()}); }
       const event = (await other.db.doc('events/' + other.eventId).get()).data();
       await other.admin.call(action, { eventId: other.eventId, expectedRevision: event.revision, ...(action === 'cancelEvent' ? { endLive: true } : {}) });
       assert.equal((await other.rawPublic()).status, 'ended'); assert(!(await other.rawPublic()).finalReveal);

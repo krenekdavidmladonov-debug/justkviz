@@ -9,10 +9,109 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import net from 'node:net';
 
 const self = fileURLToPath(import.meta.url), root = realpathSync(path.resolve(path.dirname(self), '../..'));
-export const ports = Object.freeze({ auth: 9399, functions: 5301, firestore: 8380, storage: 9398, hub: 4503, logging: 4603 });
+export const ports = Object.freeze({ auth: 9399, functions: 5301, firestore: 8380, storage: 9398, hub: 4503, logging: 4603, eventarc: 9477, tasks: 9478 });
 const hash = value => createHash('sha256').update(value).digest('hex');
 const save = (file, value) => writeFileSync(file, JSON.stringify(value, null, 2), { flag: 'wx', mode: 0o600 });
 const read = file => JSON.parse(readFileSync(file, 'utf8'));
+const phases = ['fresh', 'restart', 'recovered'];
+const workerSteps = ['plan', 'registry', 'seeds', 'sdk', 'load-state', 'login', 'create-event', 'create-team', 'lock-quiz', 'save-score', 'save-media', 'capture-state', 'replay-score', 'continue-score', 'stale-score', 'verify-history', 'export', 'save-result'];
+const diagnosticStages = new Set(['arguments', 'preflight', 'setup', 'recovery', 'verify-result', ...phases.map(phase => `${phase}-suite`), ...phases.flatMap(phase => workerSteps.map(step => `${phase}:${step}`))]);
+const diagnosticCodes = new Set(['ERR_ASSERTION', 'ENOENT', 'EPERM', 'EACCES', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EADDRINUSE', 'ERR_MODULE_NOT_FOUND', 'MODULE_NOT_FOUND', 'ERR_PACKAGE_PATH_NOT_EXPORTED', 'ERR_REQUIRE_ESM', 'ERR_REQUIRE_ASYNC_MODULE', 'ERR_INVALID_ARG_TYPE', 'ABORT_ERR', 'OWN_CHILD_FAILED', ...['internal', 'unavailable', 'deadline-exceeded', 'permission-denied', 'unauthenticated', 'aborted', 'not-found', 'failed-precondition', 'resource-exhausted', 'invalid-argument'].map(code => `functions/${code}`)]);
+const diagnosticLogs = new Set(['fresh-suite.log', 'restart-suite.log', 'recovered-suite.log', 'seed-auth.log', 'seed-quizzes.log', 'fresh-export.log', 'restart-export.log', 'recovered-export.log', 'recovery.log']);
+const diagnosticModules = new Set(['firebase-functions', 'firebase-admin', 'firebase-tools', '@filmovy-kviz/quiz-domain', '@fontsource/noto-sans', '@pdf-lib/fontkit', 'pdf-lib']);
+function publicMissingModule(message) {
+  const missing = /Cannot find (?:package|module) ['"]([^'"]+)['"]/u.exec(message)?.[1]?.replaceAll('\\', '/');
+  return missing === undefined ? undefined : [...diagnosticModules].find(name => missing === name || missing.startsWith(name + '/') || missing.includes('/' + name + '/'));
+}
+const failureSignatures = [
+  ['NON_LOOPBACK_NETWORK_BLOCKED', /NON_LOOPBACK_NETWORK_BLOCKED/u],
+  ['EMULATOR_DOWNLOAD_OBSERVED', /download.*(?:emulator|runtime)|(?:emulator|runtime).*download/iu],
+  ['FUNCTIONS_LOAD_FAILED', /Failed to load function definition|Cannot determine backend specification/iu],
+  ['MODULE_NOT_FOUND', /Cannot find (?:module|package)|ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/u],
+  ['MISSING_FILE_OR_COMMAND', /not recognized as an internal|command not found|ENOENT/iu],
+  ['JAVA_UNAVAILABLE', /java.*(?:not found|not installed|unsupported|requires)|Could not spawn.*java/iu],
+  ['PORT_UNAVAILABLE', /PORT_UNAVAILABLE|EADDRINUSE|port.*already in use/iu],
+  ['EMULATOR_ENDPOINT_REFUSED', /ECONNREFUSED/u],
+  ['REGISTRY_MISMATCH', /FOREIGN_HUB|EMULATOR_REGISTRY|SHIFTED_EMULATOR|FOREIGN_EMULATOR|FIRESTORE_WEBSOCKET|FIRESTORE_RESERVED_PORTS/u],
+  ['SOURCE_CHANGED', /HARNESS_SOURCE_CHANGED|SOURCE_CHANGED_DURING_RUN/u],
+  ['IMPORTED_CONTENT_CHANGED', /IMPORTED_CONTENT_CHANGED|IMPORTED_RECEIPT_REPLAY_CHANGED|IMPORT_MUTATED_CHECKPOINT/u],
+  ['OWN_CHILD_FAILED', /OWN_CHILD_FAILED/u],
+];
+const diagnosticSignatures = new Set(['UNCLASSIFIED', ...failureSignatures.map(([name]) => name)]);
+const diagnosticMarker = 'RESTART_ACCEPTANCE_DIAGNOSTIC ';
+let activeStage = 'arguments';
+const diagnosticFile = 'tools/event-night/restart-acceptance.mjs';
+const validSourcePosition = value => Number.isSafeInteger(value) && value > 0 && value <= 10_000_000;
+const validExitCode = value => Number.isSafeInteger(value) && value >= 0 && value <= 0xffffffff;
+
+function ownHarnessFrame(error) {
+  if (typeof error?.stack !== 'string') return undefined;
+  for (const line of error.stack.slice(0, 16384).split('\n')) {
+    if (!line.includes(self) && !line.includes(pathToFileURL(self).href)) continue;
+    const position = /:(\d+):(\d+)\)?\s*$/u.exec(line);
+    if (position && validSourcePosition(Number(position[1])) && validSourcePosition(Number(position[2]))) {
+      return { file: diagnosticFile, line: Number(position[1]), column: Number(position[2]) };
+    }
+  }
+  return undefined;
+}
+
+/** Fixed identifiers only: no exception text, paths, environment or captured data. */
+function sanitizedDiagnosticEntry(value, depth = 0) {
+  if (!value || typeof value !== 'object' || !diagnosticSignatures.has(value.signature)) return undefined;
+  const result = { signature: value.signature };
+  if (diagnosticStages.has(value.stage)) result.stage = value.stage;
+  if (diagnosticCodes.has(value.code) || value.code === 'UNCLASSIFIED') result.code = value.code;
+  if (diagnosticLogs.has(value.logFile)) result.logFile = value.logFile;
+  if (diagnosticModules.has(value.moduleAlias)) result.moduleAlias = value.moduleAlias;
+  if (validExitCode(value.exitCode)) result.exitCode = value.exitCode;
+  if (['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGABRT'].includes(value.signal)) result.signal = value.signal;
+  if (diagnosticCodes.has(value.causeCode)) result.causeCode = value.causeCode;
+  if (diagnosticSignatures.has(value.causeSignature)) result.causeSignature = value.causeSignature;
+  if (value.frame?.file === diagnosticFile && validSourcePosition(value.frame.line) && validSourcePosition(value.frame.column)) result.frame = { file: diagnosticFile, line: value.frame.line, column: value.frame.column };
+  if (depth < 2 && Array.isArray(value.children)) result.children = value.children.slice(-8).map(item => sanitizedDiagnosticEntry(item, depth + 1)).filter(Boolean);
+  return result;
+}
+export function safeFailureDiagnostic(error, stage = activeStage, logFile, depth = 0) {
+  const message = typeof error?.message === 'string' ? error.message.slice(0, 4096) : '';
+  const result = {
+    stage: diagnosticStages.has(stage) ? stage : 'arguments',
+    code: diagnosticCodes.has(error?.code) ? error.code : 'UNCLASSIFIED',
+    signature: failureSignatures.find(([, pattern]) => pattern.test(message))?.[0] ?? 'UNCLASSIFIED',
+  };
+  if (diagnosticLogs.has(logFile)) result.logFile = logFile;
+  const moduleAlias = publicMissingModule(message);
+  if (moduleAlias) result.moduleAlias = moduleAlias;
+  if (validExitCode(error?.childExitCode)) result.exitCode = error.childExitCode;
+  if (['SIGTERM', 'SIGKILL', 'SIGINT', 'SIGABRT'].includes(error?.childSignal)) result.signal = error.childSignal;
+  if (error?.cause && depth < 2) {
+    const cause = safeFailureDiagnostic(error.cause, stage, undefined, depth + 1);
+    result.causeCode = cause.code; result.causeSignature = cause.signature;
+  }
+  if (Array.isArray(error?.childDiagnostics)) result.children = error.childDiagnostics.slice(-8).map(item => sanitizedDiagnosticEntry(item)).filter(Boolean);
+  const frame = ownHarnessFrame(error);
+  if (frame) result.frame = frame;
+  return result;
+}
+
+/** Relay only validated markers and fixed signatures from the last 64 KiB. */
+export function safeChildDiagnostics(output) {
+  const tail = output.slice(-65536), diagnostics = [];
+  for (const line of tail.split(/\r?\n/u)) {
+    const marker = line.indexOf(diagnosticMarker);
+    if (marker < 0) continue;
+    try {
+      const parsed = JSON.parse(line.slice(marker + diagnosticMarker.length));
+      if (!diagnosticStages.has(parsed.stage) || !diagnosticCodes.has(parsed.code) && parsed.code !== 'UNCLASSIFIED'
+        || !diagnosticSignatures.has(parsed.signature)) continue;
+      diagnostics.push(sanitizedDiagnosticEntry(parsed));
+    } catch { /* Raw child output is deliberately never echoed. */ }
+  }
+  for (const [signature, pattern] of failureSignatures) if (pattern.test(tail)) diagnostics.push({ signature });
+  const moduleAlias = publicMissingModule(tail);
+  if (moduleAlias) diagnostics.push({ signature: 'MODULE_NOT_FOUND', moduleAlias });
+  return diagnostics.slice(-8);
+}
 export function assertLocalRequest(input) {
   const url = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
   assert(['http:', 'https:'].includes(url.protocol) && ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname), 'NON_LOOPBACK_NETWORK_BLOCKED');
@@ -79,29 +178,132 @@ export function assertExport(directory) {
 }
 export function sanitizedEnvironment(directory, projectId, inherited = process.env) {
   const env = { ...inherited };
-  for (const key of Object.keys(env)) if (/^(GOOGLE_|GCLOUD_|CLOUDSDK_|CLOUD_RUNTIME_CONFIG$|FIREBASE_|FIRESTORE_|FUNCTIONS_|VITE_|GMAIL_|EMAIL_|NODE_OPTIONS$|NODE_EXTRA_CA_CERTS$)/u.test(key)) delete env[key];
+  for (const key of Object.keys(env)) if (/^(GOOGLE_|GCLOUD_|CLOUDSDK_|CLOUD_RUNTIME_CONFIG$|FIREBASE_|FIRESTORE_|FUNCTIONS_|PUBSUB_|CLOUD_TASKS_|EVENTARC_|VITE_|GMAIL_|EMAIL_|REGISTRATION_|NODE_OPTIONS$|NODE_EXTRA_CA_CERTS$)/u.test(key)) delete env[key];
   // google-auth-library checks APPDATA/gcloud on Windows and HOME/.config/gcloud on Unix.
   // Neither inherited credential location may be inspected by these demo children.
   delete env.HOME;
+  if (process.platform === 'win32') {
+    const windowsRoot = inherited.SystemRoot ?? inherited.SYSTEMROOT ?? inherited.WINDIR ?? process.env.SystemRoot ?? process.env.WINDIR;
+    assert(windowsRoot && path.isAbsolute(windowsRoot), 'WINDOWS_SYSTEM_ROOT_REQUIRED');
+    const pathKeys = Object.keys(env).filter(key => key.toUpperCase() === 'PATH');
+    const toolPath = pathKeys.map(key => env[key]).filter(Boolean).join(path.delimiter);
+    for (const key of pathKeys) delete env[key];
+    // Playwright invokes taskkill by name. Native runtime PATH may contain only
+    // bundled tools; missing System32 leaves its owned web server alive forever.
+    env.PATH = path.join(windowsRoot, 'System32') + path.delimiter + toolPath;
+  }
   return { ...env, GCLOUD_PROJECT: projectId, GOOGLE_CLOUD_PROJECT: projectId,
     FIREBASE_AUTH_EMULATOR_HOST: `127.0.0.1:${ports.auth}`, FIRESTORE_EMULATOR_HOST: `127.0.0.1:${ports.firestore}`,
     FUNCTIONS_EMULATOR_HOST: `127.0.0.1:${ports.functions}`, FIREBASE_STORAGE_EMULATOR_HOST: `127.0.0.1:${ports.storage}`,
-    XDG_CONFIG_HOME: path.join(directory, 'cli-config'), APPDATA: path.join(directory, 'cli-config'), CLOUDSDK_CONFIG: path.join(directory, 'cli-config'), CI: 'true', FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true',
+    XDG_CONFIG_HOME: path.join(directory, 'cli-config'), APPDATA: path.join(directory, 'cli-config'), CLOUDSDK_CONFIG: path.join(directory, 'cli-config'),
+    // Storage Emulator clears its fixed temp subtree on shutdown. Port isolation
+    // alone cannot protect another suite sharing the inherited OS temp directory.
+    TEMP: path.join(directory, 'temp'), TMP: path.join(directory, 'temp'), TMPDIR: path.join(directory, 'temp'),
+    CI: 'true', FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true', REGISTRATION_EMAIL_MODE: 'off', REGISTRATION_OWNER_NOTIFICATION_MODE: 'off',
     EVENT_NIGHT_RESTART_NETWORK_GUARD: '1', NODE_OPTIONS: `--import=${pathToFileURL(self).href}` };
 }
-function run(executable, args, options) {
+
+/** Physical, run-owned dependency directory: never change installed pnpm shims.
+ * Pinned CLI discovery deliberately constructs a new env and otherwise loses the
+ * parent's NODE_OPTIONS and credential-home isolation. Restore only fixed demo
+ * settings and install the HTTP(S)/fetch guard before importing the SDK binary.
+ */
+export function prepareIsolatedFunctionsRuntime(repositoryRoot, directory, environment) {
+  assert.equal(realpathSync(repositoryRoot), repositoryRoot);
+  assert.equal(realpathSync(directory), directory);
+  assert.notEqual(repositoryRoot, directory);
+  const projectId = environment.GCLOUD_PROJECT;
+  assert(/^demo-[a-z0-9-]+$/u.test(projectId ?? '') && environment.GOOGLE_CLOUD_PROJECT === projectId, 'DEMO_PROJECT_REQUIRED');
+  const isolated = {
+    GCLOUD_PROJECT: projectId, GOOGLE_CLOUD_PROJECT: projectId,
+    FIREBASE_CONFIG: JSON.stringify({ projectId, storageBucket: projectId + '.appspot.com', databaseURL: `https://${projectId}.firebaseio.com` }),
+    APPDATA: path.join(directory, 'cli-config'), XDG_CONFIG_HOME: path.join(directory, 'cli-config'), CLOUDSDK_CONFIG: path.join(directory, 'cli-config'),
+    TEMP: path.join(directory, 'temp'), TMP: path.join(directory, 'temp'), TMPDIR: path.join(directory, 'temp'),
+    NODE_OPTIONS: `--import=${pathToFileURL(self).href}`, EVENT_NIGHT_RESTART_NETWORK_GUARD: '1', FUNCTIONS_EMULATOR: 'true',
+    CI: 'true', FIREBASE_CLI_DISABLE_UPDATE_CHECK: 'true', REGISTRATION_EMAIL_MODE: 'off', REGISTRATION_OWNER_NOTIFICATION_MODE: 'off',
+  };
+  for (const key of ['FIREBASE_AUTH_EMULATOR_HOST', 'FIRESTORE_EMULATOR_HOST', 'FUNCTIONS_EMULATOR_HOST', 'FIREBASE_STORAGE_EMULATOR_HOST']) {
+    const match = /^(?:127\.0\.0\.1|localhost|\[::1\]):([1-9]\d{0,4})$/u.exec(environment[key] ?? '');
+    assert(match && Number(match[1]) <= 65535, 'LOOPBACK_EMULATOR_REQUIRED');
+    isolated[key] = environment[key];
+  }
+  for (const key of ['PATH', 'SystemRoot', 'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'ComSpec', 'PATHEXT']) if (typeof environment[key] === 'string') isolated[key] = environment[key];
+  const source = path.join(repositoryRoot, 'functions'), packageFile = path.join(source, 'package.json');
+  const manifest = read(packageFile);
+  assert.equal(manifest.name, '@filmovy-kviz/functions');
+  // The SDK intentionally doesn't export package.json. Read its declared direct
+  // dependency directory without relying on an unexported package subpath.
+  const sdkRoot = realpathSync(path.join(source, 'node_modules/firebase-functions'));
+  const sdkManifest = read(path.join(sdkRoot, 'package.json'));
+  assert.equal(sdkManifest.name, 'firebase-functions');
+  assert.equal(typeof sdkManifest.bin?.['firebase-functions'], 'string');
+  const sdkBin = realpathSync(path.resolve(sdkRoot, sdkManifest.bin['firebase-functions']));
+  assert(sdkBin.startsWith(sdkRoot + path.sep) && lstatSync(sdkBin).isFile(), 'SDK_BINARY_OUTSIDE_PACKAGE');
+  const runtime = path.join(directory, 'functions-runtime');
+  mkdirSync(runtime); // Create-only: a previous runtime is never overwritten.
+  cpSync(path.join(source, 'lib'), path.join(runtime, 'lib'), { recursive: true, errorOnExist: true, force: false });
+  writeFileSync(path.join(runtime, 'package.json'), readFileSync(packageFile), { flag: 'wx' });
+  const modules = path.join(runtime, 'node_modules'); mkdirSync(modules);
+  for (const name of Object.keys(manifest.dependencies)) {
+    assert(/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/iu.test(name), 'INVALID_DEPENDENCY_NAME');
+    const target = path.join(modules, name);
+    if (name.startsWith('@')) mkdirSync(path.dirname(target), { recursive: true });
+    symlinkSync(realpathSync(path.join(source, 'node_modules', name)), target, process.platform === 'win32' ? 'junction' : 'dir');
+  }
+  const launcher = path.join(runtime, 'discovery-launcher.mjs');
+  writeFileSync(launcher, `import { pathToFileURL } from 'node:url';
+for (const key of Object.keys(process.env)) if (/^(GOOGLE_|GCLOUD_|CLOUDSDK_|CLOUD_RUNTIME_CONFIG$|FIREBASE_|FIRESTORE_|FUNCTIONS_EMULATOR$|PUBSUB_|CLOUD_TASKS_|EVENTARC_|VITE_|GMAIL_|EMAIL_|REGISTRATION_|HOME$|NODE_OPTIONS$|NODE_PATH$|NODE_EXTRA_CA_CERTS$)/u.test(key)) delete process.env[key];
+Object.assign(process.env, ${JSON.stringify(isolated)});
+await import(${JSON.stringify(pathToFileURL(self).href)});
+process.argv = [process.execPath, ${JSON.stringify(sdkBin)}, ...process.argv.slice(2)];
+await import(pathToFileURL(${JSON.stringify(sdkBin)}).href);
+`, { flag: 'wx', mode: 0o600 });
+  const bin = path.join(modules, '.bin'); mkdirSync(bin);
+  const shellQuote = value => `'${value.replaceAll("'", "'\\''")}'`;
+  writeFileSync(path.join(bin, 'firebase-functions'), `#!/bin/sh\nexec ${shellQuote(process.execPath)} "$(dirname "$0")/../../discovery-launcher.mjs" "$@"\n`, { flag: 'wx', mode: 0o700 });
+  // Only the known executable is embedded; CLI arguments retain cross-spawn's
+  // normal .cmd escaping, and the owned launcher is relative to this .bin file.
+  writeFileSync(path.join(bin, 'firebase-functions.cmd'), `@echo off\r\n"${process.execPath.replaceAll('%', '%%')}" "%~dp0..\\..\\discovery-launcher.mjs" %*\r\n`, { flag: 'wx', mode: 0o600 });
+  return runtime;
+}
+export function run(executable, args, options) {
   return new Promise((resolve, reject) => {
     const { log, processReceipt, ...childOptions } = options;
+    const stage = activeStage;
+    let tail = '';
     const child = spawn(executable, args, { ...childOptions, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
     if (processReceipt) save(processReceipt, { pid: child.pid });
-    child.stdout.on('data', data => appendFileSync(log, data));
-    child.stderr.on('data', data => appendFileSync(log, data));
-    child.once('error', reject);
-    child.once('exit', (code, signal) => code === 0 && !signal ? resolve() : reject(new Error(`OWN_CHILD_FAILED:${code ?? signal}`)));
+    const capture = data => { appendFileSync(log, data); tail = (tail + data.toString('utf8')).slice(-65536); };
+    child.stdout.on('data', capture);
+    child.stderr.on('data', capture);
+    const failure = (code, signal, cause) => {
+      const error = Object.assign(new Error(`OWN_CHILD_FAILED:${code ?? signal ?? 'spawn'}`), {
+        code: 'OWN_CHILD_FAILED', childExitCode: code, childSignal: signal, cause,
+        childDiagnostics: safeChildDiagnostics(tail),
+      });
+      error.safeDiagnostic = safeFailureDiagnostic(error, stage, path.basename(log));
+      return error;
+    };
+    child.once('error', cause => reject(failure(undefined, undefined, cause)));
+    // close follows stdio drain; exit can run before the final failure marker arrives.
+    child.once('close', (code, signal) => code === 0 && !signal ? resolve() : reject(failure(code, signal)));
   });
 }
-async function portsFree() {
-  for (const port of Object.values(ports)) await new Promise((resolve, reject) => {
+export function assertEmulatorRegistry(registry) {
+  assert(registry && typeof registry === 'object' && !Array.isArray(registry), 'INVALID_EMULATOR_REGISTRY');
+  assert.deepEqual(Object.keys(registry).sort(), Object.keys(ports).sort(), 'UNEXPECTED_EMULATOR_REGISTRY');
+  for (const [name, port] of Object.entries(ports)) {
+    const actual = registry[name];
+    assert(actual?.name === name && actual.host === '127.0.0.1' && actual.port === port, 'SHIFTED_EMULATOR_ENDPOINT:' + name);
+    if (actual.listen !== undefined) assert(Array.isArray(actual.listen) && actual.listen.length > 0 && actual.listen.every(item => item.address === '127.0.0.1' && item.port === port), 'FOREIGN_EMULATOR_LISTENER:' + name);
+  }
+  assert.equal(registry.firestore.webSocketHost, '127.0.0.1', 'FOREIGN_FIRESTORE_WEBSOCKET');
+  assert.equal(registry.firestore.webSocketPort, ports.firestore + 1, 'SHIFTED_FIRESTORE_WEBSOCKET');
+  assert.deepEqual(registry.firestore.reservedPorts, [ports.firestore + 1], 'UNEXPECTED_FIRESTORE_RESERVED_PORTS');
+}
+
+export async function portsFree() {
+  for (const port of [...Object.values(ports), ports.firestore + 1]) await new Promise((resolve, reject) => {
     const server = net.createServer(); server.once('error', () => reject(new Error(`PORT_UNAVAILABLE:${port}`)));
     server.listen(port, '127.0.0.1', () => server.close(resolve));
   });
@@ -122,8 +324,9 @@ New-EventNightSnapshotManifest $p.SnapshotDirectory $p
 New-EventNightSnapshotManifest $p.ExportStaging $p
 $prior=@(Get-EventNightFileRecords $p.SnapshotDirectory @()) | ConvertTo-Json -Depth 5 -Compress
 $script:Canonical=$p.SnapshotDirectory; $script:Interrupted=$false
-function Move-Item { [CmdletBinding()]param([string]$LiteralPath,[string]$Destination)
- & (Get-Command Move-Item -Module Microsoft.PowerShell.Management) -LiteralPath $LiteralPath -Destination $Destination
+$script:RealSnapshotMove = (Get-Command Move-EventNightSnapshotPath -CommandType Function).ScriptBlock
+function Move-EventNightSnapshotPath { [CmdletBinding()]param([string]$RepoRoot,[string]$LiteralPath,[string]$Destination)
+ & $script:RealSnapshotMove @PSBoundParameters
  if($LiteralPath -eq $script:Canonical -and -not $script:Interrupted){$script:Interrupted=$true;throw 'ACCEPTANCE_INTERRUPTION_BETWEEN_RENAMES'}
 }
 $failed=$false
@@ -141,27 +344,31 @@ if($before -ne $after -or $prior -ne $restored -or (Test-Path -LiteralPath $p.Pr
 `;
 }
 async function controller(powerShell) {
+  activeStage = 'preflight';
   assert.equal(process.versions.node.split('.')[0], '22', 'NODE_22_REQUIRED');
   assert(path.isAbsolute(powerShell) && existsSync(powerShell), 'EXPLICIT_POWERSHELL_REQUIRED');
   await portsFree();
+  activeStage = 'setup';
   // Keep real Firestore backup paths below Windows PowerShell 5's legacy path limit.
   const parent = path.join(root, '.local-data/en-restart'); mkdirSync(parent, { recursive: true }); assert.equal(realpathSync(parent), parent);
   const directory = mkdtempSync(path.join(parent, 'run-')), projectId = 'demo-restart-' + randomUUID().replaceAll('-', '').slice(0, 12);
+  mkdirSync(path.join(directory, 'temp'));
   const env = sanitizedEnvironment(directory, projectId), sandbox = path.join(directory, 'sandbox');
   const plan = { directory, projectId, ports, sourceSha256: hash(readFileSync(self)), sources: [self, ...['tools/event-night/EventNight.Common.ps1', 'functions/lib/dev/seed-auth.js', 'functions/lib/dev/seed-quizzes.js', 'functions/package.json', 'firestore.rules', 'firestore.indexes.json', 'storage.rules'].map(file => path.join(root, file))].map(file => ({ path: path.relative(root, file), sha256: hash(readFileSync(file)) })), functionBuild: records(path.join(root, 'functions/lib')), domainBuild: records(path.join(root, 'packages/quiz-domain/lib')) };
   save(path.join(directory, 'plan.json'), plan); assertPlan(plan, directory, env);
   // The CLI reads dotenv in functions.source. Copy only build/package, never root .env files.
-  const runtime = path.join(directory, 'functions-runtime'); mkdirSync(runtime);
-  cpSync(path.join(root, 'functions/lib'), path.join(runtime, 'lib'), { recursive: true, errorOnExist: true, force: false });
-  writeFileSync(path.join(runtime, 'package.json'), readFileSync(path.join(root, 'functions/package.json')), { flag: 'wx' });
-  symlinkSync(realpathSync(path.join(root, 'functions/node_modules')), path.join(runtime, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
+  const runtime = prepareIsolatedFunctionsRuntime(root, directory, env);
+  // pnpm's Windows .bin shims resolve relative to the invoking run directory.
+  // Preserve that workspace dependency root as well as the Functions packages.
+  symlinkSync(realpathSync(path.join(root, 'node_modules')), path.join(directory, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.deepEqual(records(path.join(runtime, 'lib')), plan.functionBuild);
   for (const name of ['firestore.rules', 'firestore.indexes.json', 'storage.rules']) writeFileSync(path.join(directory, name), readFileSync(path.join(root, name)), { flag: 'wx' });
-  const config = { functions: { source: 'functions-runtime' }, firestore: { rules: 'firestore.rules', indexes: 'firestore.indexes.json' }, storage: { rules: 'storage.rules' }, emulators: { ...Object.fromEntries(Object.entries(ports).map(([name, port]) => [name, { host: '127.0.0.1', port }])), ui: { enabled: false }, singleProjectMode: true } };
+  const config = { functions: { source: 'functions-runtime' }, firestore: { rules: 'firestore.rules', indexes: 'firestore.indexes.json' }, storage: { rules: 'storage.rules' }, emulators: { ...Object.fromEntries(Object.entries(ports).map(([name, port]) => [name, { host: '127.0.0.1', port }])), firestore: { host: '127.0.0.1', port: ports.firestore, websocketPort: ports.firestore + 1 }, ui: { enabled: false }, singleProjectMode: true } };
   save(path.join(directory, 'firebase.json'), config);
   const cli = path.join(root, 'node_modules/firebase-tools/lib/bin/firebase.js');
-  assert.equal(createRequire(import.meta.url)('firebase-tools/package.json').version, '15.28.2');
+  assert.equal(createRequire(import.meta.url)('firebase-tools/package.json').version, '15.34.2');
   const cycle = async (phase, snapshot) => {
+    activeStage = `${phase}-suite`;
     await portsFree();
     const command = [process.execPath, self, '--worker', phase, '--run-dir', directory].map(quote).join(' ');
     await run(process.execPath, [cli, 'emulators:exec', '--only', 'auth,functions,firestore,storage', '--project', projectId, '--config', path.join(directory, 'firebase.json'), '--non-interactive', ...(snapshot ? ['--import', snapshot] : []), command], { cwd: directory, env, log: path.join(directory, phase + '-suite.log'), processReceipt: path.join(directory, phase + '-suite-process.json') });
@@ -178,9 +385,11 @@ async function controller(powerShell) {
   cpSync(export1, path.join(data, 'emulator-data'), { recursive: true, errorOnExist: true, force: false });
   cpSync(export2, path.join(data, 'export-staging'), { recursive: true, errorOnExist: true, force: false });
   const script = path.join(directory, 'recover.ps1'); writeFileSync(script, '\ufeff' + powerShellScript(), { flag: 'wx' });
+  activeStage = 'recovery';
   await run(powerShell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-Common', path.join(root, 'tools/event-night/EventNight.Common.ps1'), '-Sandbox', sandbox, '-Project', projectId], { cwd: directory, env, log: path.join(directory, 'recovery.log') });
   const recovery = JSON.parse(readFileSync(path.join(sandbox, 'recovery-result.json'), 'utf8').replace(/^\uFEFF/u, '')); assert.equal(recovery.mode, 'REAL_RENAME_RECOVERY_PASS'); assert.equal(recovery.backupPreserved, true); assert.equal(recovery.idempotent, true);
   await cycle('recovered', path.join(data, 'emulator-data'));
+  activeStage = 'verify-result';
   assert.deepEqual(assertExport(export1), initialRecords);
   for (const item of plan.sources) assert.equal(hash(readFileSync(path.join(root, item.path))), item.sha256, 'SOURCE_CHANGED_DURING_RUN');
   assert.deepEqual(records(path.join(root, 'functions/lib')), plan.functionBuild); assert.deepEqual(records(path.join(root, 'packages/quiz-domain/lib')), plan.domainBuild);
@@ -192,13 +401,18 @@ async function controller(powerShell) {
 }
 async function worker(phase, directory) {
   assert(['fresh', 'restart', 'recovered'].includes(phase));
+  activeStage = `${phase}:plan`;
   const parent = path.join(root, '.local-data/en-restart'); assert(directory.startsWith(parent + path.sep));
   const plan = read(path.join(directory, 'plan.json')); assertPlan(plan, directory, process.env);
   assert.equal(plan.sourceSha256, hash(readFileSync(self)), 'HARNESS_SOURCE_CHANGED');
+  activeStage = `${phase}:registry`;
   const status = await fetch(`http://127.0.0.1:${ports.hub}/`); assert.equal(status.status, 200); assert.equal((await status.json()).pid, read(path.join(directory, phase + '-suite-process.json')).pid, 'FOREIGN_HUB');
+  const registry = await fetch(`http://127.0.0.1:${ports.hub}/emulators`); assert.equal(registry.status, 200); assertEmulatorRegistry(await registry.json());
   if (phase === 'fresh') {
+    activeStage = `${phase}:seeds`;
     for (const name of ['seed-auth', 'seed-quizzes']) await run(process.execPath, [path.join(root, `functions/lib/dev/${name}.js`)], { cwd: directory, env: process.env, log: path.join(directory, name + '.log') });
   }
+  activeStage = `${phase}:sdk`;
   const require = createRequire(path.join(root, 'functions/package.json'));
   const admin = require('firebase-admin/app'), app = admin.initializeApp({ projectId: plan.projectId, storageBucket: plan.projectId + '.appspot.com' }, 'restart-inspector');
   const db = require('firebase-admin/firestore').getFirestore(app), auth = require('firebase-admin/auth').getAuth(app), bucket = require('firebase-admin/storage').getStorage(app).bucket();
@@ -219,36 +433,55 @@ async function worker(phase, directory) {
     };
     let owned;
     if (phase !== 'fresh') {
+      activeStage = `${phase}:load-state`;
       owned = read(path.join(directory, 'owned.json'));
       assert.deepEqual(await capture(), read(path.join(directory, 'state-before.json')), 'IMPORTED_CONTENT_CHANGED');
     }
+    activeStage = `${phase}:login`;
     await authSdk.signInWithEmailAndPassword(clientAuth, 'admin@example.test', 'LocalQuiz123!');
     if (phase === 'fresh') {
-      const { eventId } = await call('createEvent', { expectedRevision: 0, event: { title: 'Synthetic restart acceptance', startsAt: '2031-01-01T18:00:00Z', timeZone: 'Europe/Prague', venue: { name: 'Synthetic', publicLocation: 'Synthetic' }, teamCapacity: 10, peopleCapacity: 40, teamSizeMin: 2, teamSizeMax: 6 } });
+      activeStage = `${phase}:create-event`;
+      const { eventId } = await call('createEvent', { expectedRevision: 0, event: { title: 'Synthetic restart acceptance', startsAt: '2031-01-01T18:00:00Z', timeZone: 'Europe/Prague', venue: { name: 'Synthetic', publicLocation: 'Synthetic' }, teamCapacity: 10, peopleCapacity: 40, teamSizeMin: 2, teamSizeMax: 4 } });
+      activeStage = `${phase}:create-team`;
       const team = await call('adminAddEventTeam', { eventId, requestId: randomUUID(), teamName: 'Synthetic retained team', memberCount: 2 }); assert.equal(team.contactEmail, null);
       const event = (await db.doc(`events/${eventId}`).get()).data();
+      activeStage = `${phase}:lock-quiz`;
       const { snapshotId } = await call('lockEventQuiz', { eventId, expectedRevision: event.revision, quizId: 'preflight-ready-e2e', expectedQuizRevision: 0, acknowledgeWarnings: false });
       const roundId = (await db.collection(`quizSnapshots/${snapshotId}/rounds`).get()).docs[0].id;
       const input = { eventId, snapshotId, roundId, teamId: team.registrationId, expectedRevision: 0, halfPoints: 0, reason: '', requestId: randomUUID() };
+      activeStage = `${phase}:save-score`;
       const score = await call('saveEventScore', input); assert.equal(score.revision, 1);
       owned = { input, score }; save(path.join(directory, 'owned.json'), owned);
+      activeStage = `${phase}:save-media`;
       await bucket.file(objectName).save(payload, { resumable: false, contentType: 'application/octet-stream', metadata: { metadata: { synthetic: 'true' } } });
+      activeStage = `${phase}:capture-state`;
       save(path.join(directory, 'state-before.json'), await capture());
     } else {
+      activeStage = `${phase}:replay-score`;
       assert.deepEqual(await call('saveEventScore', owned.input), owned.score, 'IMPORTED_RECEIPT_REPLAY_CHANGED');
+      activeStage = `${phase}:continue-score`;
       const next = await call('saveEventScore', { ...owned.input, requestId: randomUUID(), expectedRevision: 1, halfPoints: 2, reason: 'Continued after verified restart' });
       assert.equal(next.revision, 2); assert.equal(next.halfPoints, 2);
+      activeStage = `${phase}:stale-score`;
       await assert.rejects(call('saveEventScore', { ...owned.input, requestId: randomUUID(), expectedRevision: 1, halfPoints: 3, reason: 'Stale client' }), error => error.code === 'functions/aborted');
+      activeStage = `${phase}:verify-history`;
       const scores = await db.collection(`events/${owned.input.eventId}/scores/${next.scoreId}/history`).orderBy('revision').get(); assert.deepEqual(scores.docs.map(d => d.data().revision), [1, 2]);
       const [bytes] = await bucket.file(objectName).download(); assert.deepEqual(bytes, payload);
     }
+    activeStage = `${phase}:export`;
     const cli = path.join(root, 'node_modules/firebase-tools/lib/bin/firebase.js');
     await run(process.execPath, [cli, 'emulators:export', path.join(directory, phase === 'fresh' ? 'checkpoint-1' : phase === 'restart' ? 'checkpoint-2' : 'checkpoint-3'), '--project', plan.projectId, '--config', path.join(directory, 'firebase.json'), '--non-interactive'], { cwd: directory, env: process.env, log: path.join(directory, phase + '-export.log') });
-    save(path.join(directory, phase + '-result.json'), { mode: 'PHASE_PASS', projectId: plan.projectId, phase, importedIdentityVerified: phase !== 'fresh', scoreRevision: phase === 'fresh' ? 1 : 2, storageBytesSha256: hash(payload), receiptReplayVerified: phase !== 'fresh', staleScoreRejected: phase !== 'fresh' });
+    activeStage = `${phase}:save-result`;
+    save(path.join(directory, phase + '-result.json'), { mode: 'PHASE_PASS', projectId: plan.projectId, phase, emulatorRegistryVerified: true, importedIdentityVerified: phase !== 'fresh', scoreRevision: phase === 'fresh' ? 1 : 2, storageBytesSha256: hash(payload), receiptReplayVerified: phase !== 'fresh', staleScoreRejected: phase !== 'fresh' });
   } finally { await deleteApp(client); await admin.deleteApp(app); }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === self) {
   const args = process.argv.slice(2);
   const task = args.length === 2 && args[0] === '--powershell' ? controller(args[1]) : args.length === 4 && args[0] === '--worker' && args[2] === '--run-dir' ? worker(args[1], path.resolve(args[3])) : Promise.reject(new Error('Use --powershell ABSOLUTE_EXECUTABLE'));
-  task.catch(error => { console.error('RESTART_ACCEPTANCE_STOP:', error.code ?? '', error.message.split('\n')[0]); process.exitCode = 1; });
+  task.catch(error => {
+    const diagnostic = sanitizedDiagnosticEntry(error.safeDiagnostic) ?? safeFailureDiagnostic(error);
+    console.error(diagnosticMarker + JSON.stringify(diagnostic));
+    console.error('RESTART_ACCEPTANCE_STOP:', diagnostic.code, diagnostic.signature);
+    process.exitCode = 1;
+  });
 }

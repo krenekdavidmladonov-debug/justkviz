@@ -1,13 +1,24 @@
 import type { MediaPlaybackState } from '../presentation/types';
 import type { PublicLiveState, PublicMedia } from './types';
-import { normalizeSlideDesign, parseInterimBackdrop, parseShowCue, type SlideDesign } from '@filmovy-kviz/quiz-domain';
+import { youtubeVideoId, normalizeSlideDesign, parseInterimBackdrop, parseShowCue, type SlideDesign } from '@filmovy-kviz/quiz-domain';
 import { parseResultPage } from '../leaderboard/types';
 import { parseFinalPage } from '../final-reveal/types';
+import {
+  mediaDiagnosticReasons, mediaDiagnosticTargets,
+  type MediaDiagnosticSignal, type MediaDiagnosticTarget,
+} from '../presentation/mediaDiagnostics';
 
 type ReportablePlaybackState = Extract<MediaPlaybackState, 'ready' | 'playing' | 'error' | 'finished'>;
 
 export type ProjectorChannelMessage =
   | { readonly type: 'public-state'; readonly state: PublicLiveState }
+  | {
+    readonly type: 'media-diagnostic';
+    readonly sessionId: string;
+    readonly mediaGeneration: number;
+    readonly target: MediaDiagnosticTarget;
+    readonly reason: MediaDiagnosticSignal;
+  }
   | {
     readonly type: 'playback-state';
     readonly sessionId: string;
@@ -29,6 +40,7 @@ const stateKeys = new Set([
   'introGeneration', 'questionNumber', 'questionCount', 'backgroundImage', 'questionImage', 'mediaSource',
   'backgroundOverlay', 'clipStartSeconds', 'clipEndSeconds', 'answerRevealed', 'revealedAnswer', 'answerImage',
   'recapQuestionPosition', 'revision',
+  'mediaPlaybackMode',
   'design', 'roundTitle', 'subtitle', 'imageLayout', 'answerExplanation', 'showCue', 'interimBackdrop', 'interimResults', 'finalReveal',
 ]);
 const presentationKeys = new Set(['backgroundOverlay', 'answerOverlay', 'sourceQuestionNumber']);
@@ -152,7 +164,10 @@ export function parsePublicLiveState(value: unknown): PublicLiveState | undefine
 
   const normalAudio = data.presentationMode === 'slide'
     && (data.slideKind === 'audio' || data.slideKind === 'music');
-  if (normalAudio && (Object.hasOwn(data, 'mediaSource')
+  if (Object.hasOwn(data, 'mediaPlaybackMode') && (data.mediaPlaybackMode !== 'original' || !data.answerRevealed || data.status !== 'active'
+    || data.renderMode !== 'recap' || typeof data.mediaSource !== 'string' || !youtubeVideoId(data.mediaSource)
+    || data.clipStartSeconds !== 0 || Object.hasOwn(data, 'clipEndSeconds'))) return undefined;
+  if (normalAudio && data.mediaPlaybackMode !== 'original' && (Object.hasOwn(data, 'mediaSource')
     || media.some((item) => item.kind === 'audio' || item.kind === 'video'))) return undefined;
 
   const result = additions.interimResults ?? additions.finalReveal;
@@ -166,6 +181,7 @@ export function parsePublicLiveState(value: unknown): PublicLiveState | undefine
 
   return {
     ...additions,
+    ...(data.mediaPlaybackMode === 'original' ? { mediaPlaybackMode: 'original' as const } : {}),
     ...(data.roundTitle === undefined ? {} : { roundTitle: data.roundTitle as string }),
     ...(data.subtitle === undefined ? {} : { subtitle: data.subtitle as string }),
     ...(data.imageLayout === undefined ? {} : { imageLayout: data.imageLayout as string }),
@@ -204,6 +220,7 @@ export function parsePublicLiveState(value: unknown): PublicLiveState | undefine
 
 export function sanitizedChannelState(state: PublicLiveState): PublicLiveState {
   const candidate = {
+    ...(state.mediaPlaybackMode === undefined ? {} : { mediaPlaybackMode: state.mediaPlaybackMode }),
     ...(state.design === undefined ? {} : { design: state.design }),
     ...(state.roundTitle === undefined ? {} : { roundTitle: state.roundTitle }),
     ...(state.subtitle === undefined ? {} : { subtitle: state.subtitle }),
@@ -273,9 +290,30 @@ export function broadcastPlaybackState(
   channel?.postMessage({ type: 'playback-state', sessionId, mediaGeneration, playbackState } satisfies ProjectorChannelMessage);
 }
 
+export function broadcastMediaDiagnostic(
+  channel: ProjectorChannel | undefined,
+  sessionId: string,
+  mediaGeneration: number,
+  target: MediaDiagnosticTarget,
+  reason: MediaDiagnosticSignal,
+): void {
+  channel?.postMessage({ type: 'media-diagnostic', sessionId, mediaGeneration, target, reason } satisfies ProjectorChannelMessage);
+}
+
+const mediaDiagnosticKeys = new Set(['type', 'sessionId', 'mediaGeneration', 'target', 'reason']);
+
 export function parseProjectorChannelMessage(value: unknown): ProjectorChannelMessage | undefined {
   const message = object(value);
   if (message === undefined) return undefined;
+  if (message.type === 'media-diagnostic') {
+    if (!hasOnlyKeys(message, mediaDiagnosticKeys)
+      || typeof message.sessionId !== 'string' || message.sessionId.length === 0 || message.sessionId.length > 1_500
+      || !nonNegativeInteger(message.mediaGeneration) || !Number.isSafeInteger(message.mediaGeneration)) return undefined;
+    const target = mediaDiagnosticTargets.find(value => value === message.target);
+    const reason = message.reason === 'recovered' ? 'recovered' : mediaDiagnosticReasons.find(value => value === message.reason);
+    if (!target || !reason) return undefined;
+    return { type: 'media-diagnostic', sessionId: message.sessionId, mediaGeneration: message.mediaGeneration, target, reason };
+  }
   if (message.type === 'playback-state') {
     if (!hasOnlyKeys(message, new Set(['type', 'sessionId', 'mediaGeneration', 'playbackState']))
       || typeof message.sessionId !== 'string' || message.sessionId.length === 0 || message.sessionId.length > 1_500

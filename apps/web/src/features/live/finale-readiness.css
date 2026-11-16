@@ -1,0 +1,11 @@
+.finale-readiness-dialog { color: var(--color-text); background: var(--color-surface, #142033); border: 1px solid var(--color-accent, #ffce32); border-radius: 16px; width: min(580px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 24px; box-sizing: border-box; overflow-y: auto; }
+.finale-readiness-dialog::backdrop { background: #050c19c9; backdrop-filter: blur(5px); }
+.finale-readiness-dialog h2 { margin-top: 0; }
+.finale-score-progress { padding: 14px; background: #ffce3214; border-radius: 10px; }
+.finale-score-progress strong { color: var(--color-accent, #ffce32); font-size: 1.4rem; }
+.finale-missing-rounds { display: grid; gap: 12px; margin: 16px 0; }
+.finale-missing-rounds h3, .finale-missing-rounds p { margin: 0; overflow-wrap: anywhere; }
+.finale-missing-rounds h3 { font-size: .95rem; margin-bottom: 4px; }
+.finale-readiness-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.finale-readiness-actions > * { min-height: 44px; }
+@media (max-width: 480px) { .finale-readiness-dialog { padding: 18px; } .finale-readiness-actions > * { width: 100%; text-align: center; } }

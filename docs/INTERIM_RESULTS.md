@@ -1,6 +1,47 @@
 # Průběžné výsledky řízené moderátorem
 
-## Ovládání
+## Aktuálně zapsané body (2026-10-19)
+
+Nové zjednodušené ovládání zveřejňuje **Aktuálně zapsané body** jedním explicitním
+příkazem `controlInterimResults` s `action: current`. Nevyžaduje výběr kola ani
+klientský náhled/fingerprint. Server v jedné transakci ověří aktuální oprávnění
+`event.live`, rozsah akce, vazbu event/session/snapshot a očekávanou revizi; poté
+načte přijaté týmy a všechna skóre příslušného snapshotu. Sečte pouze vyplněné
+buňky ze všech kol, včetně posledního. Nezadané a null hodnoty zůstávají nezadané,
+žádné skóre ani jeho historie se tímto příkazem nezapisují. Platná výslovná nula
+je vyplněná hodnota. Alespoň jeden přijatý tým musí mít alespoň jednu vyplněnou
+buňku; jinak příkaz vrátí srozumitelnou chybu bez publikace.
+
+Neúplnost tabulky tuto publikaci neblokuje. Neměnná privátní `interimVersions`
+uchová `scope: current`, `complete`, počty očekávaných/vyplněných/chybějících
+buněk a fingerprint celého použitého zdroje. Tato metadata nevstupují na projektor.
+Veřejná projekce používá existující show režim s přesně šesti řádky na stránku,
+statickým bezpečným podkladem a existujícím návratem po `hide`. Stránkování čte
+uloženou verzi; nové skóre se zveřejní až dalším explicitním příkazem. Klient
+nemůže v příkazu `current` dodat vlastní řádky, kolo, fingerprint ani styl.
+Request ID, revize, opětovné kontroly členství a ochrana proti obnovení staré
+tabulky přehráním receipt zůstávají stejné.
+
+Níže popsaný starší `publish`/preview kontrakt zůstává kompatibilní: stále vyžaduje
+úplné výsledky po vybraném kole a odpovídající fingerprint. Finální vyhlášení dál
+vyžaduje úplná data a používá vlastní příkazy. Serverová změna vyžaduje jen
+`controlInterimResults`; nové ovládání a neutrální popisek vyžadují souběžný web.
+Nemění se oprávnění, kolekce, Rules ani veřejné schéma.
+
+Offline testy `interimCurrent.test.ts` volají skutečný handler i aktuální
+autorizaci nad syntetickým Firestore/Auth úložištěm. Ověřují neúplné součty,
+poslední kolo, nulu/null, odmítnutí cizího snapshotu a klientských řádků,
+šest řádků, soukromí projekce, neměnnost verze, obnovení odpovědi po hide,
+revize/idempotenci i odebrání oprávnění před transakcí a při replay.
+
+Rozšířený `tests/e2e/show-mode-emulator.mjs` prošel skutečnými demo emulátory
+Auth/Firestore/Functions v Node 22: osm skupin včetně 22 vyplněných buněk z 24,
+chybějícího a null skóre, součtu včetně posledního kola, přesného návratu odpovědi
+po hide, neměnnosti ledgeru a odmítnutí neúplného finále. Po doplnění syntetických
+hodnot ověřuje i pevné animační nastavení finále bez přepsání starých preferencí
+akce. Původní testy legacy publikace, soukromí, remíz a oprávnění zůstávají.
+
+## Původní ruční ovládání a kontrakt (kompatibilita)
 
 Akce → detail `/admin/events/:eventId` → **Otevřít moderování akce** → existující `/admin/live/:sessionId` → **Průběžné výsledky**. Pokud prezentace čeká, nejprve ji spusťte tlačítkem Další. Projektor zůstává `/projector/:sessionId`.
 

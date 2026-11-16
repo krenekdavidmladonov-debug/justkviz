@@ -1,6 +1,6 @@
 import type { SlideDesign, ResultTemplates, PrintTemplate } from './design.js';
 export const editableSlideKinds = [
-  'intro', 'agenda', 'rules', 'recap', 'end', 'title', 'info', 'round', 'roundheader', 'round-header', 'section',
+  'intro', 'agenda', 'rules', 'recap', 'thank-you', 'end', 'title', 'info', 'round', 'roundheader', 'round-header', 'section',
   'question', 'text', 'classic', 'free', 'image', 'picture', 'photo',
   'audio', 'music', 'video', 'youtube', 'pl', 'legacy',
 ] as const;
@@ -57,6 +57,7 @@ export interface EditorSlide {
   readonly questionImage: string;
   readonly answerImage: string;
   readonly mediaSource: string;
+  readonly originalMediaSource?: string;
   readonly backgroundOverlay: number | null;
   readonly clipStartSeconds: number | null;
   readonly clipEndSeconds: number | null;
@@ -103,6 +104,7 @@ export interface EditorAppearance {
   readonly imageLayout: 'split' | 'stacked';
 }
 export interface EditorQuiz {
+  readonly status?: 'draft' | 'ready' | 'archived';
   readonly printTemplate?: PrintTemplate;
   readonly defaultDesign?: SlideDesign;
   readonly resultTemplates?: ResultTemplates;

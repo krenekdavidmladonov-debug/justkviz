@@ -6,8 +6,8 @@ import type { EditorMutationResponse, EditorSlide } from './types';
 
 export const staleEditorMessage = 'Kvíz byl mezitím změněn v jiném okně. Načtěte prosím aktuální verzi a své změny zopakujte.';
 
-function callable(name: string) {
-  return httpsCallable<Record<string, unknown>, EditorMutationResponse>(getFirebaseServices().functions, name);
+function callable(name: string, timeout?: number) {
+  return httpsCallable<Record<string, unknown>, EditorMutationResponse>(getFirebaseServices().functions, name, timeout === undefined ? undefined : { timeout });
 }
 
 function slidePayload(slide: EditorSlide) {
@@ -53,8 +53,11 @@ async function invoke(name: string, data: Record<string, unknown>): Promise<Edit
 export const createQuiz = (title: string, requestId: string) => (
   invoke('createQuiz', { title, requestId })
 );
-export const updateQuizMetadata = (quizId: string, revision: number, title: string, description: string, defaultAppearance?: EditorAppearance, defaultDesign?: SlideDesign, resultTemplates?: ResultTemplates, printTemplate?: PrintTemplate) => (
-  invoke('updateQuizMetadata', { quizId, expectedRevision: revision, quiz: { title, description, ...(defaultAppearance === undefined ? {} : { defaultAppearance }), ...(defaultDesign === undefined ? {} : { defaultDesign }), ...(resultTemplates === undefined ? {} : { resultTemplates }), ...(printTemplate === undefined ? {} : { printTemplate }) } })
+export const duplicateQuiz = async (quizId: string, expectedRevision: number, title: string, requestId: string) => (
+  (await callable('duplicateQuiz', 550_000)({ quizId, expectedRevision, title, requestId })).data
+);
+export const updateQuizMetadata = (quizId: string, revision: number, title: string, description: string, defaultAppearance?: EditorAppearance, defaultDesign?: SlideDesign, resultTemplates?: ResultTemplates, printTemplate?: PrintTemplate, status?: 'draft' | 'ready') => (
+  invoke('updateQuizMetadata', { quizId, expectedRevision: revision, quiz: { title, description, ...(defaultAppearance === undefined ? {} : { defaultAppearance }), ...(defaultDesign === undefined ? {} : { defaultDesign }), ...(resultTemplates === undefined ? {} : { resultTemplates }), ...(printTemplate === undefined ? {} : { printTemplate }), ...(status === undefined ? {} : { status }) } })
 );
 export const updateQuizSlide = (quizId: string, revision: number, slide: EditorSlide) => (
   invoke('updateQuizSlide', { quizId, slideId: slide.id, expectedRevision: revision, slide: slidePayload(slide) })
@@ -84,6 +87,9 @@ export const deleteQuizSlide = (quizId: string, revision: number, slideId: strin
 );
 export const moveQuizSlide = (quizId: string, revision: number, slideId: string, direction: -1 | 1) => (
   invoke('moveQuizSlide', { quizId, slideId, direction, expectedRevision: revision })
+);
+export const moveProgramSlide = (quizId: string, revision: number, slideId: string, beforeSlideId: string | null) => (
+  invoke('moveQuizSlide', { quizId, slideId, beforeSlideId, expectedRevision: revision })
 );
 export const updateQuizRound = (quizId: string, revision: number, roundId: string, title: string) => (
   invoke('updateQuizRound', { quizId, roundId, title, expectedRevision: revision })

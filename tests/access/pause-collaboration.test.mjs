@@ -123,7 +123,7 @@ test('REST adapter fixes paths, disables mutation retry and handles only genuine
 
 test('cloud connector binds authenticated CLI account, pins CLI and refuses fallback before client creation', async () => {
   const plan = pausePlan({ ...approval, projectId: 'filmovy-kviz-v2-staging' });
-  let created = 0, accountEmail = approval.operatorEmail, returnEmail = approval.operatorEmail, version = '15.28.2';
+  let created = 0, accountEmail = approval.operatorEmail, returnEmail = approval.operatorEmail, version = '15.34.2';
   const cli = name => ({
     package: { version }, auth: { getGlobalDefaultAccount: () => ({ user: { email: accountEmail }, tokens: { synthetic: true } }) },
     requireAuth: { requireAuth: async (options, skipAutoAuth) => { assert.equal(skipAutoAuth, true); assert.equal(options.user.email, approval.operatorEmail); return returnEmail; } },

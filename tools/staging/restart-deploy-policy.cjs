@@ -234,7 +234,13 @@ function install({ cli, names, checkArtifact, log, operatorEmail }) {
     state.applyVerified = true;
     return apply.call(this, plans);
   };
-  fab.prototype.updateV2Function = async function(e, scraper) { assert(state.applyVerified); endpoint(e, names); return update.call(this, e, scraper); };
+  fab.prototype.updateV2Function = async function(e) {
+    assert(state.applyVerified); endpoint(e, names);
+    // CLI 15.34 uses withToken even when reuse is disabled. Never enter its
+    // shared token queue or retain a source token from an operation response.
+    const noReuse = { getToken: async () => undefined, withToken: async work => work(undefined), poller: () => {}, abort: () => {} };
+    return update.call(this, e, noReuse);
+  };
   for (const method of ['createV1Function', 'createV2Function', 'createRunFunction', 'updateV1Function', 'updateRunFunction', 'deleteV1Function', 'deleteV2Function', 'deleteRunFunction']) if (typeof fab.prototype[method] === 'function') fab.prototype[method] = () => fail(`Forbidden Fabricator.${method}`);
   const run = cli('gcp/run');
   for (const method of ['setInvokerCreate', 'setInvokerUpdate', 'setIamPolicy']) run[method] = () => fail(`Forbidden run.${method}`);

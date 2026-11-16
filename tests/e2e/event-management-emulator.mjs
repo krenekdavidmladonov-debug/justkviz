@@ -15,8 +15,8 @@ const anonymous = async (name, data) => (await httpsCallable(funcs, name)(data))
 const roots = new Set(), prefix = 'QA-EVENT-MANAGEMENT-' + randomUUID();
 const membership = async identity => (await db.collection('memberships').where('email', '==', identity.email).get()).docs[0].ref;
 const ownerMember = await membership(owner), editorMember = await membership(editor), outsiderMember = await membership(outsider);
-await ownerMember.update({ role: 'owner', permissions: permissions.filter(p => p !== 'event.delete') });
-const input = title => ({ title, description: 'QA only', startsAt: '2031-07-20T17:30:00Z', timeZone: 'Europe/Prague', venue: { name: 'QA sál', publicLocation: 'Praha' }, teamCapacity: 10, peopleCapacity: 50, teamSizeMin: 1, teamSizeMax: 6 });
+await ownerMember.update({ role: 'owner', permissions: [...permissions] });
+const input = title => ({ title, description: 'QA only', startsAt: '2031-07-20T17:30:00Z', timeZone: 'Europe/Prague', venue: { name: 'QA sál', publicLocation: 'Praha' }, teamCapacity: 10, peopleCapacity: 50, teamSizeMin: 1, teamSizeMax: 4 });
 const data = async id => (await db.doc('events/' + id).get()).data();
 const denied = async (promise, code) => assert.rejects(promise, e => code ? e.code === 'functions/' + code : Boolean(e.code), `expected ${code ?? 'denial'}`);
 const transition = async (id, name, extra = {}) => owner.call(name, { eventId: id, expectedRevision: (await data(id)).revision, requestId: randomUUID(), ...extra });
@@ -45,10 +45,12 @@ try {
   await denied(owner.call('updateEvent', { eventId: a, expectedRevision: old.revision, event: input('lost update') }), 'aborted');
   assert.equal(await fingerprint(db.doc('quizSnapshots/' + snapshotA)), snapshotBefore);
   await open(a);
-  const registrationRequest = { eventId: a, teamName: 'QA Team', memberCount: 6, contactEmail: 'qa-team@example.test', requestKey: createHash('sha256').update(randomUUID()).digest('base64url') };
+  const registrationRequest = { eventId: a, teamName: 'QA Team', memberCount: 4, contactEmail: 'qa-team@example.test', requestKey: createHash('sha256').update(randomUUID()).digest('base64url') };
   const team = await anonymous('createEventRegistration', registrationRequest);
   const managed = { eventId: a, registrationId: team.registrationId, token: team.managementToken };
-  await denied(owner.call('updateEvent', { eventId: a, expectedRevision: (await data(a)).revision, event: { ...input(prefix), peopleCapacity: 5, teamSizeMax: 5 } }), 'failed-precondition');
+  await denied(owner.call('updateEvent', { eventId: a, expectedRevision: (await data(a)).revision, event: { ...input(prefix), teamSizeMax: 5 } }), 'invalid-argument');
+  await owner.call('updateEvent', { eventId: a, expectedRevision: (await data(a)).revision, event: { ...input(prefix), peopleCapacity: 1 } });
+  assert.equal((await data(a)).acceptedPeople, 4);
   const cancel = { eventId: a, expectedRevision: (await data(a)).revision, requestId: randomUUID(), reason: 'PRIVATE_REASON', publicMessage: 'PUBLIC_CANCELLATION' };
   await owner.call('cancelEvent', cancel); const cancelled = await data(a);
   await owner.call('cancelEvent', cancel); assert.equal((await data(a)).revision, cancelled.revision);
@@ -96,7 +98,7 @@ try {
   assert.equal(await fingerprint(db.doc('events/' + b)), bBefore); assert.equal(await fingerprint(db.doc('quizzes/' + quizId)), libraryBefore); assert((await db.doc('quizSnapshots/' + snapshotB).get()).exists);
   await outsiderMember.update({ status: 'suspended', version: 2 }); await denied(outsider.call('readAccessData', { operation: 'event', eventId: b }), 'permission-denied');
   const c = await create(' completed'); await lock(c); const live = await owner.call('createEventLiveSession', { eventId: c, expectedRevision: (await data(c)).revision }); roots.add('sessions/' + live.sessionId); roots.add('publicSessions/' + live.sessionId);
-  await owner.call('goToSlide', { sessionId: live.sessionId, expectedRevision: 0, position: 1 }); await owner.call('endLiveSession', { sessionId: live.sessionId, expectedRevision: 1 }); assert.equal((await data(c)).lifecycleStatus, 'completed');
+  await owner.call('goToSlide', { sessionId: live.sessionId, expectedRevision: 0, position: 1 }); await owner.call('endLiveSession', { sessionId: live.sessionId, expectedRevision: 1 }); assert.equal((await data(c)).lifecycleStatus, 'ready'); await transition(c, 'completeEvent'); assert.equal((await data(c)).lifecycleStatus, 'completed');
   await denied(transition(c, 'cancelEvent'), 'failed-precondition'); await transition(c, 'archiveEvent'); await transition(c, 'restoreEvent', { action: 'unarchive' }); assert.equal((await data(c)).lifecycleStatus, 'completed');
   const orphanA = await create(' orphan A'), orphanB = await create(' orphan B'), missing = 'qa-orphan-' + randomUUID();
   roots.add('quizSnapshots/' + missing);

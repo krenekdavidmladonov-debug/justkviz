@@ -74,6 +74,7 @@ export interface SemanticSystemSection {
 export interface SemanticQuizModel {
   readonly introduction: readonly SemanticSystemSection[];
   readonly rounds: readonly SemanticRound[];
+  readonly thankYou?: EditorSlide;
   readonly closing: readonly EditorSlide[];
   readonly legacy: readonly EditorSlide[];
   readonly slideById: ReadonlyMap<string, EditorSlide>;
@@ -134,7 +135,8 @@ export function buildSemanticQuizModel(quiz: EditorQuiz): SemanticQuizModel {
 
   const outsideRounds = quiz.slides.filter((slide) => slide.roundId === undefined && !slide.isQuestion);
   const first = (kind: string) => outsideRounds.find((slide) => slide.kind === kind);
-  const used = new Set([first('intro')?.id, first('agenda')?.id, first('rules')?.id]);
+  const thankYou = first('thank-you');
+  const used = new Set([first('intro')?.id, first('agenda')?.id, first('rules')?.id, thankYou?.id]);
   const closing = outsideRounds.filter((slide) => slide.kind === 'end');
   closing.forEach((slide) => used.add(slide.id));
   return {
@@ -144,6 +146,7 @@ export function buildSemanticQuizModel(quiz: EditorQuiz): SemanticQuizModel {
       { key: 'rules', label: 'Pravidla', slide: first('rules'), generated: first('rules') === undefined },
     ],
     rounds,
+    ...(thankYou ? { thankYou } : {}),
     closing,
     legacy: outsideRounds.filter((slide) => !used.has(slide.id)),
     slideById,

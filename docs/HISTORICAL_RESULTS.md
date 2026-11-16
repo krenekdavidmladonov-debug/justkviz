@@ -17,6 +17,13 @@ potvrzení příkazů, nikoli jiný výpočet výsledků; historická obrazovka 
 Standardní END ponechává pointer a skryje veřejný výstup. Nová cesta nemění
 writer, scoring, snapshot ani tento lifecycle.
 
+Oprava B11 z 3. 11. 2026 přenáší původní lokální opravu uzavírání relací:
+`completeEvent` zachová přesný soukromý `finalReveal.versionId` a nastaví
+`visible: false`, i když relace již skončila. Veřejná projekce zůstává ukončená
+bez výsledků a odpovědí. Stejný dokončovací request vrací původní receipt bez
+dalších zápisů; změněný replay, zastaralá revize a nové dokončení již dokončené
+akce se odmítají. Chybějící pointer se neodhaduje ani zpětně nedoplňuje.
+
 Repository nejprve načte akci stávajícím scoped `getEvent` a pak dvěma
 `getDocFromServer` konkrétní session a verzi. Vyžaduje completed akci, ended
 session, správnou vazbu event/session/snapshot a přesné versionId. Nevybírá
@@ -33,9 +40,11 @@ nikoli schválenou matici tým/kolo. Aktuální scores nebo knihovní kvíz nejs
 náhradní historickou autoritou. Tím zůstává stabilní i generálka se zdrojovou
 revizí 30→31 a snapshotem revize 30.
 
-Existující trash/cancel/restore mohou odstranit session pointer nebo vazbu
-`event.liveSessionId`. V takovém případě se bezpečně zobrazí nedostupný stav;
-etapa 2B nemění lifecycle ani neobnovuje starou verzi z auditní historie.
+Uzavření při complete/cancel/trash zachovává soukromý potvrzený pointer.
+Samostatná existující cesta restore stále může odstranit vazbu
+`event.liveSessionId`; její rozpracovaná oprava není součástí B11 integrace.
+Při chybějící vazbě se bezpečně zobrazí nedostupný stav a nic se neobnovuje
+výběrem jiné verze z auditní historie.
 
 ## Oprávnění a nasazení
 

@@ -1,0 +1,29 @@
+.offline-app .offline-notebook-step { min-width: 0; line-height: 1.55; }
+.offline-notebook-step h2 { margin: 0 0 .6rem; font-size: clamp(1.4rem, 2.5vw, 1.8rem); line-height: 1.25; }
+.offline-notebook-step p { max-width: 62ch; }
+.offline-notebook-list { display: grid; gap: .55rem; margin: .8rem 0 1.25rem; padding-inline-start: 1.55rem; }
+.offline-notebook-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; margin-top: 1rem; }
+.offline-app .offline-notebook-actions > :is(a, button) {
+  display: inline-grid;
+  min-width: 0;
+  min-height: 44px;
+  max-width: 100%;
+  place-items: center;
+  margin: 0;
+  padding: .55rem .95rem;
+  border-radius: 8px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+  text-decoration: none;
+  white-space: normal;
+}
+.offline-app .offline-notebook-actions > .offline-notebook-primary { background: #ffcf66; border: 1px solid #ffcf66; color: #201603; }
+.offline-app .offline-notebook-actions > .offline-notebook-primary:hover { background: #ffdc88; }
+.offline-app .offline-notebook-actions > .offline-notebook-secondary { background: transparent; color: #dce6f6; border: 1px solid #657792; }
+.offline-app .offline-notebook-actions > .offline-notebook-secondary:hover { background: #1f2c42; }
+.offline-app .offline-notebook-actions > :focus-visible { outline: 3px solid #9dd9ff; outline-offset: 3px; }
+.offline-notebook-hint { color: #c8d4e6; }
+@media (max-width: 520px) {
+  .offline-notebook-actions > :is(a, button) { width: 100%; }
+}

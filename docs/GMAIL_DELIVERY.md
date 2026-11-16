@@ -1,6 +1,5 @@
 # Gmail delivery foundation
 
-**Operating baseline, 2026-10-15:** V2 staging email Functions are deployed from `972ed719d8b9ae71fc8610d962dadf016b58b8b1`; queue is `RUNNING` with `future-public-registration` and cutoff `2026-10-15T15:26:19.550Z`. Create/update/cancel were each provider-accepted on the first attempt and the owner confirmed all three inbox arrivals. Immutable evidence is in `.local-data/final-closure/activation-972ed71/`; the fresh `.local-data/product-stabilization/live-baseline-confirmed.json` confirms unchanged runtime metadata. The following conservative retry and update-link improvements describe **prepared stabilization source, not yet deployed 972ed71 behavior**. No further real test messages are authorized by that completed three-message budget.
 
 The registration intent is the durable outbox. A Firestore creation trigger enqueues one deterministic Cloud Tasks ID (SHA-256 of the intent path). Only eventId/intentId enter the task payload. Duplicate enqueue is acknowledged; other enqueue failures request trigger retry. Public registration commits its transaction without waiting for Tasks or Gmail.
 
@@ -10,9 +9,55 @@ The private `deliverEmailTask` invokes the existing `deliverRegistrationEmail`. 
 
 `GmailEmailTransport` refreshes OAuth access with the configured offline refresh token and invokes only `users.messages.send` for `me`. Scope: `https://www.googleapis.com/auth/gmail.send`. No readonly/modify/compose scope is requested. A returned wider scope fails closed; operator setup must grant only send.
 
-MIME is multipart/alternative: UTF-8 text/plain and text/html, CRLF, base64 parts wrapped at 76 characters, encoded-word subject and base64url raw encoding. From/To/optional Reply-To accept a single validated ASCII mailbox, not display names or recipient lists. Subject/header injection is rejected. Czech content is preserved. The prepared escaped HTML/plain-text templates use actual event data and the same protected capability for confirmation and new update messages; cancellation has no CTA. Legacy update intents without an envelope remain deliverable without a link.
+MIME is multipart/alternative: UTF-8 text/plain and text/html, CRLF, base64 parts wrapped at 76 characters, encoded-word subject and base64url raw encoding. Configured From/To/optional Reply-To accept a single validated ASCII mailbox, not display names or recipient lists. The server adds only the fixed encoded JustKvíz display name to From; the authorized mailbox stays unchanged. Subject/header injection is rejected. Czech content is preserved. The escaped HTML/plain-text templates use actual event data and the same protected capability for confirmation and new update messages; cancellation has no CTA. Legacy update intents without an envelope remain deliverable without a link.
 
 RFC Message-ID and boundary derive from project + intent path; Date derives from intent creation. A retry has identical MIME while configuration is stable. Keep sender and public origin stable for pending intents.
+
+## MIME and recipient deliverability
+
+code already contains both text and HTML alternatives and authenticated Gmail API
+submission. It did contain a concrete MIME defect: `justkviz_` plus a 64-character
+digest made a 73-character boundary, exceeding the 70-character maximum in
+[RFC 2046 section 5.1.1](https://www.rfc-editor.org/rfc/rfc2046#section-5.1.1).
+The boundary now uses 60 digest characters (69 total, 240 digest bits). Message-ID,
+mailbox, Reply-To, secret bindings, send-only OAuth scope and capability links are
+preserved. The fixed From display name identifies JustKvíz consistently. This
+removes a verified format defect; it does **not** establish the cause of Seznam's
+spam decision or guarantee inbox placement.
+
+[Seznam's authentication guidance](https://o-seznam.cz/napoveda/email/pro-odesilatele-hromadnych-zprav/povinne-technicke-nalezitosti/)
+requires valid SPF and DKIM and recommends DMARC. The existing sender uses Gmail,
+so authentication must be checked on the message actually received; adding DNS
+records to the Firebase Hosting domain cannot fix authentication of `gmail.com`.
+The worker's send-only grant, sender identity and DNS are unchanged by this fix.
+
+
+Remaining diagnostic evidence is Seznam's actual authentication verdict or spam
+classification explanation, if available in an original message export or from
+Seznam support. The relevant fields are `Authentication-Results`, `Received-SPF`
+and `X-Spam-Status` if present; their absence in the displayed view is not a fail
+verdict.
+[Seznam's header instructions](https://o-seznam.cz/napoveda/email/mohlo-by-se-hodit/hlavicka-e-mailu/)
+place this under **Další → Zobrazit hlavičku** at the end of the message. Share only
+those headers with personal mailbox local parts redacted; do not share the body or
+management URL. The send-only worker cannot inspect recipient headers. Valid
+authentication still leaves content, reputation and mailbox rules as possible
+causes; Seznam does not expose its complete internal scoring.
+
+For the owner's mailbox, Seznam documents moving a legitimate message from Spam
+to Doručené or adding the sender to contacts as a trust signal in its
+[spam help](https://o-seznam.cz/napoveda/email/zasady-bezpecnosti/nevyzadana-posta-spam/).
+That is a mailbox-specific remedy, not proof of global deliverability. Longer-term
+dedicated transactional-domain routing would require a separately configured
+sender and verified DNS; Seznam's
+[domain guidance](https://o-seznam.cz/napoveda/email/pro-odesilatele-hromadnych-zprav/doporucene-nastaveni-odesilacich-domen/)
+recommends separating transactional and bulk streams. Do not add `Precedence: bulk`
+or fictitious unsubscribe headers to registration confirmations.
+
+Deployment scope for this format change is only `deliverEmailTask` in the existing
+V2 project. No live message was sent for verification. Offline tests cover the
+boundary limit/delimiters, Czech sender/subject decoding, text/HTML round trips,
+unchanged retry identity, injection rejection and transport outcome handling.
 
 ## Delivery and recovery
 
@@ -51,8 +96,6 @@ Discovery remains default-off with no parameter declarations or secret bindings 
 2. Reuse the existing OAuth client and numeric secret versions. No new login, API enablement, mailbox read scope or refresh token is needed for this change.
 3. Preserve the named secrets, current cutoff/recipient policy and old key IDs/receipts; never paste values into Git, logs, PRs or this report. The prepared update binding uses the existing keyring. Its current runtime identity has no direct keyring accessor; the release proposal must explicitly switch update to the existing dedicated create identity and verify that identity covers the update Firestore operations. This avoids a new IAM grant/secret.
 4. Review required Functions/Cloud Tasks/Eventarc APIs and existing billing/quota readiness. No service was purchased/enabled in this task. Confirm least-privilege per-resource task enqueue, service-account act-as, private worker invocation and secret access. The endpoint must remain non-public; no public/allUsers invoker is configured. No IAM change is made here.
-5. Verify the exact reviewed merge SHA and green post-merge CI. Obtain one concrete deployment authorization, then select only the needed V2 targets. Deploy the compatible worker before update; the previous three inbox-confirmed messages validate old source and are not a test of these new templates/retry rules.
-6. Use fake-provider local checks for template/token/terminal-replay behavior. Any further actual Gmail sending or staging fixture changes require new explicit scope; the prior three-message test budget is exhausted. Never replay old outbox for verification.
 7. Existing evidence does not verify automatic monitoring alerts/log metrics; this source creates none. Inspect organizer failures and long pending states without exposing contacts/capabilities. Any later alert configuration needs explicit authorization. Review provider capacity before expanding beyond low volume.
 8. Plan SPF/DKIM/DMARC and sender-domain checks with the domain administrator. DNS changes, bounce processing, contact/envelope/receipt retention and live abuse policy are future administrative decisions.
 

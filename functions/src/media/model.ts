@@ -1,5 +1,5 @@
 import { HttpsError } from 'firebase-functions/v2/https';
-import { parseQuizAsset, validOwnedMedia, normalizeSlideDesign, parseInterimBackdrop } from '@filmovy-kviz/quiz-domain';
+import { parseQuizAsset, validOwnedMedia, normalizeSlideDesign, parseInterimBackdrop, type OwnedMediaKind } from '@filmovy-kviz/quiz-domain';
 import type { Transaction, Firestore } from 'firebase-admin/firestore';
 
 export const assetPath = (quizId: string, assetId: string) => 'quiz-assets/' + quizId + '/' + assetId + '/source';
@@ -18,6 +18,13 @@ export function mediaSignature(bytes: Uint8Array, contentType: string): boolean 
   if (contentType === 'image/webp') return b.length >= 16 && ascii(0,4) === 'RIFF' && ascii(8,12) === 'WEBP';
   if (contentType === 'audio/wav') return b.length >= 44 && ascii(0,4) === 'RIFF' && ascii(8,12) === 'WAVE';
   if (contentType === 'audio/mpeg') return b.length >= 4 && (ascii(0,3) === 'ID3' || (b[0] === 255 && (b[1]! & 0xe0) === 0xe0));
+  if (contentType === 'video/mp4') {
+    if (b.length < 24 || ascii(4,8) !== 'ftyp') return false;
+    const length = b.readUInt32BE(0);
+    if (length < 24 || length > b.length || (length - 16) % 4 !== 0) return false;
+    const brands = ['isom', 'iso2', 'iso3', 'iso4', 'iso5', 'iso6', 'mp41', 'mp42', 'avc1'];
+    return brands.includes(ascii(8,12)) || Array.from({ length: (length - 16) / 4 }, (_, index) => ascii(16 + index * 4,20 + index * 4)).some(brand => brands.includes(brand));
+  }
   return false;
 }
 export function mediaByteRange(header: string | undefined, size: number): { start: number; end: number } | undefined {
@@ -45,10 +52,11 @@ export function publicMediaAllowed(publication: Record<string, unknown> | undefi
   return ((kind === undefined || kind === 'image') && publication.backgroundImage === reference)
     || ((kind === undefined || kind === 'image') && ['image','picture','photo'].includes(String(publication.slideKind)) && publication.questionImage === reference)
     || ((kind === undefined || kind === 'image') && publication.answerRevealed === true && publication.answerImage === reference)
-    || ((kind === undefined || kind === 'audio') && publication.renderMode === 'recap' && ['audio','music'].includes(String(publication.slideKind)) && publication.mediaSource === reference);
+    || ((kind === undefined || kind === 'audio') && publication.renderMode === 'recap' && ['audio','music'].includes(String(publication.slideKind)) && publication.mediaSource === reference)
+    || ((kind === undefined || kind === 'video') && ['question','recap'].includes(String(publication.renderMode)) && ['video','youtube'].includes(String(publication.slideKind)) && publication.mediaSource === reference);
 }
 export async function assertQuizAssets(transaction: Transaction, db: Firestore, quizId: string, slides: readonly Record<string, unknown>[]): Promise<void> {
-  const sources = new Map<string, 'image' | 'audio'>();
+  const sources = new Map<string, OwnedMediaKind>();
   for (const slide of slides) {
     for (const design of [slide.design, slide.answerDesign]) {
       const normalized = normalizeSlideDesign(design);
@@ -64,9 +72,9 @@ export async function assertQuizAssets(transaction: Transaction, db: Firestore, 
       if (typeof value !== 'string' || !value.startsWith('quiz-asset:')) continue;
       const asset = parseQuizAsset(value);
       if (!asset || asset.quizId !== quizId
-        || (field === 'mediaSource' && !['audio','music'].includes(String(slide.kind)))
+        || (field === 'mediaSource' && !['audio','music','video','youtube'].includes(String(slide.kind)))
         || (field === 'questionImage' && !['image','picture','photo'].includes(String(slide.kind)))) throw new HttpsError('invalid-argument', 'Asset nepatří do této otázky a kvízu.');
-      const expectedKind = field === 'mediaSource' ? 'audio' : 'image';
+      const expectedKind = field === 'mediaSource' ? (['video','youtube'].includes(String(slide.kind)) ? 'video' : 'audio') : 'image';
       if (sources.has(value) && sources.get(value) !== expectedKind) throw new HttpsError('invalid-argument', 'Asset má neslučitelné role.');
       sources.set(value, expectedKind);
     }

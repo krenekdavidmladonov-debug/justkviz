@@ -3,10 +3,12 @@ import { FunctionsError, httpsCallable } from 'firebase/functions';
 
 import { getFirebaseServices } from '../../services/firebase/client';
 import type { EventFormValues, EventMutationResponse } from './types';
+import { eventFormPricing } from './eventPricing';
 
 function eventPayload(values: EventFormValues): Record<string, unknown> {
   return {
     title: values.title,
+    pricing: eventFormPricing(values),
     description: values.description ?? '',
     startsAt: pragueInstant(values.startsAt, values.utcOffset),
     timeZone: 'Europe/Prague',
@@ -25,9 +27,10 @@ async function invoke(name: string, data: Record<string, unknown>): Promise<Even
   )(data)).data;
 }
 
-export const createEvent = (values: EventFormValues) => invoke('createEvent', {
+export const createEvent = (values: EventFormValues, requestId?: string) => invoke('createEvent', {
   expectedRevision: 0,
-  event: eventPayload(values),
+  ...(requestId === undefined ? {} : { requestId }),
+  event: eventPayload({ ...values, peopleCapacity: values.teamCapacity * Math.min(4, values.teamSizeMax) }),
 });
 
 export const updateEvent = (eventId: string, revision: number, values: EventFormValues) => invoke('updateEvent', {

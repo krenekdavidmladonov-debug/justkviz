@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { emailFixture } from './registration-email-fixture.mjs';
+import { requireFullEmulatorEnvironment } from '../../tools/local-emulator-environment.mjs';
 import { processEmailTask } from '../../functions/lib/email/task.js';
 import { EmailDeliveryError } from '../../functions/lib/email/errors.js';
 import { MAX_EMAIL_ATTEMPTS } from '../../functions/lib/email/delivery.js';
@@ -12,6 +13,15 @@ const check = (condition, label) => assert.ok(condition, label);
 try {
   fixture = await emailFixture({ gmail: true });
   const { eventRef, eventId, capture, publicCall } = fixture;
+  // These are independent provider scenarios, not a rate-limit bypass in the handler.
+  // Stage a synthetic idle contact; the real callable performs its normal refill/debit.
+  // The dedicated registration-abuse suite never mutates its budget fixture.
+  const refillProviderScenario = async () => {
+    requireFullEmulatorEnvironment(process.env, 'Independent synthetic provider scenario');
+    const budgets = await eventRef.collection('registrationAbuse').get();
+    await Promise.all(budgets.docs.map(item => item.ref.update({ updatedAtMillis: Math.max(0, Date.now() - 1_800_000) })));
+  };
+
   const input = name => ({ teamName: name, memberCount: 3, contactEmail: 'gmail-team@example.test' });
   const create = async name => {
     const team = await publicCall('createEventRegistration', { eventId, requestKey: randomBytes(32).toString('base64url'), ...input(name) });
@@ -22,6 +32,7 @@ try {
   const data = async ref => (await ref.get()).data();
   const retry = promise => assert.rejects(promise, error => error instanceof EmailDeliveryError && error.retryable);
   phase = 'registration, update and cancellation through Gmail task';
+  await refillProviderScenario();
   const { team, ref } = await create('Gmail průchod');
   await task(ref); await task(ref);
   const managed = { eventId, registrationId: team.registrationId, token: team.managementToken };
@@ -39,6 +50,7 @@ try {
   console.log('PASS: registration/update/cancel through shared task and fake Gmail MIME, terminal task replay');
 
   phase = 'legacy update without envelope remains deliverable without a replacement capability';
+  await refillProviderScenario();
   const legacy = await create('Gmail starší změna');
   await publicCall('updateEventRegistration', { eventId, registrationId: legacy.team.registrationId, token: legacy.team.managementToken,
     requestId: randomUUID(), ...input('Gmail starší změna upravená') });
@@ -51,6 +63,7 @@ try {
   console.log('PASS: old update without envelope sends once without a CTA or new intent');
 
   phase = 'malformed update envelope fails closed before provider submission';
+  await refillProviderScenario();
   const corrupt = await create('Gmail porušená změna');
   await publicCall('updateEventRegistration', { eventId, registrationId: corrupt.team.registrationId, token: corrupt.team.managementToken,
     requestId: randomUUID(), ...input('Gmail porušená změna upravená') });
@@ -62,6 +75,7 @@ try {
   console.log('PASS: cross-intent ciphertext on update fails closed and terminal task replay sends nothing');
 
   phase = 'transient retry with backoff';
+  await refillProviderScenario();
   const transient = await create('Gmail přechodná');
   capture.nextFailure = 'rate-limit';
   await retry(task(transient.ref));
@@ -73,6 +87,7 @@ try {
   console.log('PASS: transient failure, persisted backoff, early task retry and eventual acceptance');
 
   phase = 'permanent credentials failure';
+  await refillProviderScenario();
   const permanent = await create('Gmail neplatné oprávnění');
   capture.nextFailure = 'invalid-grant';
   await task(permanent.ref); await task(permanent.ref);
@@ -80,6 +95,7 @@ try {
   console.log('PASS: invalid_grant is terminal, queue replay cannot resend');
 
   phase = 'unknown send outcome is terminal and cannot produce an automatic duplicate';
+  await refillProviderScenario();
   const unknown = await create('Gmail ztracená odpověď');
   const beforeUnknown = capture.submissions.length;
   capture.nextFailure = 'after-accept';
@@ -91,6 +107,7 @@ try {
   console.log('PASS: accepted message with response loss remains review-required; terminal replay never resubmits');
 
   phase = 'legacy pending unknown outcome stops before another send or retry wait';
+  await refillProviderScenario();
   const LegacyTimestamp = (await data(unknown.ref)).createdAt.constructor;
   await unknown.ref.update({ status: 'pending', lastError: 'outcome-unknown', nextAttemptAt: LegacyTimestamp.fromMillis(fixture.clock() + 60000) });
   await task(unknown.ref); await task(unknown.ref);
@@ -99,6 +116,7 @@ try {
   console.log('PASS: legacy pending/outcome-unknown terminalizes immediately without a new submission');
 
   phase = 'Gmail send timeout performs one submission and no automatic replay';
+  await refillProviderScenario();
   const timeout = await create('Gmail timeout'); let timeoutSends = 0;
   const timeoutTransport = new GmailEmailTransport({ projectId: process.env.GCLOUD_PROJECT, clientId: 'synthetic-client', clientSecret: 'synthetic-secret',
     refreshToken: 'synthetic-refresh', sender: 'sender@example.test' }, async url => {
@@ -113,6 +131,7 @@ try {
   console.log('PASS: actual Gmail adapter timeout records review-required and task replay sends nothing');
 
   phase = 'crash after provider acceptance before sent finalization';
+  await refillProviderScenario();
   const lostFinalization = await create('Gmail crash po přijetí'); let transactionCalls = 0;
   const crashDb = { collection: name => fixture.db.collection(name), runTransaction: callback => {
     if (++transactionCalls === 2) throw new Error('Synthetic finalization crash');
@@ -130,6 +149,7 @@ try {
   console.log('PASS: crash between acceptance and sent commit ends in review-required with one physical submission');
 
   phase = 'concurrent workers and processing status';
+  await refillProviderScenario();
   const concurrent = await create('Gmail souběh');
   let release, started;
   const entered = new Promise(resolve => { started = resolve; });
@@ -147,6 +167,7 @@ try {
   console.log('PASS: active lease retries, processing status and concurrent distinct intents remain isolated');
 
   phase = 'maximum known-rejection attempts and crash terminalization';
+  await refillProviderScenario();
   const exhausted = await create('Gmail maximum');
   for (let attempt = 1; attempt <= MAX_EMAIL_ATTEMPTS; attempt++) {
     capture.nextFailure = 'rate-limit';
@@ -164,6 +185,7 @@ try {
   console.log('PASS: max attempts and last-attempt crash terminalization prevent unbounded sends');
 
   phase = 'missing vault and malformed binding fail closed';
+  await refillProviderScenario();
   const missing = await create('Gmail bez klíče');
   const beforeMissing = capture.submissions.length;
   await processEmailTask({ eventId, intentId: missing.ref.id }, { db: fixture.db, transport: capture,

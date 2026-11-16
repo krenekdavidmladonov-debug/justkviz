@@ -27,6 +27,19 @@ test('the targeted deployment accounts for every exported Function, including ex
   expect(manifest.region).toBe('europe-west1');
   expect(manifest.auth.newProviders).toBe(false);
   for (const worker of ['dispatchRegistrationEmail', 'deliverEmailTask', 'createEventTeamMessage']) expect(manifest.functions).not.toContain(worker);
+  expect(manifest.functions).not.toContain('readLocalEventMediaManifest');
+  expect(manifest.unchangedExcluded.readLocalEventMediaManifest).toContain('Demo emulators only');
+  for (const name of ['readLocalEventMediaAuthorization', 'readLocalProjectorMediaAuthority', 'readLocalImageManifest', 'authorizeLocalImageBackup', 'readLocalImageAuthority']) {
+    expect(manifest.functions).not.toContain(name);
+    expect(manifest.unchangedExcluded[name]).toContain('Demo emulators only');
+  }
+  const offline = JSON.parse(read('tools/offline/deployment-manifest.json')) as { default: string; newCallableFunctions: string[] };
+  expect(offline.default).toBe('disabled');
+  expect(offline.newCallableFunctions).toHaveLength(5);
+  for (const name of offline.newCallableFunctions) {
+    expect(manifest.functions).not.toContain(name);
+    expect(manifest.unchangedExcluded[name]).toMatch(/default-disabled/u);
+  }
 });
 
 test('deployed Rules candidates are exactly the Rules exercised by the access isolation suite', () => {

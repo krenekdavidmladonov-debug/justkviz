@@ -3,6 +3,8 @@ export type QuestionType = 'text' | 'image' | 'audio' | 'video' | 'legacy';
 export type RoundType = 'classic' | 'picture' | 'audio';
 
 export interface QuizSummary {
+  readonly revision?: number;
+  readonly disposition?: 'active' | 'trash';
   readonly id: string;
   readonly title: string;
   readonly description: string;

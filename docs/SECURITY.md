@@ -1,6 +1,43 @@
 # Security
 
+Original image URLs are derived only from bound private import receipts. Answer
+image URLs retain explicit reveal and private editor permission checks; see
+[ORIGINAL_IMAGE_SOURCES.md](ORIGINAL_IMAGE_SOURCES.md).
+
+Media conditional reads and bounded browser retention preserve fresh authorization;
+see [MEDIA_PLAYBACK_REVALIDATION.md](MEDIA_PLAYBACK_REVALIDATION.md).
+
+## Private Drive media extension
+
+The opt-in media pipeline retains default-deny Rules for jobs, credentials and
+asset writes. Jobs are derived from saved private slides after fresh owner,
+membership, concrete permissions and resource-scope checks; a private task
+worker repeats them on each transaction and before attachment. Pinned source
+fingerprints prevent delayed imports from replacing newer edits. Drive files
+stay private; the existing media gateway rechecks the current authenticated
+reader or exact revealed public field before and after verified IO. Answer
+images and source provenance never enter unrevealed public projections.
+HTTPS photo fetches reject private/reserved addresses and redirects, pin a
+validated DNS address, and cap bytes/time. The YouTube tool accepts a video ID
+and bounded interval, never browser-supplied command arguments or cookies.
+See [GOOGLE_DRIVE_MEDIA.md](GOOGLE_DRIVE_MEDIA.md) for lifecycle and activation.
+
+The optional local companion is a separate revocable device capability, not a
+Firebase login or Drive credential. Its output is untrusted: server-side size,
+format/codec/duration probing and the existing source/lease/authority checks
+precede attachment. Pairing/device documents remain default-denied to all browser
+roles. Device revocation is read inside import transactions, including after IO.
+See [LOCAL_MEDIA_COMPANION.md](LOCAL_MEDIA_COMPANION.md).
+
+## Live V2 address, 2026-10-16
+
+The owner requested live publication at `https://justkviz-v2.web.app`, using the existing V2 project and accounts; see [LIVE_RELEASE.md](LIVE_RELEASE.md). Both that exact origin and the former V2 origin are permitted by the registration email origin guard for a reversible rollout. The private worker selects the new origin through its deployment environment. The existing project/app allowlist, activation cutoff, current-membership authorization, private data and public projection boundaries are unchanged. V1 remains out of scope. The owner explicitly requested no further test runs for this release.
+
 ## Core invariants
+
+The separately entered offline event delegates bounded local authority for one signed event, snapshot and session. It encrypts private files and durable browser records. The projector receives neither the decryption key nor unrevealed answers. Sync requires current online Auth, scoped membership and an atomic baseline comparison. Cloud activation is disabled by default and requires the exact V2 environment, a server-managed event allowlist and a separate server signing key. Browser trust is bound to the deployed environment. The gateway rechecks the current event and the exported Storage generation before and after I/O. See [offline operation](OFFLINE_MODE.md) and [release controls](OFFLINE_RELEASE.md).
+
+The local demo image backup reauthorizes the exact currently published image in the projector and the current scoped operator on every short lease. A pinned same-origin popup receives one already-authorized image through a one-use MessageChannel. Whole-file index integrity, every image digest, current snapshot/generation and expiry are independent checks. Exported answer images require `event.export`, `event.answers.read` and `event.answers.export`; the projector receives their bytes only after explicit server reveal. The confidential file stays under operator control. The implementation and limits are documented in [LOCAL_IMAGE_BACKUP.md](LOCAL_IMAGE_BACKUP.md).
 
 1. Correct answers never reach public/projector clients before reveal.
 2. Public clients cannot read private quiz sources, registrations, contacts, or staff data.
@@ -14,15 +51,47 @@
 
 Visual metadata follows the same boundary: `answerDesign` is private answer content and is merged into the public design only on explicit reveal. Public design/result copy uses bounded allowlists; unknown private extensions and private print templates are never published. Owned design images require current publication and existing quiz/media permissions. The full contract is in [WHOLE_EVENING_DESIGN.md](WHOLE_EVENING_DESIGN.md).
 
-The projector reads only one `publicSessions/{sessionId}` document. The trusted `buildPublicSessionState` allowlist builds this projection from private quiz data. In ordinary question mode it copies only explicitly safe title/text/options, normalized visual media, and presentation controls; AUDIO source is omitted entirely. In explicit recap mode it adds only the selected question's display-form `revealedAnswer` and allowed answer image—not the private slide or question. Hiding an answer in React state, CSS, a network response, an error, or an unread UI branch is not acceptable.
+The projector reads slide state from one `publicSessions/{sessionId}` document. The trusted `buildPublicSessionState` allowlist builds this projection from private quiz data. In ordinary question mode it copies only explicitly safe title/text/options, normalized visual media, and presentation controls; AUDIO source is omitted entirely. In explicit recap mode it adds only the selected question's display-form `revealedAnswer` and allowed answer image—not the private slide or question. Hiding an answer in React state, CSS, a network response, an error, or an unread UI branch is not acceptable.
 
-The projector ignores inbound BroadcastChannel presentation state entirely. Only Firestore may supply a slide or an explicitly reviewed interim-results page. The projector rejects cache-only data, stale revisions and foreign sessions, invalidates old callbacks, and performs a fresh server read on reconnect. Channel player lifecycle reports contain only session ID, generation and an allowlisted state; authenticated staff and the trusted Function still validate them.
+While the optional thank-you screen is displayed online, a separate query
+reads published `publicEvents` through the existing public Rules. The screen
+displays event titles, dates and venues from server-confirmed snapshots.
 
-Every navigation, reveal, hide, and end operation replaces the entire public document in the same transaction as the private update. Navigation resets `answerRevealed`; therefore old answer fields cannot survive through merge semantics. The projector rejects Firestore cache-only snapshots and clears itself on browser offline events so a disconnected client does not continue showing an old revealed answer.
+The projector ignores inbound BroadcastChannel presentation state entirely. Only Firestore may supply a slide or an explicitly reviewed interim-results page. The projector rejects cache-only data, stale revisions and foreign sessions, invalidates old callbacks, and attempts a fresh server read on reconnect. If the read fails while the browser reports online, the listener waits for server-confirmed state. Channel player lifecycle reports contain only session ID, generation and an allowlisted state. Authenticated staff and the trusted Function still validate them.
+
+Every navigation, reveal, hide, and end operation replaces the entire public document in the same transaction as the private update. Navigation resets `answerRevealed`, which removes the previous answer fields. The projector clears itself when Firestore reports cache-only state or the browser reports offline. Before either signal arrives during a silent transport failure, the last already authorized view may remain visible.
 
 Private answer media must use protected paths or server-controlled delivery; prompt and answer media must not share guessable unrestricted URLs.
 
 ## Authorization
+
+The integrated current membership must explicitly contain `event.read` and `event.delete` for permanent deletion, including the owner role. The owner preset contains the concrete permission; a legacy owner without it fails closed. Event authorship resolves only `own` scope. This correction does not migrate live memberships.
+
+Older event snapshots may resolve frozen YouTube prompt clips to a verified ready
+Drive import of the exact same source and interval. This narrow derived media
+representation grants no access to current quiz content or other assets; all
+event scope, answer redaction and gateway reauthorization checks remain active.
+See [SNAPSHOT_DRIVE_CLIPS.md](SNAPSHOT_DRIVE_CLIPS.md).
+
+Quiz trash/restore requires current `quiz.read` + `quiz.delete` and quiz scope inside the transaction. Trashed sources cannot be edited or newly used; immutable event copies and retained media remain readable through their existing permissions. The library trash filter is not a new content confidentiality boundary. See [QUIZ_TRASH.md](QUIZ_TRASH.md).
+
+Whole-quiz duplication checks source scope and full quiz export, answer and
+note read permissions through the current membership. The same transaction
+checks quiz creation and editing permissions, including writes to answers,
+notes and media attachments, and grants access only to the new draft. A
+replayed request rechecks source authority and access to the destination. The
+operation sends only the destination ID and counters to the client.
+
+Media duplication additionally requires `quiz.media.upload` in source scope.
+Only the owner of the connected Drive account may copy its private assets.
+The server verifies the current connection, private file access and recorded
+digest, then creates a separate private Storage object under the copy. The new
+object carries no source Drive binding or bearer token. The draft and access
+grant become visible only when every file is verified and the current source
+revision, media pins and permissions pass the final transaction. A transfer
+interrupted before publication can leave private objects for idempotent retry.
+Resuming a Drive transfer rechecks the private file access for completed
+objects along with the current account and connection.
 
 The current policy is defined in [PERSONAL_ACCESS.md](PERSONAL_ACCESS.md) and the shared permission module. Firebase Auth verifies identity; current membership, permissions and resource scope authorize each operation. Role labels are editable presets. Legacy custom claims are preserved but ignored as authority.
 
@@ -36,9 +105,29 @@ Invitation and membership changes serialize on accessControl/state, validate per
 
 ## Public registration
 
+Event pricing uses the existing scoped `event.manage` mutation boundary; public
+registration payloads confer no authority to change it. Explicit pricing accepts
+only `mode`, `amountCzk` and optional boolean `hidden`, with bounded integer CZK or
+null for agreement. Staff read adapters retain sanitized private pricing; public
+projections redact hidden prices to agreement/null plus `hidden: true`, never the
+actual amount or charging mode. Hiding is enforced before public transport, and
+every registration/lifecycle writer uses the same redaction. Older omitted update
+fields retain authoritative pricing and visibility. No new permissions,
+Rules, collections, payment credentials or contact exposure are introduced.
+
+Owner notifications use a separate default-off runtime recipient/UID/cutoff, not
+browser fields or the membership's display email. Only successful new online
+creates enqueue one private deterministic intent; receipt replays and manual
+registrations cannot enqueue another. The private worker checks current active
+membership, `event.read`, `event.contacts` and event scope before sending. It sends
+only event/team/count/date and an authenticated admin URL, with no team contact or
+management capability. Existing deny-all client access to email intents applies.
+No new IAM, secret, client permission or public projection field is introduced.
+See [TRANSACTIONAL_EMAIL.md](TRANSACTIONAL_EMAIL.md).
+
 Manual team add/edit requires an active membership, `event.manage`, `event.contacts` and scope for the target event, rechecked in the mutation transaction. It shares transactional capacity and name reservations with online registrations. Its nullable token verifier never authorizes public access; manual records have no public management capability. Public requests cannot choose manual origin or bypass their email/window requirements. See `EVENT_TEAM_TOOLS.md`.
 
-Registration uses callable Functions rather than direct Firestore writes. It validates fields/types, normalization/limits, contact format, team-size bounds, server-time window, unique names, and both capacities transactionally. Management tokens are random bearer capabilities; registration records store only SHA-256 verifiers and invalid combinations are non-enumerating. Guarded local email and eligible explicit staging mode use a separate authenticated ciphertext envelope denied to every client role. Default-off cloud creates no intents/envelopes, binds no email secrets and does not require the vault. Local vault/fake-provider access requires both a demo project and a localhost emulator, and the real Gmail adapter refuses emulator execution. Email intents/receipts remain server-only. The six email endpoints remain excluded from the frozen [70-target restart inventory](../tools/staging/restart-release-manifest.json); the separately approved five-Function staging activation now binds the create keyring and private worker's OAuth/keyring secrets with dedicated identities. [Actual execution evidence](EMAIL_ACTIVATION_EXECUTION.md) verifies private invocation, selected-recipient/cutoff restrictions and one owner-confirmed message. That selected-recipient run is historical. The separately approved 972ed71 activation now has a RUNNING queue for canonical online registrations created at or after 2026-10-15T15:26:19.550Z; the owner confirmed all three registration messages. Organizational campaigns, older registrations and production remain excluded. Responses reveal no other teams or contacts. Production abuse controls remain a launch prerequisite. See [TRANSACTIONAL_EMAIL.md](TRANSACTIONAL_EMAIL.md).
+Registration uses callable Functions rather than direct Firestore writes. It validates fields/types, normalization/limits, contact format, team-size bounds (at most four members for new or edited registrations), server-time window, unique names, and team capacity transactionally. The legacy total-person limit no longer rejects registrations; accepted-person counters remain internal bookkeeping for compatible historical records. Management tokens are random bearer capabilities; registration records store only SHA-256 verifiers and invalid combinations are non-enumerating. Guarded local email and eligible explicit staging mode use a separate authenticated ciphertext envelope denied to every client role. Default-off cloud creates no intents/envelopes, binds no email secrets and does not require the vault. Local vault/fake-provider access requires both a demo project and a localhost emulator, and the real Gmail adapter refuses emulator execution. Email intents/receipts remain server-only. The six email endpoints remain excluded from the frozen [70-target restart inventory](../tools/staging/restart-release-manifest.json); the separately approved five-Function staging activation now binds the create keyring and private worker's OAuth/keyring secrets with dedicated identities. [Actual execution evidence](EMAIL_ACTIVATION_EXECUTION.md) verifies private invocation, selected-recipient/cutoff restrictions and one owner-confirmed message. That selected-recipient run is historical. The separately approved 972ed71 activation now has a RUNNING queue for canonical online registrations created at or after 2026-10-15T15:26:19.550Z; the owner confirmed all three registration messages. Organizational campaigns, older registrations and production remain excluded. Responses reveal no other teams or contacts. Production abuse controls remain a launch prerequisite. See [TRANSACTIONAL_EMAIL.md](TRANSACTIONAL_EMAIL.md).
 
 ## Firebase configuration and secrets
 
@@ -80,11 +169,27 @@ The V1 migration tool follows the same fail-closed principle. Managed export byt
 
 ## Rules and tests
 
+Both print artifacts containing answers (`answer-key` and `organizer-sheets`) require active membership, `event.export`, `event.answers.read`, `event.answers.export` and scope for the concrete event. The binary endpoint repeats authorization and verifies the unchanged snapshot binding before returning bytes. The organizer artifact accepts no client answers, team list, mode or snapshot ID. The UI separates private materials from player sheets and requires deliberate confirmation; this never substitutes for endpoint authorization. The player's two-up layout never marks a correct option or inserts a private answer.
+
 Firestore Rules tests run through `firebase emulators:exec` and `@firebase/rules-unit-testing`, not mocked SDK calls. The suite covers anonymous/unprivileged denial for private sessions and quiz sources, anonymous single-document public reads, public list/write denial, scoped member reads, direct member write denial, and default denial. Emulator E2E additionally invokes real callable emulators as anonymous and with ordinary-user, moderator and admin compatibility fixtures; the privileged fixtures now authorize through explicit current memberships rather than their legacy role claims. Editor coverage verifies authorized idempotent creation of one empty private draft, CRUD, collaborator read-only behavior, direct-write denial, stale/concurrent saves, exact legacy round-trip (including the imported `0/0` timing sentinel), contiguous ordering, guided Choice/Video repairs, invalid indices/timing rejection, sanitized repair responses, and that editor activity leaves sentinel public/session snapshot state unchanged.
 
-Storage allows create only for an active member with a verified token, a valid session cutoff, `quiz.media.upload`, quiz scope and an exact server-issued upload grant bound to the same UID and current membership version. All direct get/list/update/delete remain denied. The authenticated/current-publication read gateway, MIME/size/signature checks and immutable generation binding are covered by local Storage contracts and browser tests; see MEDIA_STORAGE.md. Further access still requires explicit boundary tests.
+Storage allows create only for an active member with a verified token, a valid session cutoff, `quiz.media.upload`, quiz scope and an exact server-issued upload grant bound to the same UID and current membership version. Rules deny direct get/list/update/delete. Owned MP4 uses the same scoped grant with exact `video/mp4` MIME, a 25 MiB limit and an absent temporary upload destination; the rule still reads only the membership and upload documents. The server makes a fresh canonical object without a bearer token and removes the exact temporary object before marking the video ready. Firebase bearer tokens are a separate capability outside Rules; the app never exposes them through the offline archive or projector. The legacy image/audio path is not migrated by this change. The authenticated/current-publication read gateway, MIME/size/signature checks and immutable generation binding are covered by local Storage contracts and browser tests; see MEDIA_STORAGE.md. Further access still requires explicit boundary tests.
 
 ## Operational safeguards
+
+Google Drive connection preparation uses a dedicated media OAuth/Picker project,
+client and encryption keyring, separate from Gmail. A separate client alone does
+not isolate Google's project-wide token revocation. The Firebase runtime remains
+in V2. It requires current verified Firebase identity,
+active server-managed owner membership and concrete `users.manage` and
+`quiz.media.upload` permissions. Pending authorization is bound to that identity,
+membership version, expiry and PKCE challenge, then consumed once. Token exchange
+and folder assignment recheck authorization before persisting credentials.
+The two Drive collections remain default-denied to every browser role. The
+limited `drive.file` grant covers app-created or explicitly selected files; a
+folder created through a chat connector grants no access to the deployed app.
+No media export, YouTube download, public sharing or deployment is activated by
+this preparation. See [GOOGLE_DRIVE_CONNECTION.md](GOOGLE_DRIVE_CONNECTION.md).
 
 - Separate local, staging, and production Firebase projects.
 - Use least-privilege CI identities and protected deployment environments.
@@ -135,8 +240,18 @@ The organizational email source requires current Auth, active membership, `event
 Media authoring extends the shared picker/gateway/renderer to question, private answer and background roles. Explicit empty fields detach without deleting legacy data or snapshot assets. See MEDIA_AUTHORING_RELEASE.md for the complete contract and deployment scope.
 
 
-Complete editor extends the same private ordered stream with explicit draft/ready authoring, independent answer mode, default appearance, atomic round/recap creation and private in-memory rehearsal. Drafts block preflight, snapshot lock and live publication. See [COMPLETE_EDITOR_RELEASE.md](COMPLETE_EDITOR_RELEASE.md) for field compatibility, authorization, verification and the integrated deployment manifest.
+Complete editor extends the same private ordered stream with explicit draft/ready authoring, independent answer mode, default appearance, atomic round/recap creation and private in-memory rehearsal. Drafts remain editorial findings in optional preflight; saved drafts can be used for rehearsal and event snapshots through the same sanitized publication boundary. See [COMPLETE_EDITOR_RELEASE.md](COMPLETE_EDITOR_RELEASE.md) for field compatibility, authorization, verification and the integrated deployment manifest.
 
 ## Event management extension
 
+`publicEvents` reads require `registrationPublished == true`; anonymous lists
+must constrain this field explicitly. Hidden projection documents remain stored
+but cannot be read by clients. Publication changes retain current membership,
+concrete event permissions and resource scope checks. See
+[EVENT_PUBLICATION.md](EVENT_PUBLICATION.md).
+
 See [EVENT_MANAGEMENT.md](EVENT_MANAGEMENT.md) for the independent disposition overlay, scoped permission mapping, shared transactional guards, capability revocation and exact server-side deletion ownership/allowlist. No content backfill or Storage cleanup is introduced. Cloud team email remains disabled.
+
+Optional quiz review separates editorial completeness from authority. Root draft/ready status and question authoring status grant no access. Live creation and event locking accept saved editorial drafts and missing answers; they still require current scoped permission checks and valid ordered visible sources. Event locking retains exact revision, immutable copy and ready owned-asset checks. Public answer allowlists and explicit reveal are unchanged; readiness summaries stay private.
+
+Manual completeEvent requires current active event.manage and event scope on each invocation/transaction attempt; explicit endLive additionally requires event.live. Active sessions require that explicit closure intent. Presentation END authorizes only a session mutation and never completes or unpublishes its event. Explicit slide jumps during results clear answer/media/overlay intent and rebuild the existing public allowlist from the current bound snapshot. No client input can supply public answer or result rows.

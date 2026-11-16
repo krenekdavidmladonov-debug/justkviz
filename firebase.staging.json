@@ -12,7 +12,10 @@
       { "key": "X-Robots-Tag", "value": "noindex, nofollow" },
       { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
       { "key": "X-Content-Type-Options", "value": "nosniff" }
-    ] }],
+    ] }, {
+      "source": "/{,index.html,admin,admin/**,events,events/**,referee,referee/**,projector,projector/**,account,invite/**}",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache, max-age=0, must-revalidate" }]
+    }],
     "rewrites": [{ "source": "**", "destination": "/index.html" }]
   },
   "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" }

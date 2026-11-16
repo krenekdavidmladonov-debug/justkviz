@@ -17,11 +17,11 @@ function revisionAction(name: string) {
   return (sessionId: string, expectedRevision: number) => invoke(name, { sessionId, expectedRevision });
 }
 
-export const nextSlide = revisionAction('nextSlide');
-export const previousSlide = revisionAction('previousSlide');
+export const nextSlide = (sessionId: string, expectedRevision: number) => invoke('goToSlide', { sessionId, expectedRevision, direction: 1 });
+export const previousSlide = (sessionId: string, expectedRevision: number) => invoke('goToSlide', { sessionId, expectedRevision, direction: -1 });
 export const revealAnswer = revisionAction('revealAnswer');
 export const hideAnswer = revisionAction('hideAnswer');
-export const playMedia = revisionAction('playMedia');
+export const playMedia = (sessionId: string, expectedRevision: number, mode: 'clip' | 'original' = 'clip') => invoke('playMedia', { sessionId, expectedRevision, mode });
 export const stopMedia = revisionAction('stopMedia');
 export const replayMedia = revisionAction('replayMedia');
 export const startIntro = revisionAction('startIntro');

@@ -5,6 +5,9 @@ const iframeApiMock = `
   class Player {
     constructor(_element, options) { this.options = options; queueMicrotask(() => options.events.onReady()); }
     cueVideoById() {}
+    addEventListener(event, listener) { this.options.events[event] = window[listener]; }
+    removeEventListener(event) { this.options.events[event] = () => {}; }
+    playVideo() {}
     loadVideoById() {}
     pauseVideo() {}
     seekTo() {}

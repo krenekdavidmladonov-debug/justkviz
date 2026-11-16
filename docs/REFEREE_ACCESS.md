@@ -1,8 +1,41 @@
 # Referee access to one event
 
+## Postup pro moderátora a rozhodčího
+
+1. Pořadatel připraví kvíz ke hraní u konkrétní akce a zkontroluje seznam týmů.
+2. V detailu akce otevře **Přístup pro rozhodčího**, zadá jméno/označení kolegy
+   a platnost přes konec večera. **Vydat přístup rozhodčího** vytvoří soukromý
+   odkaz a QR. Odkaz lze zkopírovat a předat kolegovi; aplikace jej neposílá e-mailem.
+3. Kolega odkaz otevře na vlastním zařízení bez nutnosti vytvářet účet.
+   Dostane pouze bodování této akce. Veřejný registrační odkaz k tomu neslouží.
+4. Správné odpovědi předá pořadatel zvlášť: **Tisk a materiály → organizační
+   arch / klíč správných odpovědí**. Rozhodčího odkaz neobsahuje otázky ani odpovědi.
+5. Rozhodčí nahoře vybere **kolo**. Pod ním má všechny týmy a pole pro
+   **body za toto kolo**, například 7,5. Poté stiskne jediné
+   **Uložit body celého kola**, vybere další kolo a postup zopakuje.
+   Nula je platný výsledek; prázdné pole je nezadáno. Oprava má vlastní důvod
+   u týmu. Vrácení na nezadáno je výslovně označené a potvrzené při uložení.
+   Přepnutí kola chrání rozepsané hodnoty; během ukládání se kolo nepřepíná.
+   Potvrzené hodnoty se zobrazí hned; další skóre se obnovuje po pěti sekundách.
+6. Moderátor otevře **Průběžné výsledky**, vybere kolo, **Načíst náhled výsledků**
+   a po kontrole **Zobrazit výsledky**. Součty a pořadí počítá server.
+   Chybějící body publikaci blokují. Poslední kolo patří do finálního vyhlášení.
+7. Oprava bodů má důvod a historii. Již zobrazené výsledky se samy nezmění:
+   moderátor načte nový náhled a zvolí **Aktualizovat zobrazené výsledky**.
+
+Soukromý odkaz se ukazuje pouze po vydání či obnově. Selhání QR nebo obnovení
+seznamu již vrácený odkaz nezahodí. Při nedostupné schránce lze označený odkaz
+zkopírovat ručně. Nikdo jej nemá zveřejňovat hráčům. Pořadatel může přístup odebrat;
+obnova klíče zneplatní starý odkaz.
+
 ## Authority and data boundary
 
-An existing current `admin` manages event access. The current application grants admins management of all events; it has no event ownership ACL. `moderator` remains unable to issue, list, rotate or revoke grants. The server checks both the caller token and the current Auth user/role. No global referee role or Auth account is created, and RequireStaff is unchanged.
+Current active membership, concrete event permissions and event scope authorize
+management. Listing/revoking requires event management; issuing/rotating additionally
+requires scoring permission. Role labels alone grant no authority. Each bearer
+request rechecks the issuer's current authority; a logged-in holder must additionally
+have their own applicable event permissions. See [PERSONAL_ACCESS.md](PERSONAL_ACCESS.md).
+Issuing this link creates no Auth account or global referee role.
 
 `events/{eventId}/refereeAccess/{accessId}` is server-only under the existing default-deny Rules. Only management callables return its safe label, expiry, version and status. A 256-bit server-generated key is returned once on issue/rotation. Only a purpose-separated SHA-256 verifier is persisted. QR generation uses the already bundled qrcode library locally; no external QR service receives the link. A label identifies the capability, not a verified person.
 
@@ -27,6 +60,13 @@ Staff and referee share `scoring/core.ts`; there is one scores collection, revis
 Issuance uses a client requestId mapped to one deterministic grant ID. A retry with the same body returns safe metadata and key:null; the unrecoverable key requires explicit rotation. The UI retains an uncertain issuance request instead of silently creating another. Each event supports at most 50 named grants, including revoked ones; reuse/rotate a named access. Rotation/revocation uses expectedVersion, so retrying an uncertain rotation cannot silently issue another key. Refresh the list and explicitly rotate after reviewing its warning. Score retries reuse the existing per-row requestId and shared idempotent receipt.
 
 ## Abuse controls and deployment dependencies
+
+Round entry keeps the existing `saveRefereeScore` endpoint and credential/score
+envelope. The score may contain the strict round-batch shape in EVENT_SCORING.md;
+legacy single-score requests remain valid. All changed teams commit in one
+transaction or none do. Capability and issuer/holder authority are rechecked
+before batch receipt replay. Retries preserve the whole round requestId. The
+limit is 200 changed teams per atomic save. No new endpoint or invoker is added.
 
 The referee entry callables validate bounded credential shapes and use a per-observed-IP fixed-window limiter (180 protected requests/minute). It stores only a purpose-separated IP digest and count/window in server-only `refereeRateLimits`. This bounds database work for repeated attempts from one observed address; shared NAT users share the limit, distributed abuse and upstream proxy/IP configuration remain limitations. There is no new App Check exemption or disabled Auth/Rules. High-entropy keys, uniform invalid/expired/revoked errors and timing-safe verifier comparison supplement this bounded limiter. Function maxInstances is 10. Limiter records have one fixed document per observed address, not per request; future operational retention should remove old counters by policy, not this feature or a migration.
 

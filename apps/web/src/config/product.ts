@@ -1,5 +1,4 @@
 import { brand } from '@filmovy-kviz/quiz-domain';
-import temporaryIcon from '../assets/justkviz-jk-temporary.svg';
 
 export interface ProductConfig {
   readonly name: string;
@@ -16,5 +15,5 @@ export const productConfig: ProductConfig = Object.freeze({
   adminLabel: brand.name,
   description: brand.description,
   author: brand.author,
-  icon: temporaryIcon,
+  icon: '/brand/justkviz-icon.svg',
 });

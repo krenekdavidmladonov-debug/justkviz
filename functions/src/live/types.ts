@@ -24,6 +24,7 @@ export interface PrivateLiveSession {
   readonly recapQuestionPosition?: number;
   readonly recapQuestionId?: string;
   readonly mediaCommand: LiveMediaCommand;
+  readonly mediaPlaybackMode?: 'original';
   readonly mediaPlaybackState: LiveMediaPlaybackState;
   readonly mediaGeneration: number;
   readonly introGeneration: number;
@@ -68,6 +69,7 @@ export interface PrivateSlide {
   readonly imageLayout?: unknown;
   readonly answerExplanation?: unknown;
   readonly mediaSource?: unknown;
+  readonly originalMediaSource?: string;
   readonly backgroundOverlay?: unknown;
   readonly clipStartSeconds?: unknown;
   readonly clipEndSeconds?: unknown;
@@ -100,6 +102,7 @@ export interface PublicLiveSession {
   readonly presentationMode: LivePresentationMode;
   readonly renderMode: LiveRenderMode;
   readonly mediaCommand: LiveMediaCommand;
+  readonly mediaPlaybackMode?: 'original';
   readonly mediaPlaybackState: LiveMediaPlaybackState;
   readonly mediaGeneration: number;
   readonly introGeneration: number;
@@ -133,7 +136,7 @@ export type LiveSessionAction =
   | { readonly type: 'reveal-answer' }
   | { readonly type: 'hide-answer' }
   | { readonly type: 'select-recap-question'; readonly position: number; readonly slideId: string }
-  | { readonly type: 'play-media' }
+  | { readonly type: 'play-media'; readonly mode?: 'clip' | 'original' }
   | { readonly type: 'stop-media' }
   | { readonly type: 'replay-media' }
   | { readonly type: 'finish-media' }

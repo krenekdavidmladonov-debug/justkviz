@@ -1,5 +1,5 @@
 export type EventDisposition = 'active' | 'archived' | 'trash' | 'deleting';
-export type EventManagementAction = 'cancel' | 'prepare' | 'archive' | 'unarchive' | 'trash' | 'restore';
+export type EventManagementAction = 'complete' | 'cancel' | 'prepare' | 'archive' | 'unarchive' | 'trash' | 'restore';
 export function eventDisposition(event: { disposition?: unknown; lifecycleStatus?: unknown }): EventDisposition {
   if (event.disposition === 'active') return 'active';
   if (event.disposition === 'trash' || event.disposition === 'deleting' || event.disposition === 'archived') return event.disposition;
@@ -18,6 +18,7 @@ export function transitionProblem(event: { disposition?: unknown; lifecycleStatu
   if (action === 'archive') return ['completed', 'cancelled', 'archived'].includes(String(status)) ? null : 'Archivovat lze dokončenou nebo zrušenou akci.';
   if (action === 'prepare') return status === 'cancelled' && !event.scoring?.started ? null : 'Do přípravy lze vrátit jen zrušenou dosud neodehranou akci.';
   if (action === 'cancel') return ['draft', 'scheduled', 'ready', 'live', 'finalizing'].includes(String(status)) ? null : 'Dokončenou akci archivujte nebo přesuňte do koše.';
+  if (action === 'complete') return ['ready', 'live', 'finalizing'].includes(String(status)) ? null : 'Dokončit lze jen připravenou nebo rozehranou akci.';
   if (action === 'trash') return event.hasActiveSession ? 'Nejprve výslovně ukončete živý běh.' : null;
   return 'Neplatná změna stavu.';
 }

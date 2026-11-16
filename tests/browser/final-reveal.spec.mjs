@@ -1,45 +1,174 @@
-/* global window, document, innerWidth */
+/* global window */
 import { expect, test } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
 import { finalFixture } from '../e2e/final-reveal-fixture.mjs';
 import { assertFinalPayload } from '../e2e/final-payload.mjs';
 
+// Exercise the real YouTubePlayer component at the SDK boundary. These counters
+// prove command ownership and cleanup, never remote video or audible hardware.
 async function guard(context) {
-  await context.route('**/*', r => ['127.0.0.1', 'localhost'].includes(new URL(r.request().url()).hostname) ? r.continue() : r.abort());
+  await context.route('**/*', route => ['127.0.0.1', 'localhost'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
   await context.addInitScript(() => {
-    window.__audioStarts = 0; window.__audioStops = 0; window.__audioEnded = 0; window.__audioGains = 0; window.__audioMasters = []; window.__denyAudio = false;
-    const Original = window.AudioContext;
-    window.AudioContext = class extends Original {
-      resume() { return window.__denyAudio ? Promise.reject(new DOMException('Synthetic policy denial', 'NotAllowedError')) : super.resume(); }
-      createGain() {
-        const node = super.createGain(), connect = node.connect.bind(node), disconnect = node.disconnect.bind(node);
-        const master = { node, connected: false }; window.__audioGains++;
-        node.connect = (target, ...args) => {
-          const result = connect(target, ...args);
-          if (target === this.destination) { master.connected = true; window.__audioMasters.push(master); }
-          return result;
-        };
-        node.disconnect = (...args) => { const result = disconnect(...args); master.connected = false; return result; };
-        return node;
+    window.__winnerPlayer = { starts: 0, stops: 0, active: 0, volumes: [], startsAt: [], deny: false };
+    window.YT = { PlayerState: { PLAYING: 1, ENDED: 0 }, Player: class {
+      constructor(element, options) { this.options = options; this.time = 0; this.playing = false; this.element = element; window.__winnerPlayer.active++; setTimeout(() => options.events.onReady(), 0); }
+      cueVideoById(options) { this.time = options.startSeconds ?? 0; }
+      loadVideoById(options) { this.time = options.startSeconds ?? 0; this.playVideo(); }
+      playVideo() {
+        if (window.__winnerPlayer.deny) { this.options.events.onAutoplayBlocked?.(); return; }
+        this.playing = true; window.__winnerPlayer.starts++; window.__winnerPlayer.startsAt.push(this.time); this.options.events.onStateChange({ data: 1 });
       }
-      createOscillator() {
-        const node = super.createOscillator(), start = node.start.bind(node), stop = node.stop.bind(node);
-        // Count only successful native calls, never a spy that bypasses Web Audio.
-        node.start = (...args) => { start(...args); window.__audioStarts++; };
-        node.stop = (...args) => { stop(...args); window.__audioStops++; };
-        node.addEventListener('ended', () => window.__audioEnded++);
-        return node;
-      }
-    };
+      pauseVideo() { if (this.playing) window.__winnerPlayer.stops++; this.playing = false; }
+      seekTo(value) { this.time = value; }
+      getCurrentTime() { return this.time; }
+      setVolume(value) { window.__winnerPlayer.volumes.push(value); }
+      unMute() {}
+      destroy() { this.pauseVideo(); this.element.remove(); window.__winnerPlayer.active--; }
+    } };
   });
 }
-const audioGraph = page => page.evaluate(() => ({
-  starts: window.__audioStarts, gains: window.__audioGains, ended: window.__audioEnded,
-  connected: window.__audioMasters.at(-1)?.connected ?? false,
-  gain: window.__audioMasters.at(-1)?.node.gain.value,
-}));
-// Delay delivery of genuine Firestore bytes only; callable responses and audio
-// remain real. An existing synced listener can otherwise hide this ordering race.
+const starts = page => page.evaluate(() => window.__winnerPlayer.starts);
+const controls = page => page.getByRole('region', { name: 'Výsledky akce', exact: true });
+const step = page => controls(page).getByRole('button', { name: /^(Odhalit další místo|Další strana výsledků|Zobrazit konečné pořadí)$/ });
+async function login(page, f) {
+  await page.goto('/admin/login'); await page.getByLabel('E-mail').fill(f.login.email); await page.getByLabel('Heslo').fill(f.login.password);
+  await page.getByRole('button', { name: 'Přihlásit se', exact: true }).click(); await expect(page).toHaveURL(/\/admin$/);
+  await page.goto('/admin/live/' + f.sessionId); await expect(controls(page)).toBeVisible();
+}
+async function display(browser, f, baseURL) {
+  const context = await browser.newContext({ baseURL, viewport: { width: 1920, height: 1080 } }); await guard(context);
+  const page = await context.newPage(); await page.goto('/projector/' + f.sessionId); return { context, page };
+}
+async function start(page, f) {
+  await f.call('goToSlide', { sessionId: f.sessionId, expectedRevision: (await f.session()).revision, position: 5 });
+  await expect(page.locator('.live-control')).toHaveAttribute('data-current-position', '5');
+  await page.getByRole('button', { name: 'Další →', exact: true }).click();
+  await expect.poll(async () => (await f.rawPublic()).finalReveal?.mode).toBe('intro'); await expect(step(page)).toBeEnabled();
+}
+async function replace(f, suppliedPreview) {
+  const preview = suppliedPreview ?? await f.previewFinal();
+  return f.command('replace', { expectedRevision: preview.sessionRevision, versionId: preview.publishedVersionId, sourceFingerprint: preview.sourceFingerprint, presentationStyle: 'show' });
+}
+async function end(page, projector) {
+  await page.getByText('Další možnosti', { exact: true }).click(); page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'Ukončit kvíz', exact: true }).click(); await expect(projector.getByRole('heading', { name: 'Kvíz skončil', exact: true })).toBeVisible();
+}
+function safeFinal(raw, expectedRows, mode) {
+  const { showCue, ...base } = raw, { history, ...finalReveal } = raw.finalReveal;
+  assertFinalPayload({ ...base, finalReveal }, expectedRows, mode);
+  if (showCue) expect(Object.keys(showCue).sort()).toEqual(['durationMs', 'id', 'intensity', 'kind', 'motion', 'startedAt', 'topThree', 'winnerAnimation'].sort());
+  if (history) {
+    expect(Object.keys(history).sort()).toEqual(['page', 'pageCount', 'pageSize', 'rows']); expect(history.rows.length).toBeLessThanOrEqual(6);
+    for (const row of history.rows) { expect(Object.keys(row).sort()).toEqual(['halfPoints', 'rank', 'teamName']); expect(row.rank).toBeGreaterThan(raw.finalReveal.rank); }
+  }
+}
+async function flush(page) { await page.evaluate(async () => { await new Promise(resolve => window.requestAnimationFrame(resolve)); await new Promise(resolve => window.requestAnimationFrame(resolve)); }); }
+async function holdWinner(page) {
+  let release, request, responseData, committed = false;
+  const held = new Promise(resolve => { release = resolve; });
+  const handler = async route => {
+    if (route.request().method() !== 'POST' || route.request().postDataJSON()?.data?.action !== 'reveal') return route.continue();
+    request = route.request().postDataJSON().data; const response = await route.fetch(); responseData = (await response.json()).result; committed = true; await held;
+    try { await route.fulfill({ response }); } catch { /* Navigation can abandon this deliberately held browser request. */ }
+  };
+  await page.route('**/controlFinalReveal', handler);
+  return { release: () => release(), committed: () => committed, request: () => request, response: () => responseData, remove: () => page.unroute('**/controlFinalReveal', handler) };
+}
+
+// Advanced hide/replace/replay remain real callable contracts; their removed
+// legacy buttons are not presented as current UI. Open/reveal/page/table use UI.
+test('three-round finale: current controls, referee correction, all public groups, initiating winner music and manual END', async ({ page, context, browser, baseURL }) => {
+  const f = await finalFixture(); let projection, refereeContext;
+  try {
+    await guard(context); await login(page, f); const other = await context.newPage(); await other.goto('/admin/live/' + f.sessionId);
+    projection = await display(browser, f, baseURL); const projector = projection.page, preview = await f.previewFinal();
+    expect((await f.rawPublic()).finalReveal).toBeUndefined(); await start(page, f); safeFinal(await f.rawPublic(), [], 'intro');
+    await expect(projector.getByRole('heading', { name: 'Celkové výsledky', exact: true })).toBeVisible();
+    await expect(controls(page).getByRole('button', { name: 'Zobrazit konečné pořadí', exact: true })).toHaveCount(0);
+    await projector.evaluate(sessionId => { const channel = new BroadcastChannel('filmovy-kviz-projector-' + sessionId); channel.postMessage({ type: 'public-state', state: { sessionId, revision: 99999, finalReveal: { mode: 'table', rows: [{ rank: 1, teamName: 'FORGED WINNER', halfPoints: 999 }] } } }); channel.close(); }, f.sessionId);
+    await expect(projector.getByText('FORGED WINNER')).toHaveCount(0);
+    await step(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.rank).toBe(4);
+    const lower = preview.rows.filter(row => row.rank === 4); safeFinal(await f.rawPublic(), lower.slice(0, 6), 'group');
+    await expect(projector.locator('.sm-feature-teams h1')).toHaveCount(6); await step(page).click();
+    await expect.poll(async () => (await f.rawPublic()).finalReveal.page).toBe(1); safeFinal(await f.rawPublic(), lower.slice(6), 'group');
+    const before = await f.rawPublic(), grant = await f.referee(); refereeContext = await browser.newContext({ baseURL }); await guard(refereeContext); const referee = await refereeContext.newPage();
+    await referee.goto('/'); await referee.evaluate(destination => { const state = { idx: 1, key: crypto.randomUUID() }; window.history.pushState(state, '', destination); window.dispatchEvent(new window.PopStateEvent('popstate', { state })); }, '/referee/' + grant.eventId + '#access=' + grant.accessId + '&key=' + grant.key);
+    await referee.getByLabel('Kolo', { exact: true }).selectOption('r3'); await referee.getByLabel('Body — Alfa', { exact: true }).fill('5,5'); await referee.getByLabel('Důvod opravy — Alfa', { exact: true }).fill('Synthetic final correction');
+    await referee.getByRole('button', { name: 'Uložit body celého kola', exact: true }).click(); await expect(referee.getByText('Body kola jsou uložené. Potvrzeno serverem.', { exact: true })).toBeVisible(); expect(await f.rawPublic()).toEqual(before);
+    for (const rank of [3, 2, 1]) { await step(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.rank).toBe(rank); safeFinal(await f.rawPublic(), preview.rows.filter(row => row.rank === rank), 'group'); }
+    await expect(projector.getByRole('heading', { name: 'Alfa', exact: true })).toBeVisible(); await expect.poll(() => starts(page)).toBe(1);
+    expect(await starts(other)).toBe(0); expect(await starts(projector)).toBe(0); expect(await starts(referee)).toBe(0);
+    await page.reload(); await expect(controls(page)).toBeVisible(); expect(await starts(page)).toBe(0);
+    await step(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.mode).toBe('table');
+    const seen = []; for (let p = 0; p < 3; p++) { if (p) await step(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.page).toBe(p); const raw = await f.rawPublic(); safeFinal(raw, preview.rows.slice(p * 6, (p + 1) * 6), 'table'); seen.push(...raw.finalReveal.rows); await expect(projector.locator('.sm-final-table .sm-row')).toHaveCount(raw.finalReveal.rows.length); }
+    expect(seen).toEqual(preview.rows); expect(await starts(page)).toBe(0); await end(page, projector); await projector.reload(); await expect(projector.getByRole('heading', { name: 'Kvíz skončil', exact: true })).toBeVisible(); expect((await f.rawPublic()).finalReveal).toBeUndefined();
+  } finally { await refereeContext?.close(); await projection?.context.close(); await f.close(); }
+});
+
+test('lost winner response: real backend retry acknowledges one receipt without another reveal or music', async ({ page, context, browser, baseURL }) => {
+  const f = await finalFixture(1, true); let projection, command;
+  try {
+    await guard(context); await login(page, f); projection = await display(browser, f, baseURL); await start(page, f);
+    await page.route('**/controlFinalReveal', async route => { if (route.request().postDataJSON()?.data?.action !== 'reveal') return route.continue(); command = route.request().postDataJSON().data; await route.fetch(); await route.abort('failed'); });
+    await step(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.rank).toBe(1); await expect(controls(page).getByRole('alert')).toBeVisible();
+    const before = await f.rawPublic(), count = (await f.db.collection(`sessions/${f.sessionId}/finalOperations`).get()).size;
+    await page.unroute('**/controlFinalReveal'); expect((await f.call('controlFinalReveal', command)).replayed).toBe(true);
+    expect(await f.rawPublic()).toEqual(before); expect((await f.db.collection(`sessions/${f.sessionId}/finalOperations`).get()).size).toBe(count); expect(await starts(page)).toBe(0); await end(page, projection.page);
+  } finally { await projection?.context.close(); await f.close(); }
+});
+
+for (const superseding of ['END', 'replacement']) test(`late winner response after ${superseding} never starts music`, async ({ page, context, browser, baseURL }) => {
+  const f = await finalFixture(1, true); let projection, hold;
+  try {
+    await guard(context); await login(page, f); projection = await display(browser, f, baseURL); await start(page, f); hold = await holdWinner(page); await step(page).click(); await expect.poll(hold.committed).toBe(true);
+    if (superseding === 'END') await f.call('endLiveSession', { sessionId: f.sessionId, expectedRevision: (await f.session()).revision }); else await replace(f);
+    const delivered = page.waitForResponse(response => response.url().endsWith('/controlFinalReveal')); hold.release(); await delivered; await flush(page);
+    await expect.poll(() => starts(page)).toBe(0); expect(await starts(projection.page)).toBe(0);
+    if (superseding === 'END') { await expect(projection.page.getByRole('heading', { name: 'Kvíz skončil', exact: true })).toBeVisible(); expect((await f.rawPublic()).finalReveal).toBeUndefined(); }
+    else { await expect(projection.page.getByRole('heading', { name: 'Celkové výsledky', exact: true })).toBeVisible(); expect((await f.rawPublic()).finalReveal.mode).toBe('intro'); }
+  } finally { hold?.release(); await projection?.context.close(); await f.close(); }
+});
+
+for (const viewport of [{ name: 'desktop', width: 1366, height: 768 }, { name: 'mobile', width: 390, height: 844 }]) test(`all first on multiple pages: blocked winner media, explicit retry, stop, reconnect and corrected version (${viewport.name})`, async ({ page, context, browser, baseURL }) => {
+  const f = await finalFixture(13, true, true); let projection;
+  try {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await guard(context); await login(page, f); projection = await display(browser, f, baseURL); await page.evaluate(() => { window.__winnerPlayer.deny = true; }); await start(page, f); await step(page).click();
+    await expect.poll(async () => (await f.rawPublic()).finalReveal.rank).toBe(1); await expect(page.getByRole('button', { name: 'Spustit video ručně', exact: true })).toBeVisible(); expect(await starts(page)).toBe(0);
+    await page.evaluate(() => { window.__winnerPlayer.deny = false; }); await page.getByRole('button', { name: 'Spustit video ručně', exact: true }).click(); await expect.poll(() => starts(page)).toBe(1);
+    await page.getByRole('button', { name: 'Zastavit hudbu', exact: true }).click(); await expect.poll(() => page.evaluate(() => window.__winnerPlayer.stops)).toBeGreaterThan(0);
+    expect(await page.evaluate(() => window.document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    const names = []; for (let p = 0; p < 3; p++) { if (p) await step(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.page).toBe(p); const raw = await f.rawPublic(); expect(raw.finalReveal.groupSize).toBe(13); names.push(...raw.finalReveal.rows.map(row => row.teamName)); }
+    expect(new Set(names).size).toBe(13); const version = (await f.rawPublic()).finalReveal.versionId;
+    await f.command('hide'); await expect(projection.page.locator('.show-mode-canvas')).toHaveCount(0); await projection.context.setOffline(true); await expect(projection.page.getByRole('heading', { name: 'Projektor není připojen', exact: true })).toBeVisible(); await projection.context.setOffline(false);
+    await f.command('resume'); await expect(projection.page.locator('.sm-winner')).toBeVisible(); expect(await starts(page)).toBe(1); await f.score(0, 0, 1); expect((await f.rawPublic()).finalReveal.versionId).toBe(version);
+    await replace(f); await expect(projection.page.getByRole('heading', { name: 'Celkové výsledky', exact: true })).toBeVisible(); expect((await f.rawPublic()).finalReveal.versionId).not.toBe(version); expect((await f.db.collection(`sessions/${f.sessionId}/finalVersions`).get()).size).toBe(2);
+  } finally { await projection?.context.close(); await f.close(); }
+});
+
+test('rejected and late hidden winner commands stay silent; stale replacement preview is rejected by the real backend', async ({ page, context, browser, baseURL }) => {
+  const f = await finalFixture(1, true); let projection, hold;
+  try {
+    await guard(context); await login(page, f); projection = await display(browser, f, baseURL); await start(page, f);
+    await page.route('**/controlFinalReveal', async route => { const body = route.request().postDataJSON(); if (body?.data?.action !== 'reveal') return route.continue(); body.data.expectedRevision = 0; const response = await route.fetch({ postData: JSON.stringify(body) }); await route.fulfill({ response }); });
+    await step(page).click(); await expect(controls(page).getByRole('alert')).toBeVisible(); expect(await starts(page)).toBe(0); expect((await f.rawPublic()).finalReveal.mode).toBe('intro'); await page.unroute('**/controlFinalReveal');
+    hold = await holdWinner(page); await step(page).click(); await expect.poll(hold.committed).toBe(true); await f.command('hide'); hold.release(); await expect(projection.page.locator('.show-mode-canvas')).toHaveCount(0); await flush(page); expect(await starts(page)).toBe(0); await hold.remove();
+    await f.command('resume'); await expect(projection.page.locator('.sm-winner')).toBeVisible(); expect(await starts(page)).toBe(0);
+    const stale = await f.previewFinal(); await f.score(0, 0, 1); await expect(replace(f, stale)).rejects.toMatchObject({ code: 'functions/aborted' }); expect(await starts(page)).toBe(0);
+  } finally { hold?.release(); await projection?.context.close(); await f.close(); }
+});
+
+test('current winner media fades, stops and restarts explicitly; table and END clean up without remote playback', async ({ page, context, browser, baseURL }) => {
+  const f = await finalFixture(1, true); let projection;
+  try {
+    await guard(context); await login(page, f); const other = await context.newPage(); await other.goto('/admin/live/' + f.sessionId); projection = await display(browser, f, baseURL); await start(page, f); await step(page).click(); await expect.poll(() => starts(page)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__winnerPlayer.volumes.at(-1))).toBe(100); expect(await page.evaluate(() => window.__winnerPlayer.volumes[0])).toBe(0); expect(await page.evaluate(() => window.__winnerPlayer.startsAt[0])).toBe(30);
+    expect(await starts(other)).toBe(0); expect(await starts(projection.page)).toBe(0); await page.getByRole('button', { name: 'Zastavit hudbu', exact: true }).click(); await expect.poll(() => page.evaluate(() => window.__winnerPlayer.stops)).toBe(1);
+    await page.getByRole('button', { name: 'Spustit hudbu', exact: true }).click(); await expect.poll(() => starts(page)).toBe(2); await step(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.mode).toBe('table');
+    await end(page, projection.page); await expect.poll(() => page.evaluate(() => window.__winnerPlayer.active)).toBe(0); expect((await f.rawPublic()).finalReveal).toBeUndefined(); await page.reload(); expect(await starts(page)).toBe(0);
+  } finally { await projection?.context.close(); await f.close(); }
+});
+
+// Delay genuine Firestore stream bytes, retaining the original ordering race.
 async function delayFirestoreStream(context) {
   await context.addInitScript(() => {
     window.__holdFirestore = false; window.__heldChunks = 0;
@@ -47,245 +176,27 @@ async function delayFirestoreStream(context) {
     window.fetch = async (...args) => {
       const response = await nativeFetch(...args), url = String(args[0] instanceof Request ? args[0].url : args[0]);
       if (!url.includes('/Listen/channel') || !response.body) return response;
-      const reader = response.body.getReader();
-      const body = new ReadableStream({
-        async pull(controller) {
-          const chunk = await reader.read();
-          if (window.__holdFirestore) { window.__heldChunks++; await new Promise(resolve => releases.push(resolve)); }
-          if (chunk.done) controller.close(); else controller.enqueue(chunk.value);
-        }, cancel(reason) { return reader.cancel(reason); },
-      });
+      const reader = response.body.getReader(), body = new ReadableStream({ async pull(controller) { const chunk = await reader.read(); if (window.__holdFirestore) { window.__heldChunks++; await new Promise(resolve => releases.push(resolve)); } if (chunk.done) controller.close(); else controller.enqueue(chunk.value); }, cancel(reason) { return reader.cancel(reason); } });
       return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
     };
     window.__releaseFirestore = () => { window.__holdFirestore = false; releases.splice(0).forEach(resolve => resolve()); };
   });
 }
-async function login(page, fixture) {
-  await page.goto('/admin/login'); await page.getByLabel('E-mail').fill(fixture.login.email); await page.getByLabel('Heslo').fill(fixture.login.password);
-  await page.getByRole('button', { name: 'Přihlásit se' }).click(); await expect(page).toHaveURL(/\/admin$/);
-  await page.goto('/admin/live/' + fixture.sessionId);
-}
-const panel = page => page.getByRole('region', { name: 'Ovládání finálního vyhlášení' });
-const reveal = page => panel(page).getByRole('button', { name: 'Odhalit další umístění' });
-async function prepare(page) { await panel(page).getByRole('button', { name: 'Načíst konečný náhled' }).click(); await expect(panel(page).getByRole('heading', { name: 'Konečný náhled — zatím nepotvrzeno' })).toBeVisible(); }
-async function start(page) { await prepare(page); await panel(page).getByRole('button', { name: 'Zahájit vyhlášení' }).click(); }
-async function display(browser, fixture) {
-  const context = await browser.newContext({ baseURL: 'http://127.0.0.1:5195', viewport: { width: 1920, height: 1080 } });
-  await guard(context); const page = await context.newPage(); await page.goto('/projector/' + fixture.sessionId);
-  return { context, page };
-}
-async function end(page, projector) {
-  await page.getByRole('button', { name: 'Ukončit kvíz', exact: true }).click();
-  await expect(projector.getByRole('heading', { name: 'Kvíz skončil' })).toBeVisible();
-}
-test('three-round finale: two panels, referee, private preview, each raw public group, initiating sound and manual END', async ({ page, context, browser }) => {
-  const f = await finalFixture(); let projection, refContext;
+for (const superseding of ['none', 'hide', 'END', 'replacement', 'navigation', 'table']) test(`winner confirmation with stale Firestore listener: ${superseding}`, async ({ page, context, browser, baseURL }) => {
+  const f = await finalFixture(1, true); let projection, hold;
   try {
-    await guard(context); await login(page, f);
-    const other = await context.newPage(); await other.goto('/admin/live/' + f.sessionId);
-    projection = await display(browser, f); const projector = projection.page;
-    // Last recap remains operable before irreversible END.
-    await f.call('goToSlide', { sessionId: f.sessionId, expectedRevision: (await f.session()).revision, position: 5 });
-    await expect(page.locator('[data-current-position="5"]')).toBeVisible();
-    const preview = await f.previewFinal();
-    await prepare(page); expect((await f.rawPublic()).finalReveal).toBeUndefined();
-    await expect(projector.getByRole('article', { name: 'Finální vyhlášení' })).toHaveCount(0);
-    await panel(page).getByRole('button', { name: 'Zahájit vyhlášení' }).click();
-    await expect(projector.getByRole('heading', { name: 'Děkujeme za hru' })).toBeVisible(); assertFinalPayload(await f.rawPublic(), [], 'intro');
-    await expect(panel(page).getByRole('button', { name: 'Zobrazit celé konečné pořadí' })).toBeDisabled();
-    await projector.evaluate(sessionId => { const c = new BroadcastChannel('filmovy-kviz-projector-' + sessionId); c.postMessage({ type: 'public-state', state: { sessionId, revision: 99999, finalReveal: { mode: 'table', rows: [{ rank: 1, teamName: 'FORGED WINNER', halfPoints: 999 }] } } }); c.close(); }, f.sessionId);
-    await expect(projector.getByText('FORGED WINNER')).toHaveCount(0);
-    await reveal(page).click(); await expect(projector.getByRole('heading', { name: 'Gratulujeme', exact: true })).toBeVisible();
-    await expect(projector.locator('.final-canvas .final-rank')).toHaveText('4. místo · sdílené umístění');
-    assertFinalPayload(await f.rawPublic(), preview.rows.filter(r => r.rank === 4).slice(0, 8), 'group');
-    await panel(page).getByRole('button', { name: 'Další stránka finále' }).click(); await expect(projector.getByText('Strana 2 z 2 · 4. místo')).toBeVisible();
-    assertFinalPayload(await f.rawPublic(), preview.rows.filter(r => r.rank === 4).slice(8), 'group');
-    const before = await f.rawPublic(), grant = await f.referee();
-    refContext = await browser.newContext({ baseURL: 'http://127.0.0.1:5195' }); await guard(refContext); const referee = await refContext.newPage();
-    await referee.goto('/referee/' + grant.eventId + '#access=' + grant.accessId + '&key=' + grant.key);
-    await referee.getByRole('combobox').selectOption('r3');
-    await referee.getByLabel('Body — Alfa', { exact: true }).fill('5,5'); await referee.getByLabel('Důvod opravy — Alfa').fill('Synthetic final correction');
-    await referee.getByRole('region', { name: 'Alfa', exact: true }).getByRole('button', { name: 'Uložit', exact: true }).click();
-    await expect(referee.getByRole('region', { name: 'Alfa', exact: true })).toContainText('Uložení potvrzeno serverem.');
-    expect(await f.rawPublic()).toEqual(before); await expect(panel(page).getByRole('alert')).toContainText('Podklady se změnily');
-    for (const rank of [3, 2, 1]) { await reveal(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.rank).toBe(rank); assertFinalPayload(await f.rawPublic(), preview.rows.filter(r => r.rank === rank), 'group'); }
-    await expect(projector.getByRole('heading', { name: 'Vítězný tým', exact: true })).toBeVisible();
-    await expect.poll(() => page.evaluate(() => window.__audioStarts)).toBe(7);
-    expect(await other.evaluate(() => window.__audioStarts)).toBe(0); expect(await projector.evaluate(() => window.__audioStarts)).toBe(0); expect(await referee.evaluate(() => window.__audioStarts)).toBe(0);
-    await expect(page.getByRole('button', { name: 'Ukončit kvíz', exact: true })).toBeEnabled();
-    await page.reload(); await expect(panel(page).getByText(/Potvrzená verze/)).toBeVisible(); expect(await page.evaluate(() => window.__audioStarts)).toBe(0);
-    await panel(page).getByRole('button', { name: 'Zobrazit celé konečné pořadí' }).click(); await expect(projector.getByRole('article', { name: 'Konečné pořadí' })).toBeVisible(); assertFinalPayload(await f.rawPublic(), preview.rows.slice(0, 8), 'table');
-    await panel(page).getByRole('button', { name: 'Další stránka finále' }).click(); await expect(projector.getByText(/Strana 2 z 2/)).toBeVisible(); expect(await page.evaluate(() => window.__audioStarts)).toBe(0);
-    await end(page, projector); await projector.reload(); await page.reload(); await expect(projector.getByRole('heading', { name: 'Kvíz skončil' })).toBeVisible(); expect((await f.rawPublic()).finalReveal).toBeUndefined();
-    expect(await page.evaluate(() => window.__audioStarts)).toBe(0); await expect(panel(page).getByRole('button', { name: 'Přehrát fanfáru ručně' })).toBeDisabled();
-  } finally { await refContext?.close(); await projection?.context.close(); await f.close(); }
-});
-
-test('lost winner response: explicit retry acknowledges one receipt without another reveal or sound', async ({ page, context, browser }) => {
-  const f = await finalFixture(1, true); let projection;
-  try {
-    await guard(context); await login(page, f); projection = await display(browser, f); await start(page);
-    await expect(projection.page.getByRole('heading', { name: 'Děkujeme za hru' })).toBeVisible();
-    await page.route('**/controlFinalReveal', async route => {
-      if (route.request().postDataJSON()?.data?.action !== 'reveal') return route.continue();
-      await route.fetch(); await route.abort('failed');
-    });
-    await reveal(page).click(); await expect(projection.page.getByRole('heading', { name: 'Vítězný tým', exact: true })).toBeVisible();
-    await expect(panel(page).getByRole('button', { name: 'Zopakovat nepotvrzený příkaz' })).toBeVisible();
-    const count = (await f.db.collection(`sessions/${f.sessionId}/finalOperations`).get()).size;
-    const before = await f.rawPublic(); expect(await page.evaluate(() => window.__audioStarts)).toBe(0);
-    await page.unroute('**/controlFinalReveal'); await panel(page).getByRole('button', { name: 'Zopakovat nepotvrzený příkaz' }).click();
-    await expect(panel(page).getByRole('button', { name: 'Zopakovat nepotvrzený příkaz' })).toHaveCount(0);
-    expect(await f.rawPublic()).toEqual(before); expect((await f.db.collection(`sessions/${f.sessionId}/finalOperations`).get()).size).toBe(count);
-    expect(await page.evaluate(() => window.__audioStarts)).toBe(0); await end(page, projection.page);
-  } finally { await projection?.context.close(); await f.close(); }
-});
-
-for (const superseding of ['END', 'replacement']) test(`late winner response after ${superseding} never plays`, async ({ page, context, browser }) => {
-  const f = await finalFixture(1, true); let projection, release;
-  try {
-    await guard(context); await login(page, f); const other = await context.newPage(); await other.goto('/admin/live/' + f.sessionId);
-    projection = await display(browser, f); await start(page); await expect(projection.page.getByRole('heading', { name: 'Děkujeme za hru' })).toBeVisible();
-    const held = new Promise(r => { release = r; }); let committed = false;
-    await page.route('**/controlFinalReveal', async route => {
-      if (route.request().postDataJSON()?.data?.action !== 'reveal') return route.continue();
-      const response = await route.fetch(); committed = true; await held; await route.fulfill({ response });
-    });
-    await reveal(page).click(); await expect.poll(() => committed).toBe(true);
-    await expect(projection.page.getByRole('heading', { name: 'Vítězný tým', exact: true })).toBeVisible();
-    if (superseding === 'END') await end(other, projection.page);
-    else {
-      await prepare(other); await panel(other).getByRole('checkbox', { name: /Potvrzuji nahrazení/ }).check();
-      await panel(other).getByRole('button', { name: 'Nahradit finále a začít znovu' }).click(); await expect(projection.page.getByRole('heading', { name: 'Děkujeme za hru' })).toBeVisible();
-    }
-    const delivered = page.waitForResponse(r => r.url().endsWith('/controlFinalReveal') && r.request().postDataJSON()?.data?.action === 'reveal');
-    release(); await delivered; await expect(panel(page)).toHaveAttribute('aria-busy', 'false');
-    if (superseding === 'END') await expect(panel(page).getByText('Session je ukončená. Finále nelze obnovit.')).toBeVisible();
-    else await expect(reveal(page)).toBeEnabled();
-    expect(await page.evaluate(() => window.__audioStarts)).toBe(0); expect(await other.evaluate(() => window.__audioStarts)).toBe(0);
-    if (superseding !== 'END') await end(other, projection.page);
-  } finally { release?.(); await projection?.context.close(); await f.close(); }
-});
-
-test('all first on multiple pages: denied audio, manual retry, STOP, hide/reconnect/resume, explicit corrected version and long names', async ({ page, context, browser }) => {
-  const f = await finalFixture(10, false, true); let projection;
-  try {
-    for (let i = 0; i < 10; i++) await f.db.doc(`events/${f.eventId}/registrations/${f.teamIds[i]}`).update({ teamName: `Dlouhý název týmu ${String(i + 1).padStart(2,'0')} — Přátelé filmových příběhů a nečekaných zápletek` });
-    await guard(context); await login(page, f); projection = await display(browser, f); const projector = projection.page;
-    await start(page); await expect(projector.getByRole('heading', { name: 'Děkujeme za hru' })).toBeVisible();
-    await page.evaluate(() => { window.__denyAudio = true; }); await reveal(page).click();
-    await expect(projector.getByRole('heading', { name: 'Vítězné týmy' })).toBeVisible();
-    await expect(panel(page).getByText('Prohlížeč zvuk nepovolil. Zkuste tlačítko Přehrát fanfáru ručně.')).toBeVisible(); expect(await page.evaluate(() => window.__audioStarts)).toBe(0);
-    await page.evaluate(() => { window.__denyAudio = false; }); await panel(page).getByRole('button', { name: 'Přehrát fanfáru ručně' }).click();
-    await expect.poll(() => page.evaluate(() => window.__audioStarts)).toBe(7); await panel(page).getByRole('button', { name: 'STOP fanfáry' }).click(); await expect(panel(page).getByText('Fanfára nehraje.', { exact: true })).toBeVisible();
-    mkdirSync('.local-data/final-reveal/screenshots', { recursive: true });
-    for (const viewport of [{ width:1920,height:1080 }, { width:1280,height:720 }]) {
-      await projector.setViewportSize(viewport); const last = await projector.locator('.final-canvas li').last().boundingBox();
-      expect(last.y + last.height).toBeLessThanOrEqual(viewport.height); expect(await projector.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-      await projector.screenshot({ path: `.local-data/final-reveal/screenshots/projector-${viewport.width}.png` });
-    }
-    await page.setViewportSize({ width:768,height:900 }); await expect(panel(page).getByRole('button', { name: 'Skrýt finále' })).toBeVisible(); expect(await panel(page).evaluate(e => e.getBoundingClientRect().width <= innerWidth)).toBe(true);
-    await page.screenshot({ path: '.local-data/final-reveal/screenshots/moderator-768.png' });
-    await panel(page).getByRole('button', { name: 'Další stránka finále' }).click(); await expect(projector.getByText('Strana 2 z 2 · 1. místo')).toBeVisible(); expect(await page.evaluate(() => window.__audioStarts)).toBe(7);
-    await projection.context.setOffline(true); await expect(projector.getByText('Projektor není připojen', { exact: true })).toBeVisible();
-    await panel(page).getByRole('button', { name: 'Skrýt finále' }).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal).toBeUndefined();
-    await projection.context.setOffline(false); await expect(projector.getByText('Synthetic prompt', { exact: true })).toBeVisible();
-    await panel(page).getByRole('button', { name: 'Pokračovat ve stejné verzi' }).click(); await expect(projector.getByText('Strana 2 z 2 · 1. místo')).toBeVisible(); expect(await page.evaluate(() => window.__audioStarts)).toBe(7);
-    await f.score(0, 2, 1); await prepare(page); await panel(page).getByRole('checkbox', { name: /Potvrzuji nahrazení/ }).check();
-    await panel(page).getByRole('button', { name: 'Nahradit finále a začít znovu' }).click(); await expect(projector.getByRole('heading', { name: 'Děkujeme za hru' })).toBeVisible(); assertFinalPayload(await f.rawPublic(), [], 'intro');
-    expect((await f.session()).finalReveal.revealedCount).toBe(0); expect((await f.db.collection(`sessions/${f.sessionId}/finalVersions`).get()).size).toBe(2);
-    await end(page, projector);
-  } finally { await projection?.context.close(); await f.close(); }
-});
-
-test('late successful winner response after another panel hides it cannot play; rejected command also stays silent', async ({ page, context, browser }) => {
-  const f = await finalFixture(1, true); let projection, release;
-  try {
-    await guard(context); await login(page, f); const other = await context.newPage(); await other.goto('/admin/live/' + f.sessionId);
-    projection = await display(browser, f); await start(page); await expect(projection.page.getByRole('heading', { name: 'Děkujeme za hru' })).toBeVisible();
-    await page.route('**/controlFinalReveal', route => route.fulfill({ status: 409, contentType: 'application/json', body: JSON.stringify({ error: { status: 'ABORTED', message: 'Synthetic concurrent command' } }) }));
-    await reveal(page).click(); await expect(panel(page).getByRole('alert').filter({ hasText: 'Náhled, verze nebo prezentace se změnily' })).toBeVisible(); expect(await page.evaluate(() => window.__audioStarts)).toBe(0);
-    await page.unroute('**/controlFinalReveal');
-    const held = new Promise(r => { release = r; }); let committed = false;
-    await page.route('**/controlFinalReveal', async route => {
-      if (route.request().postDataJSON()?.data?.action !== 'reveal') return route.continue();
-      const response = await route.fetch(); committed = true; await held; await route.fulfill({ response });
-    });
-    await reveal(page).click(); await expect.poll(() => committed).toBe(true); await expect(projection.page.getByRole('heading', { name: 'Vítězný tým', exact: true })).toBeVisible();
-    await panel(other).getByRole('button', { name: 'Skrýt finále' }).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal).toBeUndefined(); release();
-    await expect(panel(page).getByRole('button', { name: 'Pokračovat ve stejné verzi' })).toBeEnabled(); expect(await page.evaluate(() => window.__audioStarts)).toBe(0);
-    await page.unroute('**/controlFinalReveal'); await panel(page).getByRole('button', { name: 'Pokračovat ve stejné verzi' }).click(); await expect(projection.page.getByRole('heading', { name: 'Vítězný tým', exact: true })).toBeVisible();
-    expect(await page.evaluate(() => window.__audioStarts)).toBe(0); expect(await other.evaluate(() => window.__audioStarts)).toBe(0);
-    await prepare(page); await f.score(0, 0, 1); await panel(page).getByRole('checkbox', { name: /Potvrzuji nahrazení/ }).check(); await panel(page).getByRole('button', { name: 'Nahradit finále a začít znovu' }).click();
-    await expect(panel(page).getByRole('alert').filter({ hasText: 'Náhled, verze nebo prezentace se změnily' })).toBeVisible(); expect(await page.evaluate(() => window.__audioStarts)).toBe(0);
-    await end(other, projection.page);
-  } finally { release?.(); await projection?.context.close(); await f.close(); }
-});
-
-
-test('native output gain, mute, STOP, explicit complete table and END after confirmed finale', async ({page,context,browser}) => {
-  const f = await finalFixture(4); let projection;
-  try {
-    await guard(context); await login(page,f); const other = await context.newPage(); await other.goto('/admin/live/'+f.sessionId);
-    projection = await display(browser,f); const projector = projection.page;
-    await start(page); await expect(projector.getByRole('heading',{name:'Děkujeme za hru'})).toBeVisible();
-    const preview = await f.previewFinal();
-    for (const rank of [3,2,1]) {
-      await reveal(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.rank).toBe(rank);
-      assertFinalPayload(await f.rawPublic(),preview.rows.filter(r=>r.rank===rank),'group');
-    }
-    await expect.poll(async () => (await audioGraph(page)).starts).toBe(7);
-    expect((await audioGraph(page)).gains).toBe(8); expect((await audioGraph(page)).connected).toBe(true);
-    expect(await other.evaluate(()=>window.__audioStarts)).toBe(0); expect(await projector.evaluate(()=>window.__audioStarts)).toBe(0);
-    await expect.poll(async () => (await audioGraph(page)).ended).toBe(7);
-    expect((await f.session()).status).toBe('active'); let starts=7;
-    const manual = panel(page).getByRole('button',{name:'Přehrát fanfáru ručně'}), mute = panel(page).getByLabel('Ztlumit fanfáru',{exact:true});
-    const play = async () => {await manual.click();starts+=7;await expect.poll(async()=>(await audioGraph(page)).starts).toBe(starts);expect((await audioGraph(page)).connected).toBe(true);};
-    const stop = async () => {await panel(page).getByRole('button',{name:'STOP fanfáry'}).click();expect((await audioGraph(page)).connected).toBe(false);};
-    // Each active-gain assertion gets a fresh short graph, not an already-ended node.
-    await play();await panel(page).getByLabel('Hlasitost fanfáry').press('ArrowRight');
-    await expect.poll(async () => (await audioGraph(page)).gain).toBeCloseTo(.13,4);expect((await audioGraph(page)).starts).toBe(starts);await stop();
-    await mute.check();await play();expect((await audioGraph(page)).gain).toBe(0);
-    await mute.uncheck();await expect.poll(async () => (await audioGraph(page)).gain).toBeCloseTo(.13,4);expect((await audioGraph(page)).starts).toBe(starts);await stop();
-    await mute.check();await play();expect((await audioGraph(page)).gain).toBe(0);
-    // Reproduce the old helper's failure: unmute after natural cleanup cannot alter an abandoned gain.
-    await expect.poll(async () => (await audioGraph(page)).connected).toBe(false);
-    await mute.uncheck();expect((await audioGraph(page)).gain).toBe(0);expect((await audioGraph(page)).starts).toBe(starts);
-    await play();expect((await audioGraph(page)).gain).toBeCloseTo(.13,4);await stop();
-    await mute.check();await play();await stop();await mute.uncheck();
-    await panel(page).getByRole('button',{name:'Zobrazit celé konečné pořadí'}).click();
-    await expect(projector.getByRole('article',{name:'Konečné pořadí'})).toBeVisible();assertFinalPayload(await f.rawPublic(),preview.rows,'table');expect((await audioGraph(page)).starts).toBe(starts);
-    await play();await panel(page).getByRole('button',{name:'Skrýt finále'}).click();expect((await audioGraph(page)).connected).toBe(false);
-    await panel(page).getByRole('button',{name:'Pokračovat ve stejné verzi'}).click();await expect(projector.getByRole('article',{name:'Konečné pořadí'})).toBeVisible();expect((await audioGraph(page)).starts).toBe(starts);
-    await play();await end(page,projector);expect((await audioGraph(page)).connected).toBe(false);expect((await f.rawPublic()).finalReveal).toBeUndefined();
-    await page.reload();await projector.reload();await expect(projector.getByRole('heading',{name:'Kvíz skončil'})).toBeVisible();
-    await expect(panel(page).getByText('Session je ukončená. Finále nelze obnovit.')).toBeVisible();expect((await audioGraph(page)).starts).toBe(0);expect((await f.rawPublic()).finalReveal).toBeUndefined();
-  } finally {await projection?.context.close();await f.close();}
-});
-
-for (const superseding of ['none','hide','END','replacement','STOP','table']) test(`winner confirmation with stale Firestore listener: ${superseding}`, async ({page,context,browser}) => {
-  const f=await finalFixture(4);let projection,releaseResponse;
-  try {
-    await delayFirestoreStream(context);await guard(context);await login(page,f);projection=await display(browser,f);
-    await start(page);await expect(projection.page.getByRole('heading',{name:'Děkujeme za hru'})).toBeVisible();
-    for(const rank of [3,2]){await reveal(page).click();await expect.poll(async()=>(await f.rawPublic()).finalReveal.rank).toBe(rank);await expect(panel(page)).toHaveAttribute('aria-busy','false');}
-    let committed=false,winner;const held=new Promise(resolve=>{releaseResponse=resolve;});
-    await page.route('**/controlFinalReveal',async route=>{const response=await route.fetch();winner=(await response.json()).result;committed=true;await held;await route.fulfill({response});});
-    await page.evaluate(()=>{window.__holdFirestore=true;});await reveal(page).click();await expect.poll(()=>committed).toBe(true);expect(winner.winnerRevealed).toBe(true);
-    await expect.poll(()=>page.evaluate(()=>window.__heldChunks)).toBeGreaterThan(0);expect((await audioGraph(page)).starts).toBe(0);
-    if(superseding==='hide')await f.command('hide');
-    if(superseding==='END')await f.call('endLiveSession',{sessionId:f.sessionId,expectedRevision:(await f.session()).revision});
-    if(superseding==='replacement')await f.startFinal(await f.previewFinal(),'replace');
-    if(superseding==='table')await f.command('table');
-    if(superseding==='STOP')await panel(page).getByRole('button',{name:'STOP fanfáry'}).click();
-    const delivered=page.waitForResponse(r=>r.url().endsWith('/controlFinalReveal'));releaseResponse();await delivered;await expect(panel(page)).toHaveAttribute('aria-busy','false');
-    if(superseding==='none') {
-      // This must succeed BEFORE releasing the stale listen, from a genuine server read.
-      await expect.poll(async()=>(await audioGraph(page)).starts).toBe(7);expect((await audioGraph(page)).gains).toBe(8);expect((await f.session()).revision).toBe(winner.revision);
-    }
-    await page.evaluate(()=>window.__releaseFirestore());
-    await expect(panel(page)).toContainText(superseding==='END'?'Session je ukončená':superseding==='replacement'?'odhaleno 0/3':superseding==='hide'?'skrytá':'odhaleno 3/3');
-    if(superseding==='none'){await expect.poll(async()=>(await audioGraph(page)).ended).toBe(7);expect((await audioGraph(page)).starts).toBe(7);}
-    else{await page.waitForTimeout(150);expect((await audioGraph(page)).starts).toBe(0);}
-  } finally {releaseResponse?.();await page.evaluate(()=>window.__releaseFirestore?.()).catch(()=>{});await projection?.context.close();await f.close();}
+    await delayFirestoreStream(context); await guard(context); await login(page, f); projection = await display(browser, f, baseURL); await start(page, f); hold = await holdWinner(page);
+    await page.evaluate(() => { window.__holdFirestore = true; }); await step(page).click(); await expect.poll(hold.committed).toBe(true); expect(hold.response().winnerRevealed).toBe(true); await expect.poll(() => page.evaluate(() => window.__heldChunks)).toBeGreaterThan(0); expect(await starts(page)).toBe(0);
+    if (superseding === 'hide') await f.command('hide');
+    if (superseding === 'END') await f.call('endLiveSession', { sessionId: f.sessionId, expectedRevision: (await f.session()).revision });
+    if (superseding === 'replacement') await replace(f);
+    if (superseding === 'table') await f.command('table');
+    if (superseding === 'navigation') await page.goto('/admin');
+    if (superseding !== 'navigation') { const delivered = page.waitForResponse(response => response.url().endsWith('/controlFinalReveal')); hold.release(); await delivered; }
+    else hold.release();
+    if (superseding === 'none') await expect.poll(() => starts(page)).toBe(1);
+    await page.evaluate(() => window.__releaseFirestore()); await flush(page);
+    if (superseding === 'none') { await expect(page.getByRole('region', { name: 'Hudba pro vítěze', exact: true })).toBeVisible(); expect(await starts(page)).toBe(1); }
+    else { await expect(page.getByRole('region', { name: 'Hudba pro vítěze', exact: true })).toHaveCount(0); expect(await starts(page)).toBe(0); }
+  } finally { hold?.release(); await page.evaluate(() => window.__releaseFirestore?.()).catch(() => {}); await projection?.context.close(); await f.close(); }
 });

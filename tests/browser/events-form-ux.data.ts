@@ -2,13 +2,15 @@ import type { EventFormValues, EventMutationResponse, EventRecord } from '../../
 import type { Access } from '../../apps/web/src/features/referee/api';
 import { canMutateEvent, defaultScoringConfiguration, validateEventConfiguration } from '../../functions/src/events/model';
 import { pragueInstant } from '../../packages/quiz-domain/src/event-management';
+import { eventFormPricing, mapEventPricing } from '../../apps/web/src/features/events/eventPricing';
 
 export function eventFormRecord(): EventRecord {
   return {
     id: 'synthetic-event', title: 'Syntetická testovací akce', description: '', disposition: 'active',
     startsAt: new Date('2030-10-20T17:00:00Z'), timeZone: 'Europe/Prague',
     venue: { name: 'Testovací sál', publicLocation: 'Testovací lokalita' },
-    teamCapacity: 20, peopleCapacity: 120, teamSizeMin: 2, teamSizeMax: 6,
+    pricing: { mode: 'per-team', amountCzk: 350 },
+    teamCapacity: 20, peopleCapacity: 80, teamSizeMin: 2, teamSizeMax: 4,
     acceptedTeams: 0, acceptedPeople: 0, registrationPublished: false,
     registrationStatus: 'scheduled', lifecycleStatus: 'draft', revision: 2,
     scoring: { ...defaultScoringConfiguration },
@@ -21,6 +23,7 @@ function configuration(values: EventFormValues) {
     title: values.title.trim(), description: (values.description ?? '').trim(),
     startsAt: new Date(pragueInstant(values.startsAt, values.utcOffset)), timeZone: 'Europe/Prague',
     venue: { name: values.venueName.trim(), publicLocation: values.publicLocation.trim() },
+    pricing: mapEventPricing(eventFormPricing(values)),
     teamCapacity: values.teamCapacity, peopleCapacity: values.peopleCapacity,
     teamSizeMin: values.teamSizeMin, teamSizeMax: values.teamSizeMax,
   };
@@ -58,10 +61,10 @@ export function createEventFormData(initial: EventRecord | null = eventFormRecor
       if (record.revision !== revision) throw new Error('Event changed in another client.');
       if (!canMutateEvent(record.lifecycleStatus)) throw new Error('Unsupported event lifecycle in the form fixture.');
       const fields = configuration(values);
-      if (fields.teamCapacity < record.acceptedTeams || fields.peopleCapacity < record.acceptedPeople) {
+      if (fields.teamCapacity < record.acceptedTeams) {
         throw new Error('Capacity cannot be lower than accepted registrations.');
       }
-      const full = record.acceptedTeams >= fields.teamCapacity || record.acceptedPeople >= fields.peopleCapacity;
+      const full = record.acceptedTeams >= fields.teamCapacity;
       const registrationStatus = record.registrationStatus === 'open' && full ? 'full'
         : record.registrationStatus === 'full' && !full ? 'open' : record.registrationStatus;
       record = { ...record, ...fields, registrationStatus, revision: record.revision + 1 };

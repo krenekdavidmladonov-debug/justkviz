@@ -1,7 +1,11 @@
-import React from 'react';
+// @vitest-environment happy-dom
+
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, test, vi } from 'vitest';
 
+import { UnsavedChangesDialog } from '../apps/web/src/features/editor/EditorDialogs';
 import { EditorPreview, QuestionForm, SystemSectionForm } from '../apps/web/src/features/editor/EditorForms';
 import { practiceSlides } from '../apps/web/src/features/editor/QuizPractice';
 import {
@@ -20,6 +24,39 @@ import {
   hasSaveBlockingIssues,
   validateQuestion,
 } from '../apps/web/src/features/editor/validation';
+
+test('Escape cancels the unsaved changes dialog only while it is idle', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  const host = document.body.appendChild(document.createElement('div'));
+  const root = createRoot(host);
+  const onCancel = vi.fn(), onSave = vi.fn(), onDiscard = vi.fn();
+  try {
+    const render = (busy: boolean) => act(async () => {
+      root.render(<UnsavedChangesDialog busy={busy} onCancel={onCancel} onSave={onSave} onDiscard={onDiscard} />);
+    });
+    const escape = async () => {
+      const event = new Event('cancel', { cancelable: true });
+      await act(async () => { host.querySelector('dialog')?.dispatchEvent(event); });
+      expect(event.defaultPrevented).toBe(true);
+    };
+    await render(true);
+    expect(host.querySelector('dialog')?.open).toBe(true);
+    expect(host.querySelectorAll('button:disabled')).toHaveLength(3);
+    await escape();
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(host.querySelector('dialog')?.open).toBe(true);
+
+    await render(false);
+    await escape();
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onDiscard).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    vi.unstubAllGlobals();
+  }
+});
 
 function slide(overrides: Partial<EditorSlide> = {}): EditorSlide {
   return {
@@ -172,7 +209,8 @@ describe('type-specific question forms and validation', () => {
     const html = renderQuestion(choiceImage);
     expect(html).toContain('Obrázek otázky');
     expect(html).toContain('ABCD – jedna možnost');
-    expect(html).toContain('Obrázek odpovědi (soukromý)');
+    expect(html).toContain('Odpověď po odhalení · fotografie přidána');
+    expect(html).not.toContain('https://images.example.test/answer.jpg');
   });
 
   test('validates required audio/video timing and parses human time', () => {

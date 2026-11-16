@@ -1,5 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 
+async function localOnly(context: import('@playwright/test').BrowserContext) { await context.route('**/*', route => { const url = new URL(route.request().url()); return ['http:', 'https:'].includes(url.protocol) && ['127.0.0.1', 'localhost'].includes(url.hostname) ? route.continue() : route.abort(); }); }
+test.beforeEach(async ({ context }) => { await localOnly(context); });
+
 async function login(page: Page, baseURL: string | undefined, email = 'admin@example.test') {
   await page.goto(`${baseURL}/admin/login`);
   await page.getByLabel('E-mail').fill(email);
@@ -24,9 +27,13 @@ async function createOpenEvent(page: Page, baseURL: string | undefined, title: s
   await page.getByRole('link', { name: 'Spravovat týmy a registrace' }).click();
   await page.getByLabel('Otevření').fill('2020-01-01T00:00');
   await page.getByLabel('Uzavření').fill('2030-01-01T00:00');
-  await page.getByLabel('Zveřejnit registraci').check();
   await page.getByRole('button', { name: 'Uložit nastavení' }).click();
   await expect(page.getByText('Nastavení registrací bylo uloženo.')).toBeVisible();
+  await page.goto(detailUrl);
+  await page.getByRole('button', { name: 'Zveřejnit a otevřít registrace', exact: true }).click();
+  const publication = page.getByRole('dialog');
+  await publication.getByRole('button', { name: 'Zveřejnit a otevřít registrace', exact: true }).click();
+  await expect(publication).toHaveCount(0);
   await page.getByRole('button', { name: 'Odhlásit se' }).click();
   await expect(page).toHaveURL(/\/admin\/login$/u);
   return eventId!;
@@ -34,7 +41,7 @@ async function createOpenEvent(page: Page, baseURL: string | undefined, title: s
 
 async function register(page: Page, baseURL: string | undefined, eventId: string, teamName: string, email: string) {
   await page.goto(`${baseURL}/events/${eventId}`);
-  await expect(page.getByRole('heading', { name: 'Registrace je otevřená' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Přihlásit tým', exact: true })).toBeVisible();
   await page.getByLabel('Název týmu').fill(teamName);
   await page.getByLabel('Počet členů').fill('4');
   await page.getByLabel('E-mail').fill(email);
@@ -46,7 +53,7 @@ test('public team registration returns only its secure management link', async (
   const eventId = await createOpenEvent(page, baseURL, 'Veřejná registrace E2E');
   await register(page, baseURL, eventId, 'Syntetický veřejný tým', 'public@example.test');
   const link = page.getByRole('link', { name: 'Spravovat registraci' });
-  await expect(link).toHaveAttribute('href', /registration=.*&token=/u);
+  expect(/registration=.*&token=/u.test(await link.getAttribute('href') ?? '')).toBe(true);
 });
 
 test('management link edits and idempotently soft-cancels its registration', async ({ page, baseURL }) => {
@@ -54,7 +61,7 @@ test('management link edits and idempotently soft-cancels its registration', asy
   await register(page, baseURL, eventId, 'Původní tým', 'manage@example.test');
   await page.getByRole('link', { name: 'Spravovat registraci' }).click();
   await expect(page.getByLabel('Počet členů')).toHaveAttribute('min', '2');
-  await expect(page.getByLabel('Počet členů')).toHaveAttribute('max', '6');
+  await expect(page.getByLabel('Počet členů')).toHaveAttribute('max', '4');
   await page.getByLabel('Název týmu').fill('Upravený tým');
   await page.getByLabel('Počet členů').fill('3');
   await page.getByRole('button', { name: 'Uložit změny' }).click();
@@ -89,7 +96,7 @@ for (const role of ['user', 'moderator']) {
     await login(page, baseURL, `${role}@example.test`);
     await page.goto(`${baseURL}${managementLink}`);
     await expect(page.getByLabel('Počet členů')).toHaveAttribute('min', '2');
-    await expect(page.getByLabel('Počet členů')).toHaveAttribute('max', '6');
+    await expect(page.getByLabel('Počet členů')).toHaveAttribute('max', '4');
     await page.getByLabel('Počet členů').fill('3');
     await page.getByRole('button', { name: 'Uložit změny' }).click();
     await expect(page.getByText('Registrace byla upravena.')).toBeVisible();

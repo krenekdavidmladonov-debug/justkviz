@@ -1,4 +1,4 @@
-export type PrintArtifactType = 'team-sheets' | 'answer-key' | 'score-table';
+export type PrintArtifactType = 'team-sheets' | 'organizer-sheets' | 'answer-key' | 'score-table';
 export type TeamSheetMode = 'generic' | 'single' | 'all';
 
 export interface PrintTeam {
@@ -8,6 +8,7 @@ export interface PrintTeam {
 
 export interface PrintPresentationOptions {
   readonly layout?: 'compact' | 'spacious';
+  readonly colorMode?: 'color' | 'grayscale';
   readonly showLogo?: boolean;
   readonly showInstructions?: boolean;
 }
@@ -20,7 +21,7 @@ export type PrintOptions = PrintPresentationOptions & (
       readonly teamId?: string;
     }
   | {
-      readonly artifactType: 'answer-key';
+      readonly artifactType: 'answer-key' | 'organizer-sheets';
       readonly disposition: 'inline' | 'attachment';
     }
   | {

@@ -9,3 +9,9 @@ Selection and shared in-memory content edits remain in the original form. Struct
 The existing revision-protected operations are reused. A cross-round move appends then performs adjacent moves to reach the requested position. A failure stops the sequence and reads the persisted order. Long moves are not atomic and can be partly applied; the error explains this. No backend, collection, authorization, snapshot or public projection changes.
 
 Verification: browser coverage exercises drag before/after questions in the left outline, moving between rounds with numbering, keyboard movement/focus, retaining unsaved content and interrupted-move recovery alongside save-all scenarios. Unit coverage checks acknowledged revisions and stopping on failure. Desktop native drag is covered; touch dragging is not claimed.
+
+The left outline's **Celé pořadí promítání** section lists the saved program,
+including standalone announcements and breaks. Move an announcement with its
+drag handle or the keyboard-accessible destination menu. The exact move uses
+one revision-checked transaction and preserves round membership. Automatic
+agendas follow the saved order of visible announcements and round headers.

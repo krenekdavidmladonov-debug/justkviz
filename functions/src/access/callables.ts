@@ -64,7 +64,7 @@ export const getMyAccess = onCall(options, async request => {
 export const listAccessUsers = onCall(options, async request => {
   await freshIdentity(request.auth);
   await authorize(request.auth, ['users.manage']);
-  const [members, invites] = await Promise.all([db().collection('memberships').limit(501).get(), db().collection('accessInvites').limit(501).get()]);
+  const [members, invites, control] = await Promise.all([db().collection('memberships').limit(501).get(), db().collection('accessInvites').limit(501).get(), db().doc('accessControl/state').get()]);
   if (members.size > 500 || invites.size > 500) throw new HttpsError('resource-exhausted', 'Seznam je příliš velký.');
   const users = [];
   // Auth returns identity metadata; hashes and credentials are never requested or returned.
@@ -75,7 +75,7 @@ export const listAccessUsers = onCall(options, async request => {
     users.push(...batch.map(d => { const p = byId.get(d.id); return { ...d.data(), uid: d.id, email: p?.email ?? '', displayName: p?.displayName ?? '', lastLoginAt: p?.metadata.lastSignInTime ?? null, emailVerified: p?.emailVerified ?? false }; }));
   }
   await authorize(request.auth, ['users.manage']);
-  return { users, invitations: invites.docs.map(d => invitationMetadata(d.id, d.data())) };
+  return { users, invitations: invites.docs.map(d => invitationMetadata(d.id, d.data())), collaborationEnabled: control.get('collaborationEnabled') === true };
 });
 function invitationMetadata(inviteId: string, data: Record<string, unknown>) {
   return { inviteId, email: data.email, grant: data.grant, version: data.version, createdBy: data.createdBy,
@@ -164,11 +164,17 @@ export const updateAccessMembership = onCall(options, async request => {
     return { version: nextVersion };
   });
 });
+function auditTime(value: unknown): string | null {
+  // Accept supported legacy ISO strings without rewriting history or inventing a time.
+  const date = value instanceof Timestamp ? value.toDate()
+    : typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/u.test(value) ? new Date(value) : null;
+  return date && Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
 export const listAccessAudit = onCall(options, async request => {
   await freshIdentity(request.auth); await authorize(request.auth, ['users.manage']);
   const entries = await db().collection('accessAudit').orderBy('at', 'desc').limit(100).get();
   await authorize(request.auth, ['users.manage']);
-  return entries.docs.map(d => ({ id: d.id, ...d.data(), at: (d.data().at as Timestamp).toDate().toISOString() }));
+  return entries.docs.map(d => ({ id: d.id, ...d.data(), at: auditTime(d.get('at')) }));
 });
 export const revokeMySessions = onCall(options, async request => {
   const { uid } = identity(request.auth);

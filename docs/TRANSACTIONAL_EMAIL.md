@@ -1,8 +1,40 @@
 # Registration transactional email
 
-This implements durable registration email intents, Czech templates, a shared delivery worker and organizer status. Source discovery defaults off. **Actual V2 staging on 2026-10-15:** the separately approved email Functions from `972ed719d8b9ae71fc8610d962dadf016b58b8b1` are active with `future-public-registration`, cutoff `2026-10-15T15:26:19.550Z` and queue `RUNNING`. One new isolated registration, its update and cancellation produced exactly three intents, each accepted on its first provider attempt; the owner separately confirmed all three in the mailbox. Evidence is preserved under `.local-data/final-closure/activation-972ed71/` (`deployment-verification.json`, `queue-resumed.json`, `FINAL_ACCEPTANCE.md`, `owner-inbox-confirmation.json`). The fresh `.local-data/product-stabilization/live-baseline-confirmed.json` read confirms the same deployed state. This does not activate organizational campaigns or authorize additional real test mail; the approved three-message test budget is consumed.
+## Organizer notifications (25 October 2026)
 
-The earlier [single-recipient staging execution](EMAIL_ACTIVATION_EXECUTION.md) is historical evidence, not the current queue policy. [Local verification](EMAIL_ACTIVATION_VALIDATION.md) remains separate from live evidence; [GMAIL_DELIVERY.md](GMAIL_DELIVERY.md) describes the delivery guarantee. The improved templates and update-link source described below are a **prepared stabilization change, not yet deployed**.
+The owner can separately enable an email for each newly accepted public online
+registration. The existing private outbox stores one deterministic
+`owner_{registrationId}` intent of type `registration-organizer-notification` in
+the same transaction as the registration. Receipt replays, manual teams, edits,
+cancellations and historical registrations create no organizer notification.
+The message includes the event, date, team and member count plus an authenticated
+admin roster link. It contains no team contact address or management capability.
+
+The trusted runtime binds `REGISTRATION_OWNER_NOTIFICATION_MODE=staging`,
+`REGISTRATION_OWNER_NOTIFICATION_RECIPIENT`,
+`REGISTRATION_OWNER_NOTIFICATION_OWNER_UID` and an independent exact ISO
+`REGISTRATION_OWNER_NOTIFICATION_ACTIVATED_AT` cutoff. Missing, disabled or invalid
+configuration turns organizer notifications off without blocking registrations.
+The existing V2 registration-email activation remains required. Local tests use
+`emulator` mode only with a guarded localhost Firestore emulator and demo project.
+The owner explicitly chooses the destination; the membership's historical email
+field is not used as the recipient. Deployment verifies the current owner identity.
+
+Dispatch and delivery recheck the exact recipient, UID, cutoff and trusted create
+provenance. Delivery verifies the canonical registration and current active
+membership with `event.read`, `event.contacts` and event scope, both while claiming
+the intent and immediately before sending. The admin link grants no access by
+itself. Organizer status stays on its own private intent and never overwrites the
+participant's `emailDelivery` summary. Existing conservative retry, lease and
+uncertain-outcome behavior applies independently to each message.
+
+Deploy only `deliverEmailTask`, `dispatchRegistrationEmail`, then
+`createEventRegistration`, enabling the producer last after both consumers are
+verified. Preserve identities, secrets, IAM, queue and all existing environment
+values. No client Rules, indexes, public data or Hosting release is required.
+Rollback restores the producer first, then the two consumers, including each
+recorded source and environment. It never rewrites registrations or replays mail.
+
 
 ## Domain operations
 
@@ -24,7 +56,7 @@ The server still issues a random 256-bit management token. Existing authorizatio
 
 Previously the raw token existed only at issuance, so a delivery retry could not reconstruct the same CTA. We now seal that **same token**, without issuing a second kind of management capability, into AES-256-GCM ciphertext in `events/{eventId}/emailSecrets/{intentId}`. A fresh 96-bit nonce and the exact intent path as authenticated additional data bind the envelope to its intended event/message. The envelope contains only version, key ID, nonce, ciphertext and authentication tag. It is separate from registration records and email audit and denied to **all** Firestore client roles. Only the trusted vault reconstructs the transient link. Its fragment keeps the token out of HTTP request paths and referrers.
 
-`TokenVault` accepts injected key material. The synthetic fixture remains behind **both** a `demo-*` project and an explicit localhost Firestore endpoint guard. Only an eligible email operation uses the vault; other cloud/default-off paths do not (`functions/src/registrations/callables.ts`). Default-off discovery declares no parameters/bindings; deployed 972ed71 binds the create keyring and four private-worker secrets by string names with invocation-only reads. Missing/malformed key material fails closed, with no plaintext or synthetic-key fallback. Retaining old key IDs preserves existing envelopes/receipts. Adding secrets alone does not enable email or grant wider rollout authority.
+Provider credentials require explicitly approved secret/vault bindings. Verify allowed scope and key identity/version when decrypting; plaintext credentials must never enter browser payloads, repository files, diagnostics or receipts.
 
 The prepared update-link extension binds the **existing** `EMAIL_TOKEN_KEYRING` to `updateEventRegistration` too. Only after valid token verification and a genuine eligible change does its transaction seal the same token under the new intent path and create an `emailSecrets` envelope atomically. Replays, no-ops, rejected tokens and ineligible registrations create none. No capability is rotated and no raw token/URL enters an intent, receipt or log. The worker reconstructs the update CTA in memory. Old update intents without an envelope still send without a CTA, using the same intent; malformed existing envelopes fail closed rather than silently removing their link. Confirmation still requires its envelope. Existing client Rules remain unchanged and deny every direct envelope read.
 
@@ -46,7 +78,7 @@ The registration's `emailDelivery` contains only the latest intent ID/type/statu
 
 `deliverRegistrationEmail` remains the one injected worker primitive. A Firestore creation trigger enqueues an ID-only task; the private task function loads the committed intent. The worker claims a two-minute lease, records processing, increments attempts and reconstructs MIME in memory. Gmail acceptance records sent. The prepared conservative policy retries only known temporary non-acceptance (429/limit 403) or failures before send (such as OAuth refresh); permanent configuration/credentials failures become terminal failed. Send timeout/network loss, send 408/5xx or a success body without an accepted message ID become `failed` + `outcome-unknown`, with no automatic resubmission. At most five attempts and a 24-hour intent age are allowed. Provider exception text is never logged or persisted. Queue replays cannot resend terminal intents. Active leases request task retry; an expired **processing** lease becomes `failed/outcome-unknown` without another send, because its crashed worker may already have sent. Older workers cannot finalize a newer lease or replace the latest organizer summary.
 
-The transport contract is **one logical intent with bounded known-rejection retries**, not provider exactly-once delivery. Gmail has no send idempotency key or reconciliation available under gmail.send. A stable RFC Message-ID aids correlation but does not guarantee deduplication. Deployed 972ed71 can still resubmit after an ambiguous outcome; the prepared stabilization source deliberately stops those automatic resubmissions, including a crash after acceptance but before `sent` finalization. Legacy `pending/lastError:outcome-unknown` records also terminalize without another send or backoff wait. Historical `provider-unavailable` does not identify whether failure preceded send; the reviewed rollout must pause the queue and inspect outstanding attempts before upgrading, without rewriting statuses. This favors duplicate avoidance over automatic recovery: a crash before send or a rejected 5xx may leave a message unsent and requiring manual provider/mailbox verification. There is no automatic resend or new resend workflow. Sent means Gmail API acceptance, never inbox delivery, opening or absence of bounce. Operation snapshots may arrive out of order; no new ordering system is introduced.
+Disabled delivery must fail closed before any provider call. Retry attempts preserve the original intent identity and duplicate suppression; enabling requires explicit project/environment agreement and current authorization.
 
 ## Local verification
 
@@ -58,7 +90,6 @@ The standard Quality gate runs registration contracts, Gmail worker contracts an
 
 ## Completed bounded staging and wider rollout boundary
 
-The historical [single-recipient execution](EMAIL_ACTIVATION_EXECUTION.md) established protected OAuth/key provisioning and private queue/service IAM. The separately approved 972ed71 activation then enabled the future-public-registration policy and resumed the queue, with the three owner-confirmed transactional messages described above. Nothing in that approval authorizes more test messages, campaigns, V1 changes or a production-domain transition. No backfill, migration or historical enqueue is implemented. Fake-provider/local PASS is not live delivery evidence, and observed arrival is not a universal exactly-once guarantee.
 
 The existing sender uses `gmail.com`, not a custom JustKvíz domain. [Personal Gmail limits](https://support.google.com/mail/answer/22839?hl=en) can block sending after more than 500 messages/day; application rate limits are not a daily allowance or delivery SLA. [Gmail API quotas](https://developers.google.com/workspace/gmail/api/reference/quota) also apply and may differ for projects grandfathered into older limits. Remaining account quota and SPF/DKIM/DMARC result headers have not been measured here; a custom From domain would require separate sender/DNS verification under [Google's sender guidelines](https://support.google.com/mail/answer/81126?hl=en).
 

@@ -12,12 +12,21 @@ describe('event lifecycle and old documents', () => {
     expect(transitionProblem({ disposition: 'deleting' }, 'restore')).toBeTruthy();
     expect(transitionProblem({ lifecycleStatus: 'cancelled', scoring: { started: true } }, 'prepare')).toBeTruthy();
   });
-  test('only owner defaults or explicit deletion grant authorize deletion', () => {
+  test('manual completion accepts only prepared or played active events', () => {
+    for (const lifecycleStatus of ['ready', 'live', 'finalizing']) expect(transitionProblem({ lifecycleStatus }, 'complete')).toBeNull();
+    for (const lifecycleStatus of ['draft', 'scheduled', 'completed', 'cancelled', 'archived']) expect(transitionProblem({ lifecycleStatus }, 'complete')).toBeTruthy();
+    for (const disposition of ['trash', 'archived', 'deleting']) expect(transitionProblem({ lifecycleStatus: 'ready', disposition }, 'complete')).toBeTruthy();
+  });
+  test('deletion requires an explicit permission for every editable role preset', () => {
+    expect(rolePresets.owner).toContain('event.delete');
     expect(rolePresets.manager).not.toContain('event.delete');
     expect(rolePresets.moderator).not.toContain('event.delete');
     expect(rolePresets.referee).not.toContain('event.delete');
-    expect(hasPermission({ role: 'owner', permissions: [] } as unknown as Membership, 'event.delete')).toBe(true);
-    expect(hasPermission({ role: 'manager', permissions: ['event.manage'] } as unknown as Membership, 'event.delete')).toBe(false);
+    for (const role of Object.keys(rolePresets)) {
+      expect(hasPermission({ role, permissions: [] } as unknown as Membership, 'event.delete')).toBe(false);
+      expect(hasPermission({ role, permissions: ['event.read', 'event.manage'] } as unknown as Membership, 'event.delete')).toBe(false);
+      expect(hasPermission({ role, permissions: ['event.read', 'event.delete'] } as unknown as Membership, 'event.delete')).toBe(true);
+    }
   });
 });
 describe('Prague wall time, independent of browser time zone', () => {

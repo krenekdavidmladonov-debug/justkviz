@@ -1,0 +1,30 @@
+{
+  "projectId": "filmovy-kviz-v2-staging",
+  "hostingSite": "justkviz-v2",
+  "region": "europe-west1",
+  "functions": [
+    "readDriveConnection",
+    "beginDriveConnection",
+    "completeDriveConnection",
+    "getDriveFolderPicker",
+    "selectDriveFolder",
+    "disconnectDriveConnection"
+  ],
+  "secrets": ["DRIVE_OAUTH_CLIENT_SECRET", "DRIVE_TOKEN_KEYRING"],
+  "configuration": [
+    "DRIVE_CONNECTION_ENABLED",
+    "DRIVE_OAUTH_CLIENT_ID",
+    "DRIVE_OAUTH_REDIRECT_URI",
+    "DRIVE_PICKER_API_KEY",
+    "DRIVE_PICKER_APP_ID"
+  ],
+  "redirectUri": "https://justkviz-v2.web.app/admin/settings/drive/callback",
+  "oauthScope": "https://www.googleapis.com/auth/drive.file",
+  "oauthProjectRequirement": "Dedicated media OAuth/Picker Google Cloud project, separate from V2 Firebase runtime, Gmail and V1. Client numeric project prefix must match Picker App ID.",
+  "defaultEnabled": false,
+  "requiresExplicitApproval": true,
+  "firestoreRulesChanged": false,
+  "storageRulesChanged": false,
+  "mediaImportEnabled": false,
+  "excluded": "All existing Functions, Gmail delivery configuration, V1, public data, quiz assets, media playback, YouTube imports and existing Drive sharing remain outside this connection release."
+}

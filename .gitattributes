@@ -1,0 +1,2 @@
+# Keep dependency patch bytes portable across supported checkout platforms.
+tools/dependencies/patches/*.patch text eol=lf
