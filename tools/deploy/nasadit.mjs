@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { stagingClient, stagingWebConfig } from '../staging/cloud.mjs';
 import { STAGING_PROJECT as PROJECT } from '../staging/guard.mjs';
-import { prepareArtifact, removeArtifact } from './artefakt.mjs';
+import { prepareArtifact, prepareFunctionCreation, removeArtifact } from './artefakt.mjs';
 
 const SITE = 'justkviz-v2';
 const LIVE_URL = 'https://justkviz.cz';
@@ -123,17 +123,34 @@ export async function listDeployedFunctions(client) {
   return deployed;
 }
 
-async function functionTargets(client, head) {
+export async function functionTargets(client, entryPoints) {
   const deployed = await listDeployedFunctions(client);
-  return exportedFunctions(head).map(entryPoint => {
+  const existing = [];
+  const missing = [];
+  for (const entryPoint of entryPoints) {
     const name = location + '/functions/' + entryPoint;
     const fn = deployed.get(name);
-    if (fn?.environment !== 'GEN_2' || fn.state !== 'ACTIVE' || fn.buildConfig?.runtime !== 'nodejs22' ||
+    if (!fn) {
+      missing.push(entryPoint);
+      continue;
+    }
+    if (fn.environment !== 'GEN_2' || fn.state !== 'ACTIVE' || fn.buildConfig?.runtime !== 'nodejs22' ||
         fn.buildConfig.entryPoint !== entryPoint || !fn.updateTime) {
       throw new Error('Nelze bezpečně aktualizovat existující Gen 2 funkci ' + entryPoint + '.');
     }
-    return { name, entryPoint, updateTime: fn.updateTime };
-  });
+    existing.push({ name, entryPoint, updateTime: fn.updateTime });
+  }
+  const expected = new Set(entryPoints.map(entryPoint => location + '/functions/' + entryPoint));
+  const extra = [...deployed.keys()].filter(name => !expected.has(name)).map(name => name.split('/').at(-1)).sort();
+  return { existing, missing, extra };
+}
+
+export async function deployFunctionPlan(plan, artifact, { prepare = prepareFunctionCreation, deploy, update }) {
+  if (plan.missing.length) {
+    await prepare(artifact);
+    await deploy(plan.missing.map(entryPoint => 'functions:' + entryPoint).join(','));
+  }
+  if (plan.existing.length) await update(plan.existing, artifact.zip);
 }
 
 export async function storageBucketExists(client) {
@@ -247,14 +264,19 @@ async function run() {
     const functions = withFunctions ? new Client({ urlPrefix: functionsOrigin, apiVersion: 'v2' }) : undefined;
     const withStorageRules = withRules && await storageBucketExists(
       new Client({ urlPrefix: 'https://storage.googleapis.com', apiVersion: 'storage/v1' }));
-    const targets = functions ? await functionTargets(functions, head) : [];
+    const entryPoints = withFunctions ? exportedFunctions(head) : [];
+    const plan = functions ? await functionTargets(functions, entryPoints) : { existing: [], missing: [], extra: [] };
     console.log('\nNasadí se Hosting site ' + SITE + ' (web) v projektu ' + PROJECT + '.');
-    const batches = Math.ceil(targets.length / FUNCTION_BATCH_SIZE);
+    const batches = Math.ceil((plan.existing.length + plan.missing.length) / FUNCTION_BATCH_SIZE);
     const estimate = batches
       ? batches * 2 + '–' + batches * 5 + ' min (orientačně, fronta Cloud Build může dobu prodloužit)'
       : '0 min';
-    console.log('Functions k aktualizaci: ' + targets.length + '. Odhad doby aktualizace Functions: ' + estimate + '.');
-    if (withFunctions) console.log('Zdroj existujících Functions v ' + REGION + ': ' + targets.map(target => target.entryPoint).join(', '));
+    console.log('Functions k aktualizaci: ' + plan.existing.length + ', k vytvoření: ' + plan.missing.length + '. Odhad doby Functions: ' + estimate + '.');
+    if (withFunctions) {
+      console.log('Zdroj existujících Functions v ' + REGION + ': ' + plan.existing.map(target => target.entryPoint).join(', '));
+      console.log('Chybějící Functions – vytvoří se: ' + (plan.missing.join(', ') || '(žádné)'));
+      console.log('Functions navíc – ponechají se beze změny: ' + (plan.extra.join(', ') || '(žádné)'));
+    }
     if (withRules) {
       console.log('Rules: Firestore (default).');
       if (withStorageRules) console.log('Rules: Storage ' + BUCKET + '.');
@@ -274,8 +296,11 @@ async function run() {
     try {
       await recheck();
       if (functions) {
-        if (!isDeepStrictEqual(await functionTargets(functions, head), targets)) throw new Error('Inventář Functions se od náhledu změnil.');
-        await deployFunctions(functions, targets, artifact.zip);
+        if (!isDeepStrictEqual(await functionTargets(functions, entryPoints), plan)) throw new Error('Inventář Functions se od náhledu změnil.');
+        await deployFunctionPlan(plan, artifact, {
+          deploy,
+          update: (targets, zip) => deployFunctions(functions, targets, zip),
+        });
       }
       if (withRules) deploy(withStorageRules ? 'firestore:rules,storage' : 'firestore:rules');
       if (!isDeepStrictEqual(await current(), prior)) throw new Error('Aktivní Hosting se během nasazení změnil.');
