@@ -59,6 +59,7 @@ test('moderator explicitly publishes current standings, preserves confirmed vers
     await referee.evaluate(destination => { const state = { idx: 1, key: crypto.randomUUID() }; history.pushState(state, '', destination); dispatchEvent(new PopStateEvent('popstate', { state })); }, '/referee/' + grant.eventId + '#access=' + grant.accessId + '&key=' + grant.key);
     await expect(referee.getByRole('heading', { name: 'Bodování', exact: true })).toBeVisible(); await referee.getByLabel('Kolo', { exact: true }).selectOption('r2');
     await referee.getByLabel('Body — Alfa', { exact: true }).fill('25,5'); await referee.getByLabel('Důvod opravy — Alfa', { exact: true }).fill('Synthetic referee correction');
+    referee.once('dialog', dialog => dialog.accept());
     await referee.getByRole('button', { name: 'Uložit body celého kola', exact: true }).click(); await expect(referee.getByText('Body kola jsou uložené. Potvrzeno serverem.', { exact: true })).toBeVisible();
     expect(await fixture.publicState()).toEqual(before); await expect(rows.nth(0)).toContainText('20');
     await controls.getByRole('button', { name: 'Zavřít průběžné výsledky', exact: true }).click(); await expect(published).toHaveCount(0);
