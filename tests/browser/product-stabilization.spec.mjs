@@ -225,9 +225,7 @@ test('one complete evening: saved editor, registration, real materials, media, S
     expect(ended.finalReveal.visible).toBe(false);
     expect((await published()).finalReveal).toBeUndefined();
     await page.goto('/admin/events/' + eventId);
-    await page.locator('.event-actions > summary').click();
-    await page.getByRole('button', { name: 'Ukončit akci', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Ukončit akci', exact: true }).getByRole('button', { name: 'Ukončit akci', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Ukončit akci', exact: true })).toHaveCount(0);
     await expect.poll(async () => (await event()).lifecycleStatus).toBe('completed');
     expect((await session()).finalReveal.versionId).toBe(confirmed.versionId);
     await page.goto('/admin/events/' + eventId + '/results'); await expect(page.getByRole('table', { name: 'Konečné pořadí', exact: true }).locator('tbody tr')).toHaveCount(2);
