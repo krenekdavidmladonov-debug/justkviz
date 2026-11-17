@@ -41,10 +41,14 @@ export function deploymentConfig(hosting, withRules, withStorageRules) {
   return config;
 }
 
-function childEnv() {
-  return Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+export function childEnv(source = process.env, nodeDir = path.dirname(process.execPath)) {
+  const env = Object.fromEntries(Object.entries(source).filter(([key]) =>
     !/^(VITE_|NODE_ENV$|NODE_OPTIONS$|NODE_PATH$|FIREBASE_.*(?:_URL|_ORIGIN|_HOST)$)/iu.test(key) &&
     !/_EMULATOR_HOST$/iu.test(key)));
+  // firebase-tools spouští při analýze Functions příkaz `node`; D1 běží přes .tools\node22 mimo PATH.
+  const key = Object.keys(env).find(name => name.toUpperCase() === 'PATH') ?? 'PATH';
+  env[key] = nodeDir + path.delimiter + (env[key] ?? '');
+  return env;
 }
 
 function webEnvironment(sdk, env) {
