@@ -6,7 +6,7 @@ import path from 'node:path';
 import { editorIdentity } from '../e2e/editor-identity.mjs';
 import { requireFullEmulatorEnvironment } from '../../tools/local-emulator-environment.mjs';
 
-for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 720 }]) {
+for (const viewport of [{ width: 375, height: 667 }, { width: 1280, height: 720 }]) {
   test('event team workflow and strict page width at ' + viewport.width, async ({ page, context, baseURL }) => {
     const env = requireFullEmulatorEnvironment(process.env, 'Mobile event layout');
     const ports = { '9099': env.authEndpoint, '8080': env.firestoreEndpoint, '5001': env.functionsEndpoint };
@@ -53,7 +53,9 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 720 
       await page.getByRole('button', { name: 'Přihlásit se', exact: true }).click();
       await expect(page).toHaveURL(/\/admin$/u);
       await page.goto('/admin/events/new');
-      await page.getByLabel('Název akce').fill('Synthetic mobile layout ' + viewport.width);
+      const title = 'Synthetic mobile layout ' + viewport.width;
+      await page.getByLabel('Název akce').fill(title);
+      if (viewport.width === 375) await page.getByLabel('Popis akce').fill('Syntetický popis akce pro mobilní zobrazení. '.repeat(24));
       await page.getByLabel('Datum a čas').fill('2031-11-20T19:00');
       await page.getByLabel('Místo', { exact: true }).fill('Synthetic venue');
       await page.getByLabel('Veřejné upřesnění místa').fill('Synthetic location');
@@ -104,13 +106,14 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 720 
       await page.getByRole('button', { name: 'Zveřejnit a otevřít registrace', exact: true }).click();
       await dialog.getByRole('button', { name: 'Zveřejnit a otevřít registrace', exact: true }).click();
       await expect(dialog).toHaveCount(0);
-      const publicUrl = baseURL + '/events/' + eventId;
+      const publicUrl = baseURL + '/events/' + eventId + '#prihlaseni';
       await expect(page.getByRole('textbox', { name: 'Veřejný odkaz', exact: true })).toHaveValue(publicUrl);
       await expect(page.getByText('Přihlášky jsou otevřené.', { exact: true })).toBeVisible();
       await measure('before-qr');
       await page.getByRole('button', { name: 'Zobrazit QR', exact: true }).click();
       await expect(dialog.getByRole('img')).toBeVisible();
       await measure('during-qr');
+      let scannedUrl;
       for (const kind of ['PNG', 'SVG']) {
         const pixels = await dialog.getByRole('link', { name: 'Stáhnout ' + kind, exact: true }).evaluate(async element => {
           const image = new Image(); image.src = element.href; await image.decode();
@@ -118,13 +121,44 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 720 
           const ctx = canvas.getContext('2d'); ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 512, 512); ctx.drawImage(image, 0, 0, 512, 512);
           return Array.from(ctx.getImageData(0, 0, 512, 512).data);
         });
-        expect(jsQR(new Uint8ClampedArray(pixels), 512, 512)?.data).toBe(publicUrl);
+        scannedUrl = jsQR(new Uint8ClampedArray(pixels), 512, 512)?.data;
+        expect(scannedUrl).toBe(publicUrl);
       }
       await page.keyboard.press('Escape');
       await expect(dialog).toHaveCount(0);
       await measure('after-qr');
       const event = (await identity.db.doc('events/' + eventId).get()).data();
       expect(event.registrationStatus).toBe('open');
+      if (viewport.width === 375) {
+        const firestoreListen = url => url.pathname === '/google.firestore.v1.Firestore/Listen/channel';
+        const { promise: allowEventRead, resolve: releaseEventRead } = Promise.withResolvers();
+        let eventReadBlocked = false;
+        await page.route(firestoreListen, async route => {
+          eventReadBlocked = true;
+          await allowEventRead;
+          await route.fallback();
+        });
+        try {
+          await page.goto(scannedUrl);
+          await expect.poll(() => eventReadBlocked).toBe(true);
+          await expect(page.getByText('Načítám akci…')).toBeVisible();
+          await expect(page.locator('#prihlaseni')).toHaveCount(0);
+        } finally { releaseEventRead(); }
+
+        const teamName = page.getByLabel('Název týmu');
+        const email = page.getByLabel('E-mail');
+        await expect(teamName).toBeInViewport({ ratio: 1 });
+        await expect(email).toBeInViewport({ ratio: 1 });
+        await expect(teamName).toHaveAttribute('autocomplete', 'off');
+        await expect(email).toHaveAttribute('autocomplete', 'email');
+        await page.unroute(firestoreListen);
+
+        await page.goto('/');
+        await page.getByRole('article').filter({ has: page.getByRole('heading', { name: title, exact: true }) })
+          .getByRole('link', { name: 'Přihlásit tým', exact: true }).click();
+        await expect(page).toHaveURL(publicUrl);
+        await expect(teamName).toBeInViewport({ ratio: 1 });
+      }
       expect(errors).toEqual([]);
     } finally {
       await writeFile(path.join(output, 'layout.json'), JSON.stringify({ viewport, eventId, measurements, pageErrors: errors }, null, 2) + '\n');

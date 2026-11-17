@@ -57,7 +57,7 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 390, height: 844 
     await page.getByRole('button', { name: 'Zveřejnit a otevřít registrace', exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Zveřejnit a otevřít registrace', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
-    const url = `${baseURL}/events/${eventId}`;
+    const url = `${baseURL}/events/${eventId}#prihlaseni`;
     await expect(page.getByLabel('Veřejný odkaz')).toHaveValue(url);
     await page.getByRole('button', { name: 'Kopírovat odkaz' }).click();
     await expect(page.getByText('Odkaz zkopírován')).toBeVisible();
