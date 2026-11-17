@@ -186,6 +186,7 @@ test('čtecí náhled rozliší existující, chybějící a přebytečné Funct
     existing: [{ name: functionLocation + 'health', entryPoint: 'health', updateTime: '2026-11-17T10:00:00Z' }],
     missing: ['authorizeLocalImageBackup'],
     extra: ['legacyOnly'],
+    special: [],
   });
   assert.equal(calls.length, 2);
   assert.ok(calls.every(call => call.url === functionLocation.slice(0, -1)));
@@ -193,7 +194,7 @@ test('čtecí náhled rozliší existující, chybějící a přebytečné Funct
 
 test('prázdný inventář znamená nové funkce; neúplné API není prázdný inventář', async () => {
   assert.deepEqual(await functionTargets({ async get() { return { body: {} }; } }, ['health']),
-    { existing: [], missing: ['health'], extra: [] });
+    { existing: [], missing: ['health'], extra: [], special: [] });
   await assert.rejects(functionTargets({ async get() {
     return { body: { unreachable: ['europe-west1'] } };
   } }, ['health']), /není úplný/u);
@@ -299,4 +300,35 @@ test('CLI vytváření používá již sestavený balíček D1 a zamčené závi
   assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
     hosting, functions: { source: path.join(directory, 'functions'), codebase: 'default', runtime: 'nodejs22' },
   });
+});
+test('funkce s vlastním sestavením (GOOGLE_NODE_RUN_SCRIPTS) se neaktualizují obecným artefaktem', async () => {
+  const worker = activeFunction('beginQuizMediaUpload');
+  worker.buildConfig = { ...worker.buildConfig, environmentVariables: { GOOGLE_NODE_RUN_SCRIPTS: 'gcp-build' } };
+  const plain = activeFunction('health');
+  plain.buildConfig = { ...plain.buildConfig, environmentVariables: { GOOGLE_NODE_RUN_SCRIPTS: '' } };
+  const plan = await functionTargets({ async get() { return { body: { functions: [worker, plain] } }; } }, ['beginQuizMediaUpload', 'health']);
+  assert.deepEqual(plan.special, ['beginQuizMediaUpload']);
+  assert.deepEqual(plan.existing.map(target => target.entryPoint), ['health']);
+  assert.deepEqual(plan.missing, []);
+});
+
+test('nevytvořené nové funkce zastaví nasazení před aktualizací a webem', async () => {
+  const steps = [];
+  await assert.rejects(deployFunctionPlan({ missing: ['newOne'], existing: [{ entryPoint: 'health' }] }, {}, {
+    prepare: async () => steps.push('prepare'),
+    deploy: async () => steps.push('deploy'),
+    verifyCreated: async () => { throw new Error('Nové Functions nevznikly'); },
+    update: async () => steps.push('update'),
+  }), /nevznikly/u);
+  assert.deepEqual(steps, ['prepare', 'deploy']);
+});
+
+test('podřízené procesy D1 mají Node z .tools v PATH', async () => {
+  const { childEnv } = await import('./artefakt.mjs');
+  const env = childEnv({ Path: 'C:\\Windows', NODE_OPTIONS: 'x', VITE_X: '1' }, 'C:\\Projects\\justkviz\\.tools\\node22');
+  const key = Object.keys(env).find(name => name.toUpperCase() === 'PATH');
+  assert.equal(key, 'Path');
+  assert.ok(env.Path.startsWith('C:\\Projects\\justkviz\\.tools\\node22'));
+  assert.ok(env.Path.endsWith('C:\\Windows'));
+  assert.ok(!('NODE_OPTIONS' in env) && !('VITE_X' in env));
 });

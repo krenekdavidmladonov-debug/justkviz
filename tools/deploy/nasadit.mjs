@@ -127,11 +127,17 @@ export async function functionTargets(client, entryPoints) {
   const deployed = await listDeployedFunctions(client);
   const existing = [];
   const missing = [];
+  const special = [];
   for (const entryPoint of entryPoints) {
     const name = location + '/functions/' + entryPoint;
     const fn = deployed.get(name);
     if (!fn) {
       missing.push(entryPoint);
+      continue;
+    }
+    // Funkce s vlastním sestavením (media worker, gcp-build) obecný artefakt D1 neumí – zůstanou beze změny.
+    if (fn.buildConfig?.environmentVariables?.GOOGLE_NODE_RUN_SCRIPTS) {
+      special.push(entryPoint);
       continue;
     }
     if (fn.environment !== 'GEN_2' || fn.state !== 'ACTIVE' || fn.buildConfig?.runtime !== 'nodejs22' ||
@@ -142,13 +148,14 @@ export async function functionTargets(client, entryPoints) {
   }
   const expected = new Set(entryPoints.map(entryPoint => location + '/functions/' + entryPoint));
   const extra = [...deployed.keys()].filter(name => !expected.has(name)).map(name => name.split('/').at(-1)).sort();
-  return { existing, missing, extra };
+  return { existing, missing, extra, special };
 }
 
-export async function deployFunctionPlan(plan, artifact, { prepare = prepareFunctionCreation, deploy, update }) {
+export async function deployFunctionPlan(plan, artifact, { prepare = prepareFunctionCreation, deploy, update, verifyCreated }) {
   if (plan.missing.length) {
     await prepare(artifact);
     await deploy(plan.missing.map(entryPoint => 'functions:' + entryPoint).join(','));
+    if (verifyCreated) await verifyCreated(plan.missing);
   }
   if (plan.existing.length) await update(plan.existing, artifact.zip);
 }
@@ -265,7 +272,7 @@ async function run() {
     const withStorageRules = withRules && await storageBucketExists(
       new Client({ urlPrefix: 'https://storage.googleapis.com', apiVersion: 'storage/v1' }));
     const entryPoints = withFunctions ? exportedFunctions(head) : [];
-    const plan = functions ? await functionTargets(functions, entryPoints) : { existing: [], missing: [], extra: [] };
+    const plan = functions ? await functionTargets(functions, entryPoints) : { existing: [], missing: [], extra: [], special: [] };
     console.log('\nNasadí se Hosting site ' + SITE + ' (web) v projektu ' + PROJECT + '.');
     const batches = Math.ceil((plan.existing.length + plan.missing.length) / FUNCTION_BATCH_SIZE);
     const estimate = batches
@@ -276,6 +283,7 @@ async function run() {
       console.log('Zdroj existujících Functions v ' + REGION + ': ' + plan.existing.map(target => target.entryPoint).join(', '));
       console.log('Chybějící Functions – vytvoří se: ' + (plan.missing.join(', ') || '(žádné)'));
       console.log('Functions navíc – ponechají se beze změny: ' + (plan.extra.join(', ') || '(žádné)'));
+      console.log('Functions s vlastním sestavením (media worker) – ponechají se beze změny: ' + (plan.special.join(', ') || '(žádné)'));
     }
     if (withRules) {
       console.log('Rules: Firestore (default).');
@@ -299,6 +307,11 @@ async function run() {
         if (!isDeepStrictEqual(await functionTargets(functions, entryPoints), plan)) throw new Error('Inventář Functions se od náhledu změnil.');
         await deployFunctionPlan(plan, artifact, {
           deploy,
+          verifyCreated: async created => {
+            const deployed = await listDeployedFunctions(functions);
+            const absent = created.filter(entryPoint => deployed.get(location + '/functions/' + entryPoint)?.state !== 'ACTIVE');
+            if (absent.length) throw new Error('Nové Functions nevznikly nebo nejsou ACTIVE: ' + absent.join(', ') + '. Web se nenasadil.');
+          },
           update: (targets, zip) => deployFunctions(functions, targets, zip),
         });
       }
