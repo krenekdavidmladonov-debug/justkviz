@@ -12,7 +12,7 @@
         ]
       },
       {
-        "source": "/{,index.html,admin,admin/**,events,events/**,referee,referee/**,projector,projector/**,account,invite/**,offline.html,offline.webmanifest,offline-sw.js}",
+        "source": "/{,index.html,admin,admin/**,events,events/*/**,referee,referee/**,projector,projector/**,account,invite/**,offline.html,offline.webmanifest,offline-sw.js}",
         "headers": [{ "key": "Cache-Control", "value": "no-cache, max-age=0, must-revalidate" }]
       },
       {
@@ -20,6 +20,9 @@
         "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
       }
     ],
-    "rewrites": [{ "source": "**", "destination": "/index.html" }]
+    "rewrites": [
+      { "regex": "^[/\\\\]events[/\\\\][A-Za-z0-9_-]+$", "function": { "functionId": "servePublicEventMeta", "region": "europe-west1" } },
+      { "source": "**", "destination": "/index.html" }
+    ]
   }
 }

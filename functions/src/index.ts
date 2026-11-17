@@ -43,6 +43,8 @@ export {
   updateEvent,
 } from './events/callables.js';
 
+export { servePublicEventMeta } from './events/preview-endpoint.js';
+
 export { generatePrintArtifact } from './print/endpoint.js';
 
 export {
