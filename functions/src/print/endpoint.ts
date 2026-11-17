@@ -9,6 +9,7 @@ import { PrintCenterError } from './errors.js';
 import { PRINT_LIMITS } from './limits.js';
 import { renderPrintArtifact } from './renderer.js';
 import { mapSnapshotToPrintEvent } from './snapshot-mapper.js';
+import { registrationOrder } from '../registrations/order.js';
 import { registrationToPrintTeam } from '../registrations/print-adapter.js';
 import type { PrintLogMetadata, PrintOptions, PrintRequestOptions, PrintTeam } from './types.js';
 import { parsePrintRequestOptions } from './validation.js';
@@ -52,12 +53,12 @@ function optionsFromBody(body: unknown): unknown {
 
 async function acceptedTeams(eventId: string): Promise<PrintTeam[]> {
   const snapshot = await getFirestore().collection('events').doc(eventId)
-    .collection('registrations').orderBy('createdAt').limit(501).get();
-  const teams = snapshot.docs.flatMap((document) => {
+    .collection('registrations').where('status', '==', 'accepted').limit(501).get();
+  const teams = registrationOrder(snapshot.docs).flatMap((document) => {
     const team = registrationToPrintTeam(document.id, record(document.data()));
     return team === undefined ? [] : [team];
   });
-  if (teams.length > PRINT_LIMITS.teams) {
+  if (snapshot.size > 500 || teams.length > PRINT_LIMITS.teams) {
     throw new PrintCenterError(409, 'team-limit', `PDF podporuje nejvýše ${PRINT_LIMITS.teams} přijatých týmů.`);
   }
   return teams;

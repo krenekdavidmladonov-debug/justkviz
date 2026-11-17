@@ -12,10 +12,11 @@ vi.mock('../apps/web/src/features/referee/api', () => ({ readReferee: vi.fn(), w
 vi.mock('../apps/web/src/features/referee/sharing', () => ({ consumeRefereeCredential: () => ({ eventId: 'event', accessId: 'synthetic-access', key: 'synthetic-key' }), forgetReferee: vi.fn() }));
 vi.mock('../apps/web/src/features/scoring/api', () => ({ saveRoundScores: vi.fn(), loadHistory: vi.fn() }));
 let host: HTMLDivElement, root: Root;
+const confirm = vi.fn<(message?: string) => boolean>();
 function fixture(): RefereeEvent {
   return { eventId: 'event', title: 'Filmový večer', label: 'Rozhodčí', snapshotId: 'snapshot',
-    rounds: [{ id: 'r1', title: 'První kolo' }, { id: 'r2', title: 'Druhé kolo' }],
-    teams: [{ id: 'a', name: 'Alfa' }, { id: 'b', name: 'Beta' }, { id: 'c', name: 'Gama' }],
+    rounds: [{ id: 'r1', title: 'První kolo', questionCount: 10 }, { id: 'r2', title: 'Druhé kolo', questionCount: 5 }],
+    teams: [{ id: 'a', name: 'Alfa' }, { id: 'c', name: 'Gama' }, { id: 'b', name: 'Beta' }],
     scores: [{ teamId: 'a', roundId: 'r1', halfPoints: 0, revision: 1 }, { teamId: 'b', roundId: 'r1', halfPoints: null, revision: 2 }, { teamId: 'c', roundId: 'r2', halfPoints: 5, revision: 1 }] };
 }
 const points = (team: string) => host.querySelector<HTMLInputElement>('input[aria-label="Body — ' + team + '"]')!;
@@ -33,7 +34,7 @@ async function render(data = fixture()) {
 }
 beforeEach(() => {
   vi.clearAllMocks(); vi.useFakeTimers(); Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
-  vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true); window.confirm = vi.fn(() => false);
+  vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true); window.confirm = confirm.mockReset().mockReturnValue(false);
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.restoreAllMocks(); });
@@ -43,7 +44,7 @@ describe('round-first referee workflow', () => {
     await render();
     expect(host.querySelector('select')!.value).toBe('r1'); expect(host.querySelector('h2')!.textContent).toBe('První kolo');
     expect(points('Alfa').value).toBe('0'); expect(points('Beta').value).toBe(''); expect(points('Gama').value).toBe('');
-    expect(host.querySelectorAll('[data-team-id]')).toHaveLength(3);
+    expect([...host.querySelectorAll('[data-team-id]')].map(team => team.getAttribute('data-team-id'))).toEqual(['a', 'c', 'b']);
     expect([...host.querySelectorAll('button')].filter(button => button.textContent === 'Uložit body celého kola')).toHaveLength(1);
     expect(host.textContent).toContain('1 / 3 týmů má uložené body');
     await select('r2'); expect(points('Gama').value).toBe('2,5'); expect(points('Alfa').value).toBe('');
@@ -55,18 +56,56 @@ describe('round-first referee workflow', () => {
     await click('Uložit body celého kola');
     expect(writeRefereeRound).toHaveBeenCalledTimes(1);
     expect(writeRefereeRound).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ roundId: 'r1', scores: [
-      { teamId: 'b', expectedRevision: 2, halfPoints: 5, reason: '' }, { teamId: 'c', expectedRevision: 0, halfPoints: 0, reason: '' },
+      { teamId: 'c', expectedRevision: 0, halfPoints: 0, reason: '' }, { teamId: 'b', expectedRevision: 2, halfPoints: 5, reason: '' },
     ] }));
     expect(host.textContent).toContain('Body kola jsou uložené. Potvrzeno serverem.');
     expect(host.textContent).toContain('3 / 3 týmů má uložené body');
     expect(readReferee).toHaveBeenCalledTimes(1);
+  });
+  it('warns on scores above the selected snapshot round count and saves only after confirmation', async () => {
+    await render();
+    const warning = 'Víc bodů než otázek v kole (10) – opravdu?';
+    await input('Beta', '10'); await input('Gama', '10,5');
+    expect(points('Beta').closest('.round-score-team')?.textContent).not.toContain(warning);
+    expect(points('Gama').closest('.round-score-team')?.textContent).toContain(warning);
+    await click('Uložit body celého kola');
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(warning + '\n\nGama');
+    expect(writeRefereeRound).not.toHaveBeenCalled();
+    expect(points('Gama').value).toBe('10,5');
+    confirm.mockReturnValueOnce(true);
+    vi.mocked(writeRefereeRound).mockResolvedValue({ scores: [
+      { teamId: 'c', revision: 1, halfPoints: 21 }, { teamId: 'b', revision: 3, halfPoints: 20 },
+    ] });
+    await click('Uložit body celého kola');
+    expect(writeRefereeRound).toHaveBeenCalledTimes(1);
+    expect(host.textContent).not.toContain(warning);
+    await select('r2'); await input('Beta', '5,5');
+    expect(points('Beta').closest('.round-score-team')?.textContent).toContain('Víc bodů než otázek v kole (5) – opravdu?');
+  });
+  it('reports each invalid score at its team field and focuses the first in registration order', async () => {
+    await render(); await input('Beta', '2,25'); await input('Gama', '-1');
+    await click('Uložit body celého kola');
+    for (const name of ['Beta', 'Gama']) {
+      const field = points(name);
+      expect(field.getAttribute('aria-invalid')).toBe('true');
+      const feedback = document.getElementById(field.getAttribute('aria-describedby')!);
+      expect(feedback?.parentElement).toBe(field.closest('.round-score-team'));
+      expect(feedback?.textContent).toContain('Zadejte nezáporné body');
+    }
+    expect(document.activeElement).toBe(points('Gama'));
+    expect(points('Alfa').getAttribute('aria-invalid')).toBeNull();
+    expect(writeRefereeRound).not.toHaveBeenCalled();
+    expect(confirm).not.toHaveBeenCalled();
+    await input('Gama', '2,5'); await click('Uložit body celého kola');
+    expect(points('Gama').getAttribute('aria-invalid')).toBeNull();
+    expect(document.activeElement).toBe(points('Beta'));
   });
   it('preserves a conflicted whole-round draft and protects round changes, navigation and unload', async () => {
     const router = await render(); await input('Beta', '4,5'); await input('Gama', '1');
     const data = fixture(); data.scores.push({ teamId: 'b', roundId: 'r1', halfPoints: 4, revision: 3 });
     data.scores = data.scores.filter(score => !(score.teamId === 'b' && score.revision === 2));
     vi.mocked(readReferee).mockResolvedValue(data); await poll();
-    expect(points('Beta').value).toBe('4,5'); expect(host.textContent).toContain('Aktuálně uloženo: 2 bodů');
+    expect(points('Beta').value).toBe('4,5'); expect(host.textContent).toContain('Aktuálně uloženo: 2 body');
     await click('Uložit body celého kola'); expect(writeRefereeRound).not.toHaveBeenCalled();
     await select('r2'); expect(host.querySelector('select')!.value).toBe('r1');
     const unload = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(unload); expect(unload.defaultPrevented).toBe(true);

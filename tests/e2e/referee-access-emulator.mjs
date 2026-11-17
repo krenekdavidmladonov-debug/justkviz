@@ -29,7 +29,11 @@ try {
  assert.equal(typeof grant.key,'string');const storedGrant=(await db.doc(`events/${a.eventId}/refereeAccess/${c.accessId}`).get()).data();assert(!JSON.stringify(storedGrant).includes(grant.key));
  const retry=await staff.call('issueRefereeAccess',issueData);assert.equal(retry.accessId,grant.accessId);assert.equal(retry.key,null);assert.equal((await staff.call('listRefereeAccess',{eventId:a.eventId})).length,1);pass();
  for(const x of await staff.call('listRefereeAccess',{eventId:a.eventId}))assert.deepEqual(Object.keys(x).sort(),['accessId','expiresAt','label','status','version']);
- const payload=await anon.call('readRefereeEvent',c);assert.deepEqual(Object.keys(payload).sort(),['eventId','label','rounds','scores','snapshotId','teams','title']);assert.deepEqual(Object.keys(payload.teams[0]).sort(),['id','name']);assert.deepEqual(Object.keys(payload.rounds[0]).sort(),['id','title']);assert(!JSON.stringify(payload).includes('private-contact'));assert.equal(anon.auth.currentUser,null);pass();
+ const { FieldValue } = require('firebase-admin/firestore');
+ const frozenRound = (await db.collection('quizSnapshots/' + a.snapshotId + '/rounds').get()).docs[0];
+ // A legacy frozen round with no stored aggregate still counts only its question slides.
+ await frozenRound.ref.update({ questionCount: FieldValue.delete() });
+ const payload=await anon.call('readRefereeEvent',c);assert.deepEqual(Object.keys(payload).sort(),['eventId','label','rounds','scores','snapshotId','teams','title']);assert.deepEqual(Object.keys(payload.teams[0]).sort(),['id','name']);assert.deepEqual(Object.keys(payload.rounds[0]).sort(),['id','questionCount','title']);assert.equal(payload.rounds[0].questionCount,1);assert(!JSON.stringify(payload).includes('private-contact'));assert.equal(anon.auth.currentUser,null);pass();
  await denied(anon.call('readRefereeEvent',{...c,eventId:b.eventId}));await denied(anon.call('readRefereeEvent',{...c,key:'x'.repeat(43)}));await denied(anon.call('listRefereeAccess',{eventId:a.eventId,...c}),'unauthenticated');
  for(const endpoint of ['updateEvent','lockEventQuiz','createLiveSession','createQuizSlide','adminAddEventTeam'])await assert.rejects(anon.call(endpoint,{...c,credential:c,eventId:a.eventId}),e=>['functions/permission-denied','functions/unauthenticated'].includes(e.code));pass();
  const roundId=payload.rounds[0].id;let revision=0;
@@ -49,6 +53,10 @@ try {
  const registration=await anon.call('createEventRegistration',{eventId:a.eventId,teamName:'Public boundary',memberCount:2,contactEmail:'public@example.test'});const managed=await anon.call('getEventRegistration',{eventId:a.eventId,registrationId:registration.registrationId,token:registration.managementToken});for(const data of[registration,managed])assert(Object.keys(data).every(k=>['eventId','registrationId','teamName','memberCount','contactEmail','status','managementToken'].includes(k)));
  await denied(anon.call('readRefereeEvent',{...c,key:registration.managementToken}));pass();
  const batchTeams=[];for(const name of ['Round Alfa','Round Beta'])batchTeams.push((await staff.call('adminAddEventTeam',{eventId:a.eventId,requestId:randomUUID(),teamName:name,memberCount:2})).registrationId);
+ const refereeTeams = (await anon.call('readRefereeEvent', c)).teams;
+ const staffRoster = await staff.call('readAccessData', { operation: 'roster', eventId: a.eventId });
+ assert.deepEqual(refereeTeams.map(team => team.id), [a.teamId, registration.registrationId, ...batchTeams]);
+ assert.deepEqual(refereeTeams.map(team => team.id), staffRoster.filter(team => team.data.status === 'accepted').map(team => team.id));
  const roundInput={eventId:a.eventId,snapshotId:a.snapshotId,roundId,requestId:randomUUID(),scores:batchTeams.map((teamId,index)=>({teamId,expectedRevision:0,halfPoints:index===0?0:5,reason:''}))};
  const saveRound=(credential,input=roundInput)=>anon.call('saveRefereeScore',{credential,score:input});
  const batch=await saveRound(c);assert.equal(batch.scores.length,2);assert.deepEqual(await saveRound(c),batch);

@@ -100,6 +100,7 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
       catch (issue) { failure(issue); throw issue; }
     },
   }), [credential, failure]);
+  const round = data?.rounds.find(item => item.id === roundId);
   const verified = connected && !!verifiedAt && !blocked && !error;
   return <main className="event-detail-page referee-page">
     <header className="referee-page-header"><Brand /><h1>Bodování</h1><p>{data?.title}</p></header>
@@ -113,7 +114,7 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
         setDirty(false); setRoundId(event.target.value);
       }}>{data.rounds.map((round, index) => <option key={round.id} value={round.id}>{index + 1}. {round.title}</option>)}</select></label>
       {data.teams.length === 0 ? <p role="status">Na soupisce zatím nejsou žádné týmy.</p> : roundId && <RoundScoreForm key={JSON.stringify([data.snapshotId, roundId])} eventId={eventId} snapshotId={data.snapshotId} roundId={roundId}
-        roundTitle={data.rounds.find(round => round.id === roundId)?.title ?? 'Kolo'} teams={data.teams}
+        roundTitle={round?.title ?? 'Kolo'} questionCount={round?.questionCount} teams={data.teams}
         scores={Object.fromEntries(data.scores.filter(score => score.roundId === roundId).map(score => [score.teamId, score]))} disabled={!verified} onDirty={onDirty} onPending={onPending} transport={transport} />}
       {data.rounds.length === 0 && <p>Připravený kvíz zatím nemá žádná kola.</p>}
       {!verified ? <p role="status">Uložené body nyní nelze ověřit.</p> : <p className="event-muted">Ověřeno v {verifiedAt.toLocaleTimeString('cs-CZ')} · obnova každých 5 sekund</p>}

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import '../styles/global.css';
 import { SlideRenderer } from '../features/presentation/SlideRenderer';
+import { pointUnit } from '../features/scoring/model';
 import { ResultsTable } from '../features/leaderboard/ResultsTable';
 import { Brand } from '../ui/Brand';
 import './preview.css';
@@ -83,14 +84,14 @@ function App() {
                 <div className="show-feature-number">{rank}<span>.</span></div>
                 <p className="show-feature-label">{featured.length > 1 ? 'SDÍLENÉ MÍSTO' : 'MÍSTO'}</p>
                 <div className="show-feature-teams">{featured.map(row => <h1 key={row.id}>{row.name}</h1>)}</div>
-                <p className="show-feature-score"><strong>{points(featured[0]?.halfPoints ?? 0)}</strong> bodů</p>
+                <p className="show-feature-score"><strong>{points(featured[0]?.halfPoints ?? 0)}</strong> {pointUnit(featured[0]?.halfPoints ?? 0)}</p>
               </section>
               <section className="show-revealed-list"><p className="show-eyebrow">UŽ ZNÁME</p>{lowerRows.length ? <>{lowerRows.map(row => <RankingRow row={row} key={row.id} />)}<p className="show-revealed-page">{lowerRows[0]?.rank}.–{lowerRows.at(-1)?.rank}. místo<span>Strana {activeRevealedPage + 1} / {revealedPageCount}</span></p></> : <p className="show-no-lower">Další výsledky zatím nejsou odhalené.</p>}</section>
             </div> : <section className={`show-winner ${winners.length > 1 ? 'co-winners' : ''}`}>
               <div className="show-winner-label"><span />VÍTĚZOVÉ DNEŠNÍHO VEČERA<span /></div>
               <div className="show-winner-place">1<span>.</span></div>
               <div className="show-winner-names">{winners.map(row => <h1 key={row.id}>{row.name}</h1>)}</div>
-              <p className="show-winner-score"><strong>{points(winners[0]?.halfPoints ?? 0)}</strong><span>bodů</span></p>
+              <p className="show-winner-score"><strong>{points(winners[0]?.halfPoints ?? 0)}</strong><span>{pointUnit(winners[0]?.halfPoints ?? 0)}</span></p>
               <p className="show-winner-message">{winners.length > 1 ? 'Jedno první místo. Společné vítězství.' : 'Tenhle večer patří vám.'}</p>
             </section>}
             <footer className="show-stage-footer"><span>{scene === 'winner' ? 'DĚKUJEME, ŽE HRAJETE S NÁMI.' : 'KAŽDÝ BOD MÁ SVŮJ PŘÍBĚH.'}</span><span>{scene === 'winner' ? 'POTLESK VÍTĚZŮM' : 'POSTUPNÉ ODHALOVÁNÍ'}</span></footer>

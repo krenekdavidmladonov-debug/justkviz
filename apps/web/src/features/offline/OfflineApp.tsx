@@ -6,7 +6,7 @@ import { MediaPlayer } from '../presentation/MediaPlayer';
 import { ShowModeRenderer } from '../show-mode/ShowModeRenderer';
 import type { PublicLiveState } from '../live/types';
 import type { SlideRenderInput } from '../presentation/types';
-import { parsePoints, pointsText } from '../scoring/model';
+import { parseRoundPoints, pointsText } from '../scoring/model';
 import { buildOfflineProjection } from './offlineProjection';
 import { connectOfflineProjector, openOfflineProjector, type OfflineProjectorConnection } from './offlineProjector';
 import { exportOfflineRecovery, exportStoredOfflineEvent, importOfflineEvent } from './offlinePreparation';
@@ -369,7 +369,7 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
       <button disabled={disabled || Object.keys(drafts).length === 0} onClick={() => void task(async () => {
         const changes = Object.entries(drafts).map(([teamId, text]) => {
           const previous = state.scores.find(score => score.teamId === teamId && score.roundId === roundId);
-          return { teamId, expectedRevision: previous?.revision ?? 0, halfPoints: text.trim() === '' ? null : parsePoints(text), reason };
+          return { teamId, expectedRevision: previous?.revision ?? 0, halfPoints: text.trim() === '' ? null : parseRoundPoints(text), reason };
         }).filter(change => change.halfPoints !== (state.scores.find(score => score.teamId === change.teamId && score.roundId === roundId)?.halfPoints ?? null));
         if (changes.length) await runtime.append({ type: 'round-scores', payload: { roundId, changes } });
         setDrafts({}); setReason(''); setPreview(null); progress('Body jsou odolně uložené na tomto počítači.');

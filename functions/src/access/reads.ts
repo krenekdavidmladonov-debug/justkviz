@@ -11,6 +11,8 @@ import { authorize, freshIdentity, type AuthIdentity, type Resource } from './au
 import { quizDisposition, quizTrashRevision } from '../quizzes/guards.js';
 import { loadSnapshotClipAssets } from '../media/snapshot-clip-store.js';
 import { resolveSnapshotClip } from '../media/snapshot-clips.js';
+import { registrationOrder } from '../registrations/order.js';
+import { snapshotRoundQuestionCounts } from '../scoring/snapshot-rounds.js';
 
 const db = () => getFirestore();
 export function pick(data: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
@@ -120,10 +122,14 @@ export const readAccessData = onCall({ region: 'europe-west1', cors: true, maxIn
     if (data.operation === 'snapshotRounds' || data.operation === 'snapshotSlides') {
       const snapshotId = id(data.snapshotId), resource = await snapshotResource(request.auth, snapshotId, tx);
       const member = await authorize(request.auth, ['event.read'], resource, tx);
-      const rows = await tx.get(db().collection(`quizSnapshots/${snapshotId}/${data.operation === 'snapshotRounds' ? 'rounds' : 'slides'}`).orderBy('position').limit(401));
-      if (data.operation === 'snapshotRounds') return wire(rows.docs.map(d => ({ id: d.id, data: pick(d.data(), roundFields) })));
+      const ref = db().doc(`quizSnapshots/${snapshotId}`);
+      const rows = await tx.get(ref.collection(data.operation === 'snapshotRounds' ? 'rounds' : 'slides').orderBy('position').limit(401));
       if (rows.size > 400) throw new HttpsError('resource-exhausted', 'Kvíz je příliš velký.');
-      const root = stored(await tx.get(db().doc(`quizSnapshots/${snapshotId}`)));
+      if (data.operation === 'snapshotRounds') {
+        const counts = await snapshotRoundQuestionCounts(tx, ref.collection('slides'), rows.docs);
+        return wire(rows.docs.map(d => ({ id: d.id, data: { ...pick(d.data(), roundFields), questionCount: counts.get(d.id) } })));
+      }
+      const root = stored(await tx.get(ref));
       const quizId = id(root.quizId);
       const assets = await loadSnapshotClipAssets(tx, db(), quizId, rows.docs.map(d => d.data()));
       return wire(rows.docs.map(d => slideView(d.id, resolveSnapshotClip(quizId, d.data(), assets), member.permissions.includes('event.answers.read'), member.permissions.includes('event.notes.read'))));
@@ -141,7 +147,8 @@ export const readAccessData = onCall({ region: 'europe-west1', cors: true, maxIn
       if (data.operation === 'event') return wire({ id: eventId, data: eventView(stored(await tx.get(ref)), member) });
       const rows = await tx.get(ref.collection('registrations').limit(1001));
       if (rows.size > 1000) throw new HttpsError('resource-exhausted', 'Příliš mnoho týmů.');
-      return wire(rows.docs.map(d => ({ id: d.id, data: {
+      const ordered = data.operation === 'roster' ? registrationOrder(rows.docs) : rows.docs;
+      return wire(ordered.map(d => ({ id: d.id, data: {
         ...pick(d.data(), data.operation === 'roster' ? ['teamName', 'status'] : ['eventId', 'teamName', 'memberCount', 'contactEmail', 'source', 'revision', 'status', 'createdAt', 'updatedAt', 'cancelledAt']),
         ...(data.operation === 'registrations' && d.data().emailDelivery ? { emailDelivery: pick(d.data().emailDelivery as Record<string, unknown>, ['status', 'updatedAt']) } : {}),
       } })));

@@ -1,3 +1,6 @@
+import { MAX_ROUND_HALF_POINTS } from '@filmovy-kviz/quiz-domain';
+
+export interface ScoreRound { id: string; title: string; questionCount?: number }
 export interface Score { readonly revision: number; readonly halfPoints: number | null }
 export interface ScoreHistory extends Score {
   readonly previousHalfPoints: number | null; readonly actorUid?: string; readonly actorLabel?: string; readonly createdAt: string; readonly reason: string;
@@ -12,9 +15,19 @@ export function parsePoints(text: string): number {
   if (units > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Hodnota je mimo bezpečný číselný rozsah.');
   return Number(units);
 }
+export function parseRoundPoints(text: string): number {
+  const units = parsePoints(text);
+  if (units > MAX_ROUND_HALF_POINTS) throw new Error('Zadejte nejvýše 1000 bodů.');
+  return units;
+}
 export function pointsText(units: number | null): string {
   if (units === null) return '';
   const value = BigInt(units);
   return String(value / 2n) + (value % 2n ? ',5' : '');
 }
-export function scoreLabel(units: number | null): string { return units === null ? 'Nezadáno' : pointsText(units) + ' bodů'; }
+export function pointUnit(units: number): string {
+  if (units % 2) return 'bodu';
+  if (units === 2) return 'bod';
+  return units >= 4 && units <= 8 ? 'body' : 'bodů';
+}
+export function scoreLabel(units: number | null): string { return units === null ? 'Nezadáno' : pointsText(units) + ' ' + pointUnit(units); }

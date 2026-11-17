@@ -3,7 +3,7 @@ import { privateRead, watchPrivate, type PrivateDocument } from '../access/api';
 import { httpsCallable } from 'firebase/functions';
 import { getFirebaseFirestore } from '../../services/firebase/firestore';
 import { getFirebaseServices } from '../../services/firebase/client';
-import type { Score, ScoreHistory } from './model';
+import type { Score, ScoreHistory, ScoreRound } from './model';
 
 export interface ScoreRequest {
   eventId: string; snapshotId: string; teamId: string; roundId: string; requestId: string;
@@ -20,9 +20,12 @@ export async function saveRoundScores(request: RoundScoreRequest): Promise<Round
 export async function saveScore(request: ScoreRequest): Promise<Score> {
   return (await httpsCallable<ScoreRequest, Score>(getFirebaseServices().functions, 'saveEventScore')(request)).data;
 }
-export async function loadRounds(snapshotId: string) {
+export async function loadRounds(snapshotId: string): Promise<ScoreRound[]> {
   const data = await privateRead<PrivateDocument[]>('snapshotRounds', { snapshotId });
-  return data.map(item => ({ id: item.id, title: typeof item.data.title === 'string' ? item.data.title : 'Kolo' }));
+  return data.map(({ id, data: { title, questionCount } }) => ({
+    id, title: typeof title === 'string' ? title : 'Kolo',
+    ...(typeof questionCount === 'number' && Number.isSafeInteger(questionCount) && questionCount >= 0 ? { questionCount } : {}),
+  }));
 }
 export function watchScores(eventId: string, receive: (scores: Record<string, Score>) => void, fail: () => void) {
   return onSnapshot(collection(getFirebaseFirestore(), 'events', eventId, 'scores'), { includeMetadataChanges: true }, snapshot => {

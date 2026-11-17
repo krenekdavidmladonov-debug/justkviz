@@ -45,12 +45,17 @@ try {
     quizId: 'preflight-ready-e2e', expectedQuizRevision: 0, acknowledgeWarnings: false });
   const snapshotId = locked.snapshotId;
   const roundId = (await db.collection(`quizSnapshots/${snapshotId}/rounds`).get()).docs[0].id;
+  const roster = await staff.call('readAccessData', { operation: 'roster', eventId });
+  assert.deepEqual(roster.map(team => team.id), [manual.registrationId, online.registrationId]);
+  assert(roster.every(team => Object.keys(team.data).sort().join(',') === 'status,teamName'));
+  const rounds = await staff.call('readAccessData', { operation: 'snapshotRounds', snapshotId });
+  assert.equal(rounds.find(round => round.id === roundId).data.questionCount, 1);
   const base = { eventId, snapshotId, teamId: manual.registrationId, roundId, expectedRevision: 0, halfPoints: 0, reason: '' };
   const write = (patch = {}, caller = staff) => caller.call('saveEventScore', { ...base, requestId: randomUUID(), ...patch });
   await denied(write({}, publicClient), 'unauthenticated');
   await denied(write({ managementToken: online.managementToken }, publicClient), 'unauthenticated');
   await denied(write({}, ordinary), 'permission-denied');
-  for (const halfPoints of [-1, .5, Number.MAX_SAFE_INTEGER + 1, '0']) await denied(write({ halfPoints }), 'invalid-argument');
+  for (const halfPoints of [-1, .5, 2001, Number.MAX_SAFE_INTEGER + 1, '0']) await denied(write({ halfPoints }), 'invalid-argument');
   await denied(write({ actorUid: 'forged' }), 'invalid-argument');
   for (const patch of [{ teamId: 'missing' }, { roundId: 'missing' }, { eventId: 'missing' }]) await denied(write(patch), 'not-found');
   await denied(write({ snapshotId: 'different' }), 'failed-precondition');
