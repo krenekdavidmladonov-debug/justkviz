@@ -138,10 +138,9 @@ Whole-evening visual authoring adds bounded quiz/round/slide design inheritance 
 ## Environments
 
 - Local: Firebase Emulator Suite with `demo-filmovy-kviz-v2`.
-- Staging: isolated `filmovy-kviz-v2-staging`, configured through the guarded staging tools; see `STAGING.md`.
-- Production: never targeted without explicit approval.
+- Production: https://justkviz.cz, Hosting site `justkviz-v2`, Firebase project `filmovy-kviz-v2-staging` with live data. See [AGENTS.md](../AGENTS.md) for release rules.
 
-No production project identifiers or credentials are stored in this repository.
+Production credentials stay outside the repository.
 
 ## Testing strategy
 

@@ -1,5 +1,7 @@
 # Restart: lokální akceptace a schvalované vydání V2 staging
 
+> Historický plán. Projekt `filmovy-kviz-v2-staging` dnes obsluhuje produkci na https://justkviz.cz. Platí [AGENTS.md](../AGENTS.md).
+
 **Aktuální nástupce — 2026-10-12:** `ddb862f946a7621e4ff9dbfb30f8976ad8d0e3ac` přidává čtyři ověřené opravy registrací, zkoušky, ruční agendy a lokální obnovy. Je publikován ve stávajícím draft PR #39, má vlastní úspěšné CI a po následném konkrétním souhlasu vlastníka byl **nasazen na V2 staging** v rozsahu 70 Functions → Firestore Rules → Hosting. [Záznam provedení](STAGING_EXECUTION_DDB862F.md) eviduje aktivní revize, shodu zdrojů a veřejné statické HTTP ověření; úplná online akceptace zatím neproběhla. Příkazy a hranice zachovává [rollout plán](STAGING_ROLLOUT_DDB862F.md). Starší `aafeaa9` artefakt/CI níže je historický. Návrat na něj by obnovil opravené vady, proto preferovat cílený forward fix se zachovanými guards.
 
 Tento plán sám nepovoluje nasazení. Vlastník dne 2026-10-12 schválil sladění `AGENTS.md` a čtecí kontrolu V2 stagingu; její výsledky jsou v [RESTART_PREFLIGHT.md](RESTART_PREFLIGHT.md). Ověřený aplikační základ na `codex/restart-integration` je `8b6245608850c9cad959fb14ab6a754f485e1dad`; navazující změny doplňují dokumentaci a přípravu artefaktu. Přesná lokální evidence a omezení jsou v [RESTART_VALIDATION.md](RESTART_VALIDATION.md). V1 a produkční Firebase zůstávají mimo rozsah.

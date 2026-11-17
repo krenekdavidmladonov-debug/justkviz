@@ -1,5 +1,7 @@
 # JustKvíz
 
+Production at https://justkviz.cz uses Firebase project `filmovy-kviz-v2-staging` and Hosting site `justkviz-v2` with real data. Test only with local `demo-*` emulators. See [AGENTS.md](AGENTS.md) for deployment rules.
+
 Quiz authoring, team registrations, trusted scoring, projector presentation and printable materials.
 
 ## Local development

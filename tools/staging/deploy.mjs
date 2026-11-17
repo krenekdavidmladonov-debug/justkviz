@@ -6,6 +6,10 @@ import { assertStagingEnvironment, assertStagingProject, STAGING_PROJECT, STAGIN
 import { stagingWebConfig, stagingClient } from './cloud.mjs';
 import { deploymentMode, assertNoObsoleteHostingDeployment, assertHostingOnlyConfig, hostingOnlyArgs, assertFrontendFiles, teamToolFunctionArgs } from './hosting-only.mjs';
 
+if (process.env.JUSTKVIZ_LEGACY_DEPLOY_I_KNOW !== '1') {
+  throw new Error('Zastaralý skript – nepoužívat. Nasadil by staré Functions a Rules do produkce. Správný postup nasazení z main zatím neexistuje.');
+}
+
 const root = fileURLToPath(new URL('../../', import.meta.url));
 process.chdir(root);
 assertStagingProject(process.argv[2]);

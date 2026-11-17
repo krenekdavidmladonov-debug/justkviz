@@ -1,5 +1,7 @@
 # V0.3 development workflow
 
+This is a historical workflow. Follow [AGENTS.md](../AGENTS.md) for current branch, worktree, testing and release rules.
+
 This document defines the normal development workflow after the human merge of PR #8. Until that merge, `integration/v0.3-development` is the reviewed candidate; after it, `main` is the only canonical V2 integration base.
 
 ## Branch roles
