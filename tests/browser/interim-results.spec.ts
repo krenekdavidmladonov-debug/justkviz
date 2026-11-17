@@ -33,7 +33,48 @@ test('moderator explicitly publishes current standings, preserves confirmed vers
       channel.postMessage({ type: 'public-state', state: { sessionId, revision: 99999, interimResults: { rows: [{ rank: 1, teamName: 'UNPUBLISHED INJECTION', halfPoints: 999 }] } } }); channel.close();
     }, fixture.sessionId);
     await expect(projector.getByText('UNPUBLISHED INJECTION')).toHaveCount(0);
-    await controls.getByRole('button', { name: 'Průběžné výsledky', exact: true }).click(); await expect(published).toBeVisible();
+    const reveal = page.getByRole('button', { name: 'Odhalit odpověď', exact: true });
+    const hide = page.getByRole('button', { name: 'Skrýt odpověď', exact: true });
+    const answer = projector.locator('.slide-answer');
+    await reveal.click(); await expect(answer).toContainText('PRIVATE ANSWER SENTINEL');
+    await Promise.all([page.reload(), projector.reload()]);
+    await expect(hide).toBeEnabled(); await expect(answer).toContainText('PRIVATE ANSWER SENTINEL');
+    const hiddenAt = await projector.evaluateHandle(() => ({ time: new Promise<number>(resolve => {
+      const observer = new MutationObserver(() => {
+        if (document.querySelector('.slide-answer')) return;
+        observer.disconnect(); resolve(Date.now());
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }) }));
+    const clickedAt = await hide.evaluateHandle(element => ({ time: new Promise<number>(resolve => {
+      element.addEventListener('click', () => resolve(Date.now()), { capture: true, once: true });
+    }) }));
+    await hide.click(); await expect(answer).toHaveCount(0, { timeout: 500 });
+    const elapsed = await hiddenAt.evaluate(result => result.time) - await clickedAt.evaluate(result => result.time);
+    expect(elapsed).toBeGreaterThanOrEqual(0); expect(elapsed).toBeLessThanOrEqual(500);
+    console.log('Answer removed from projector in ' + elapsed + ' ms');
+    await projector.reload(); await expect(projector.getByText('Synthetic prompt', { exact: true })).toBeVisible(); await expect(answer).toHaveCount(0);
+
+    await fixture.score(1, 0, null);
+    const openPreview = controls.getByRole('button', { name: 'Průběžné výsledky', exact: true });
+    const preview = page.getByRole('dialog', { name: 'Náhled průběžných výsledků' });
+    const confirm = preview.getByRole('button', { name: 'Ukázat sálu', exact: true });
+    const beforePreview = await fixture.publicState();
+    await openPreview.click();
+    await expect(preview.getByRole('alert')).toContainText('Neúplné výsledky');
+    await expect(preview.getByRole('alert')).toContainText('Beta');
+    await expect(confirm).toBeEnabled();
+    expect(await fixture.publicState()).toEqual(beforePreview); await expect(published).toHaveCount(0);
+    await page.keyboard.press('Escape'); await expect(preview).toHaveCount(0);
+    expect(await fixture.publicState()).toEqual(beforePreview);
+
+    await openPreview.click(); await expect(preview).toBeVisible();
+    await fixture.score(1, 0, 20);
+    await confirm.click();
+    await expect(controls.getByRole('alert')).toContainText('Otevřete nový náhled');
+    expect(await fixture.publicState()).toEqual(beforePreview); await expect(published).toHaveCount(0);
+    await openPreview.click(); await expect(preview.getByRole('alert')).toHaveCount(0);
+    await confirm.click(); await expect(published).toBeVisible();
     const rows = published.locator('.sm-row'); await expect(rows).toHaveCount(6);
     await expect(rows.nth(0)).toContainText('Alfa'); await expect(rows.nth(0)).toContainText('20');
     await expect(rows.nth(1)).toContainText('17,5'); await expect(rows.nth(1).locator('.sm-rank')).toHaveText('2.');
@@ -63,7 +104,7 @@ test('moderator explicitly publishes current standings, preserves confirmed vers
     await referee.getByRole('button', { name: 'Uložit body celého kola', exact: true }).click(); await expect(referee.getByText('Body kola jsou uložené. Potvrzeno serverem.', { exact: true })).toBeVisible();
     expect(await fixture.publicState()).toEqual(before); await expect(rows.nth(0)).toContainText('20');
     await controls.getByRole('button', { name: 'Zavřít průběžné výsledky', exact: true }).click(); await expect(published).toHaveCount(0);
-    await controls.getByRole('button', { name: 'Průběžné výsledky', exact: true }).click(); await expect(rows.nth(0)).toContainText('35,5');
+    await openPreview.click(); await confirm.click(); await expect(rows.nth(0)).toContainText('35,5');
     const latest = await fixture.publicState(); expect((latest.interimResults as Standings).versionId).not.toBe((before.interimResults as Standings).versionId);
     await projector.evaluate(({ old, sessionId }) => { const channel = new BroadcastChannel('filmovy-kviz-projector-' + sessionId); channel.postMessage({ type: 'public-state', state: old }); channel.postMessage({ type: 'public-state', state: { ...old, sessionId: 'foreign', revision: 99999 } }); channel.close(); }, { old: before, sessionId: fixture.sessionId });
     await expect(rows.nth(0)).toContainText('35,5');

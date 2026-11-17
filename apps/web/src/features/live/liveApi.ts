@@ -20,7 +20,7 @@ function revisionAction(name: string) {
 export const nextSlide = (sessionId: string, expectedRevision: number) => invoke('goToSlide', { sessionId, expectedRevision, direction: 1 });
 export const previousSlide = (sessionId: string, expectedRevision: number) => invoke('goToSlide', { sessionId, expectedRevision, direction: -1 });
 export const revealAnswer = revisionAction('revealAnswer');
-export const hideAnswer = revisionAction('hideAnswer');
+export const hideAnswer = (sessionId: string, expectedRevision: number) => invoke('revealAnswer', { sessionId, action: 'hide', expectedHideRevision: expectedRevision });
 export const playMedia = (sessionId: string, expectedRevision: number, mode: 'clip' | 'original' = 'clip') => invoke('playMedia', { sessionId, expectedRevision, mode });
 export const stopMedia = revisionAction('stopMedia');
 export const replayMedia = revisionAction('replayMedia');

@@ -7,6 +7,7 @@ import { ShowModeRenderer } from '../show-mode/ShowModeRenderer';
 import type { PublicLiveState } from '../live/types';
 import type { SlideRenderInput } from '../presentation/types';
 import { parseRoundPoints, pointsText } from '../scoring/model';
+import { InterimResultsPreview } from '../leaderboard/InterimResultsPreview';
 import { buildOfflineProjection } from './offlineProjection';
 import { connectOfflineProjector, openOfflineProjector, type OfflineProjectorConnection } from './offlineProjector';
 import { exportOfflineRecovery, exportStoredOfflineEvent, importOfflineEvent } from './offlinePreparation';
@@ -254,6 +255,7 @@ interface OperatorProps {
 function OfflineOperator({ runtime, revision, busy, task, progress, lock }: OperatorProps) {
   const { manifest, state } = runtime;
   const [roundId, setRoundId] = useState(manifest.rounds[0]!.id);
+  const [interimPreview, setInterimPreview] = useState<{ roundId: string; page: number; head: string } | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [reason, setReason] = useState('');
   const [recoveryPassword, setRecoveryPassword] = useState('');
@@ -334,6 +336,14 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
   const privateAudio = !runtime.syncedReceipt && current && !state.recap && ['audio', 'music'].includes(current.kind.toLowerCase())
     ? current.mediaSource || current.media.find(media => media.kind === 'audio' && media.role === 'prompt')?.source : undefined;
   return <>
+    {interimPreview?.head === state.headHash && interimPreview.roundId === roundId && <InterimResultsPreview
+      rows={results.rows} missing={results.missing.map(cell => ({ ...cell, teamName: manifest.teams.find(team => team.id === cell.teamId)!.name }))}
+      disabled={disabled || !results.complete} onClose={() => setInterimPreview(null)} onPublish={() => {
+        setInterimPreview(null);
+        if (runtime.state.headHash === interimPreview.head) {
+          command({ type: 'results', payload: { throughRoundId: roundId, final: false, page: interimPreview.page } });
+        }
+      }} />}
     <h1>{manifest.event.title}</h1>
     <p data-offline-runtime-state>{runtime.syncedReceipt ? 'Výsledky bezpečně synchronizovány' : state.status === 'ended' ? 'Výsledky čekají na synchronizaci' : playBlock ? 'Uložený průběh je otevřený pro obnovu' : state.status === 'active' ? 'Offline režim aktivní' : 'Offline kvíz připraven'} · {state.sequence} potvrzených kroků</p>
     <p>Platnost hraní do {new Date(manifest.expiresAtMs).toLocaleString('cs-CZ')}.</p>
@@ -383,7 +393,10 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
       </details>
       <p data-offline-results-complete>{results.complete ? 'Všechna zahrnutá kola mají body.' : `Chybí ${results.missing.length} hodnot. Nula je zadaný výsledek.`}</p>
       <ol data-offline-ranking>{results.rows.map((row, rowIndex) => <li key={rowIndex}>{row.rank}. {row.teamName} — {pointsText(row.halfPoints)} b.</li>)}</ol>
-      <div className="offline-actions">{Array.from({ length: Math.ceil(manifest.teams.length / offlineResultsPageSize) }, (_, page) => <button key={page} disabled={disabled || !results.complete || state.status !== 'active'} onClick={() => command({ type: 'results', payload: { throughRoundId: roundId, final, page } })}>{final ? 'Konečné pořadí' : 'Průběžné výsledky'} · strana {page + 1}</button>)}</div>
+      <div className="offline-actions">{Array.from({ length: Math.ceil(manifest.teams.length / offlineResultsPageSize) }, (_, page) => <button key={page} disabled={disabled || (final && !results.complete) || state.status !== 'active'} onClick={() => {
+        if (final) command({ type: 'results', payload: { throughRoundId: roundId, final, page } });
+        else setInterimPreview({ roundId, page, head: state.headHash });
+      }}>{final ? 'Konečné pořadí' : 'Průběžné výsledky'} · strana {page + 1}</button>)}</div>
     </section>
     <section><h2>Obnova a dokončení</h2>
       <label>Heslo pro nový nouzový soubor<input type="password" autoComplete="off" value={recoveryPassword} onChange={event => setRecoveryPassword(event.target.value)} minLength={10} maxLength={200} /></label>

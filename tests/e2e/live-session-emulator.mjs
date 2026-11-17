@@ -137,6 +137,12 @@ async function run() {
   assertPublicSafe(state, true);
   assert.equal(state.revealedAnswer, 'Syntetická odpověď');
   assert.equal(state.answerImage, 'https://example.test/answer.jpg');
+  await expectFunctionError(() => invoke('revealAnswer', { sessionId, action: 'hide', expectedRevision: control.revision }), 'functions/invalid-argument');
+  assertPublicSafe(await publicState(sessionId), true);
+  control = await invoke('revealAnswer', { sessionId, action: 'hide', expectedHideRevision: control.revision });
+  state = await publicState(sessionId);
+  assertPublicSafe(state, false);
+  assert.equal(state.slidePosition, 2);
 
   const beforeReturnRevision = control.revision;
   control = await invoke('goToSlide', { sessionId, direction: -1, expectedRevision: beforeReturnRevision });

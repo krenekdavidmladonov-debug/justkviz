@@ -191,6 +191,7 @@ test('one complete evening: saved editor, registration, real materials, media, S
     expect((await published()).interimResults).toBeUndefined();
     await expect(projector.locator('.sm-scene-interim')).toHaveCount(0);
     await results.getByRole('button', { name: 'Průběžné výsledky', exact: true }).click();
+    await results.getByRole('button', { name: 'Ukázat sálu', exact: true }).click();
     await expect(projector.locator('.sm-scene-interim .sm-table .sm-row')).toHaveCount(2);
     expect((await published()).interimResults.presentationStyle).toBe('show');
     await results.getByRole('button', { name: 'Zavřít průběžné výsledky', exact: true }).click();

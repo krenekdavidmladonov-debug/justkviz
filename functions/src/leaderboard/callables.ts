@@ -89,9 +89,13 @@ export async function previewIn(tx: Transaction, eventId: string, sessionId: str
 }
 export const previewInterimResults = securedOnCall('previewInterimResults', options, async (request) => {
     const data = object(request.data);
+    const scope = data.scope ?? 'selected';
+    if ((scope !== 'selected' && scope !== 'current') || (scope === 'current' && data.throughRoundId !== undefined))
+        throw new HttpsError('invalid-argument', 'Neplatný rozsah náhledu.');
+    const throughRoundId = scope === 'current' ? null : id(data, 'throughRoundId');
     return runAccessTransaction(db(), async (tx) => {
         await staff(request);
-        const { session, result } = await previewIn(tx, id(data, 'eventId'), id(data, 'sessionId'), id(data, 'throughRoundId'));
+        const { session, result } = await previewIn(tx, id(data, 'eventId'), id(data, 'sessionId'), throughRoundId, scope);
         return { ...result, sessionRevision: session.revision, publishedVersionId: session.interimResults?.versionId ?? null };
     });
 });
@@ -106,7 +110,7 @@ export const controlInterimResults = securedOnCall('controlInterimResults', opti
     const action = data.action;
     if (!['publish', 'current', 'hide', 'page', 'static'].includes(action as string))
         throw new HttpsError('invalid-argument', 'Neplatný příkaz výsledků.');
-    const allowed = ['eventId', 'sessionId', 'requestId', 'expectedRevision', 'action', ...(action === 'publish' ? ['throughRoundId', 'sourceFingerprint', 'presentationStyle', 'motion'] : action === 'page' ? ['page'] : [])];
+    const allowed = ['eventId', 'sessionId', 'requestId', 'expectedRevision', 'action', ...(action === 'publish' ? ['throughRoundId', 'sourceFingerprint', 'presentationStyle', 'motion'] : action === 'page' ? ['page'] : action === 'current' ? ['sourceFingerprint'] : [])];
     if (Object.keys(data).some(k => !allowed.includes(k)))
         throw new HttpsError('invalid-argument', 'Nepovolená pole.');
     let requestedPagination;
@@ -142,7 +146,7 @@ export const controlInterimResults = securedOnCall('controlInterimResults', opti
             const { result } = await previewIn(tx, eventId, sessionId, action === 'current' ? null : id(data, 'throughRoundId'), action === 'current' ? 'current' : 'selected');
             if (action === 'publish' && !result.complete)
                 throw new HttpsError('failed-precondition', 'Neúplné nebo prázdné výsledky nelze zveřejnit.');
-            if (action === 'publish' && data.sourceFingerprint !== result.sourceFingerprint)
+            if ((action === 'publish' || data.sourceFingerprint !== undefined) && data.sourceFingerprint !== result.sourceFingerprint)
                 throw new HttpsError('aborted', 'Náhled je zastaralý. Načtěte novou podobu.');
             const slide = await loadSlide(tx, session.quizId, session.currentSlidePosition, session.snapshotId);
             // Existing navigation lifecycle stops media, clears recap/reveal, preserves position.

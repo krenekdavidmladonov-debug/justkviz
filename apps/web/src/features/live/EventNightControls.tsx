@@ -8,6 +8,7 @@ import type { ResultsPreview } from '../leaderboard/types';
 import type { FinalResponse } from '../final-reveal/types';
 import { WinnerMusic } from '../final-reveal/WinnerMusic';
 import { FinaleReadinessDialog } from './FinaleReadinessDialog';
+import { InterimResultsPreview } from '../leaderboard/InterimResultsPreview';
 import { DemoFinalePreview } from '../final-reveal/DemoFinalePreview';
 import { mapLiveControlState } from './liveMappers';
 import { useShowCommands, type RevisionedResult } from './ShowCommandContext';
@@ -29,6 +30,7 @@ export function EventNightControls({ session, slides, navigation }: Props) {
   const [winnerVersion, setWinnerVersion] = useState<string | null>(null);
   const [incomplete, setIncomplete] = useState<ResultsPreview | null>(null);
   const [demoOpen, setDemoOpen] = useState(false);
+  const [interimPreview, setInterimPreview] = useState<{ results: ResultsPreview; intent: string } | null>(null);
   const acknowledged = useRef(-1);
   const [pending, setPending] = useState(false), [error, setError] = useState('');
   const [interimOwner, setInterimOwner] = useState<string | null>(null);
@@ -71,20 +73,34 @@ export function EventNightControls({ session, slides, navigation }: Props) {
       setInterimOwner(null); setWinnerVersion(null);
       if (mounted.current) setError(cause instanceof Error && (cause.message.startsWith('Finále:') || cause.message.startsWith('Výsledky:')) ? cause.message
         : (cause as { code?: string })?.code === 'functions/failed-precondition' ? 'Výsledky zatím nejsou připravené. Zkontrolujte uložené body rozhodčího.'
-          : failureMessage);
+          : (cause as { code?: string })?.code === 'functions/aborted' ? 'Výsledky nebo projekce se mezitím změnily. Otevřete nový náhled.' : failureMessage);
       return false;
     } finally { locked.current = false; if (mounted.current) setPending(false); }
   }
-  async function interim(action: 'current' | 'hide' | 'page', page?: number, intent = resultIntent(session)) {
+  async function loadInterimPreview() {
+    const intent = resultIntent(session);
+    await perform(async () => {
+      const { data: results } = await httpsCallable<unknown, ResultsPreview>(getFirebaseServices().functions, 'previewInterimResults')({
+        eventId: session.eventId, sessionId: session.sessionId, scope: 'current',
+      });
+      assertResultIntent(current.current, results.sessionRevision, intent);
+      setInterimPreview({ results, intent });
+    }, 'Náhled průběžných výsledků se nepodařilo načíst.');
+  }
+  async function interim(action: 'current' | 'hide' | 'page', page?: number, intent = resultIntent(session), preview?: ResultsPreview) {
     if (!show) return;
     await perform(async () => {
-      assertResultIntent(current.current, current.current.revision, intent);
+      assertResultIntent(current.current, preview?.sessionRevision ?? current.current.revision, intent);
       show.stopAudio();
       const result = await show.execute((latest, revision) => {
-        assertResultIntent(latest, revision, intent);
+        assertResultIntent(latest, preview?.sessionRevision ?? revision, intent);
+        if (preview && revision !== preview.sessionRevision) {
+          throw new Error('Výsledky: Projekce se mezitím změnila. Otevřete nový náhled.');
+        }
         return httpsCallable<unknown, RevisionedResult>(getFirebaseServices().functions, 'controlInterimResults')({
           eventId: latest.eventId, sessionId: latest.sessionId, expectedRevision: revision,
           requestId: crypto.randomUUID(), action, ...(page === undefined ? {} : { page }),
+          ...(preview ? { sourceFingerprint: preview.sourceFingerprint } : {}),
         }).then(response => response.data);
       });
       acknowledged.current = result.revision;
@@ -200,7 +216,7 @@ export function EventNightControls({ session, slides, navigation }: Props) {
 
   return <section className="event-night-controls" aria-label="Výsledky akce">
     <button type="button" className={session.interimResults ? 'primary-button' : 'secondary-button'} disabled={busy || session.status !== 'active' || final?.visible === true}
-      aria-pressed={Boolean(session.interimResults)} onClick={() => void interim(session.interimResults ? 'hide' : 'current')}>
+      aria-pressed={Boolean(session.interimResults)} onClick={() => session.interimResults ? void interim('hide') : void loadInterimPreview()}>
       {session.interimResults ? 'Zavřít průběžné výsledky' : 'Průběžné výsledky'}
     </button>
     <button type="button" className="secondary-button" disabled={busy || final?.visible === true || Boolean(session.interimResults)} onClick={() => setDemoOpen(true)}>Náhled závěrečné show</button>
@@ -213,6 +229,11 @@ export function EventNightControls({ session, slides, navigation }: Props) {
     </div>}
     {winnerVersion && final?.visible && final.versionId === winnerVersion && session.status === 'active' && <WinnerMusic key={winnerVersion} />}
     {error && <p role="alert">{error}</p>}
+    {interimPreview && <InterimResultsPreview rows={interimPreview.results.rows} missing={interimPreview.results.missing}
+      disabled={busy} onClose={() => setInterimPreview(null)} onPublish={() => {
+        setInterimPreview(null);
+        void interim('current', undefined, interimPreview.intent, interimPreview.results);
+      }} />}
     {incomplete && session.eventId && <FinaleReadinessDialog preview={incomplete} eventId={session.eventId} onClose={() => setIncomplete(null)} onRetry={() => void beginFinale()} onPreview={() => { setIncomplete(null); setDemoOpen(true); }} />}
     {demoOpen && <DemoFinalePreview onClose={() => setDemoOpen(false)} />}
   </section>;

@@ -6,7 +6,7 @@ export function leaderboardFixture(count?: number): Promise<{
  call(name:string,data:unknown):Promise<unknown>;
  publicState():Promise<Record<string,unknown>>;
  session():Promise<Record<string,unknown>>;
- score(i:number,r:number,value:number):Promise<unknown>;
+ score(i:number,r:number,value:number|null):Promise<unknown>;
  close():Promise<void>;
 }>;
 
