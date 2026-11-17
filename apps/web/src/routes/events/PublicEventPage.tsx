@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useLocation, useParams } from 'react-router-dom';
 
 import { createEventRegistration, newRegistrationRetryKey, registrationActionError, type RegistrationFormValues } from '../../features/events/registrationApi';
 import { getPublicEvent } from '../../features/events/eventRepository';
@@ -17,6 +17,7 @@ export function PublicEventPage() {
 }
 
 function PublicEventRegistration({ eventId }: { readonly eventId: string | undefined }) {
+  const { hash } = useLocation();
   const [event, setEvent] = useState<PublicEventRecord | null>(null);
   const [values, setValues] = useState(EMPTY);
   const [created, setCreated] = useState<RegistrationMutationResponse | null>(null);
@@ -51,6 +52,10 @@ function PublicEventRegistration({ eventId }: { readonly eventId: string | undef
       if (document.title === title) document.title = previousTitle;
     };
   }, [event]);
+
+  useEffect(() => {
+    if (!loading && hash === '#prihlaseni') document.getElementById('prihlaseni')?.scrollIntoView({ block: 'start' });
+  }, [hash, loading]);
 
   if (loading) return <section className="public-event-detail"><div className="event-public-state" role="status">Načítám akci…</div></section>;
   if (!event) return <section className="public-event-detail"><div className="event-public-state"><h1>Akce není dostupná</h1>{error && <><p role="alert">{error}</p><button className="secondary-button" type="button" onClick={() => void load()}>Načíst znovu</button></>}<Link className="back-link" to="/">← Zpět na akce</Link></div></section>;

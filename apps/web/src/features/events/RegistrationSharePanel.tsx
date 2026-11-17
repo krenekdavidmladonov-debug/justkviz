@@ -6,7 +6,7 @@ import type { EventRecord } from './types';
 
 export function RegistrationSharePanel({ event, now: parentNow }: { event: EventRecord; now?: number }) {
   const config = readFirebaseConfig();
-  const url = publicRegistrationUrl(event.id, { projectId: config.options.projectId ?? '', useEmulators: config.useEmulators }, window.location.origin);
+  const url = publicRegistrationUrl(event.id, { projectId: config.options.projectId ?? '', useEmulators: config.useEmulators }, window.location.origin) + '#prihlaseni';
   const [now, setNow] = useState(Date.now);
   const [notice, setNotice] = useState('');
   const [qr, setQr] = useState<{ png: string; svg: string } | null>(null);
