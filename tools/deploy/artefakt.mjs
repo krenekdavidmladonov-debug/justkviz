@@ -116,6 +116,17 @@ async function packageFunctions(source, directory, cliRequire) {
   return zip;
 }
 
+// CLI vytváří pouze chybějící exporty ze stejného balíčku, ze kterého vznikl functions.zip.
+export function prepareFunctionCreation(artifact, execute = run) {
+  const bundle = path.join(artifact.directory, 'functions');
+  const npm = path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
+  execute(process.execPath, [npm, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], bundle, artifact.env);
+  const configPath = path.join(artifact.source, artifact.configName);
+  const config = readJson(configPath);
+  config.functions = { source: bundle, codebase: 'default', runtime: 'nodejs22' };
+  writeFileSync(configPath, JSON.stringify(config, null, 2));
+}
+
 export async function prepareArtifact(root, head, sdk, { withFunctions, withRules, withStorageRules }) {
   const paths = execFileSync('git', ['ls-tree', '-r', head], { cwd: root, encoding: 'utf8', windowsHide: true });
   if (/^(?:120000|160000) /mu.test(paths)) throw new Error('Zdroje vydání nesmí obsahovat odkazy ani submoduly.');
