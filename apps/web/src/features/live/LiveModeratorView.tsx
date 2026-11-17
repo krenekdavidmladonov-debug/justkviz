@@ -117,7 +117,7 @@ export function LiveModeratorView({
     session.sessionId,
   );
   const source = session.interimResults || session.finalReveal?.visible ? undefined : liveMediaSource(presentedSlide);
-  const roundLabel = currentRoundLabel(currentSlide);
+  const roundLabel = finalActive ? 'Finále' : currentRoundLabel(currentSlide);
   const questionLabel = currentQuestionLabel(session, currentSlide, presentedSlide, slides);
   const recapTitle = currentSlide?.roundTitle?.trim() || 'Aktuální kolo';
   const navigationSourceAvailable = slides.length > 0 && (session.currentSlidePosition === 0

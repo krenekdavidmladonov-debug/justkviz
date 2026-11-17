@@ -345,3 +345,12 @@ describe('moderator chrome', () => {
     expect(view.host.textContent).toContain('Médium nemá zdroj');
   });
 });
+
+test.each(['intro', 'lower', 'group', 'table'] as const)('labels the moderator header as finale during %s and restores the question afterward', async mode => {
+  const finalReveal = { versionId: 'a'.repeat(64), visible: true, mode, rank: null, revealedCount: 0, totalGroups: 3, page: 0, pageCount: 1 };
+  const view = await mount({ session: { ...session, finalReveal } });
+  expect(view.host.querySelector('.live-progress strong')?.textContent).toBe('Finální vyhlášení');
+  expect(view.host.querySelector('.live-title-context span')?.textContent).toBe('Finále');
+  await view.render({ session: { ...session, revision: 2, finalReveal: { ...finalReveal, visible: false } } });
+  expect(view.host.querySelector('.live-progress strong')?.textContent).toBe('Otázka 2 / 3');
+});
