@@ -12,6 +12,7 @@ import { prepareArtifact, removeArtifact } from './artefakt.mjs';
 const SITE = 'justkviz-v2';
 const LIVE_URL = 'https://justkviz.cz';
 const REGION = 'europe-west1';
+const FUNCTION_BATCH_SIZE = 5;
 const BUCKET = PROJECT + '.firebasestorage.app';
 const REPO = 'krenekdavidmladonov-debug/justkviz';
 const ROOT = fileURLToPath(new URL('../../', import.meta.url));
@@ -129,6 +130,20 @@ async function functionTargets(client, head) {
   });
 }
 
+export async function storageBucketExists(client) {
+  let bucket;
+  try {
+    ({ body: bucket } = await client.get('b/' + BUCKET, { queryParams: { fields: 'name,projectNumber' } }));
+  } catch (error) {
+    if (error?.status === 404) return false;
+    throw error;
+  }
+  if (bucket?.name !== BUCKET || bucket.projectNumber !== '177615774316') {
+    throw new Error('Nepodařilo se ověřit bucket ' + BUCKET + ' v produkčním projektu.');
+  }
+  return true;
+}
+
 export function functionSourcePatch(name, storageSource) {
   return { name, buildConfig: { source: { storageSource } } };
 }
@@ -150,8 +165,8 @@ async function deployFunctions(client, targets, zip) {
   const generation = upload.headers.get('x-goog-generation');
   if (generation && /^\d+$/u.test(generation)) storageSource.generation = generation;
   const { pollOperation } = require('firebase-tools/lib/operation-poller');
-  for (let offset = 0; offset < targets.length; offset += 5) {
-    const batch = await Promise.allSettled(targets.slice(offset, offset + 5).map(async target => {
+  for (let offset = 0; offset < targets.length; offset += FUNCTION_BATCH_SIZE) {
+    const batch = await Promise.allSettled(targets.slice(offset, offset + FUNCTION_BATCH_SIZE).map(async target => {
       const { body } = await client.get(target.name);
       if (body.state !== 'ACTIVE' || body.updateTime !== target.updateTime) {
         throw new Error('Funkce ' + target.entryPoint + ' se od náhledu změnila.');
@@ -224,16 +239,27 @@ async function run() {
     const withRules = selection === '3';
     const { Client } = require('firebase-tools/lib/apiv2');
     const functions = withFunctions ? new Client({ urlPrefix: functionsOrigin, apiVersion: 'v2' }) : undefined;
+    const withStorageRules = withRules && await storageBucketExists(
+      new Client({ urlPrefix: 'https://storage.googleapis.com', apiVersion: 'storage/v1' }));
     const targets = functions ? await functionTargets(functions, head) : [];
     console.log('\nNasadí se Hosting site ' + SITE + ' (web) v projektu ' + PROJECT + '.');
+    const batches = Math.ceil(targets.length / FUNCTION_BATCH_SIZE);
+    const estimate = batches
+      ? batches * 2 + '–' + batches * 5 + ' min (orientačně, fronta Cloud Build může dobu prodloužit)'
+      : '0 min';
+    console.log('Functions k aktualizaci: ' + targets.length + '. Odhad doby aktualizace Functions: ' + estimate + '.');
     if (withFunctions) console.log('Zdroj existujících Functions v ' + REGION + ': ' + targets.map(target => target.entryPoint).join(', '));
-    if (withRules) console.log('Rules: Firestore (default) a Storage ' + BUCKET + '.');
+    if (withRules) {
+      console.log('Rules: Firestore (default).');
+      if (withStorageRules) console.log('Rules: Storage ' + BUCKET + '.');
+      else console.log('Bucket ' + BUCKET + ' neexistuje. Pravidla Storage se vynechají.');
+    }
     console.log('\nZměněné soubory mezi aktivním zdrojem Hostingu ' + base + ' a main ' + head + ':');
     console.log(git(['-c', 'core.quotepath=true', 'diff', '--name-status', base, head, '--']).trim() || '(žádné)');
     console.log('\nNávrat Hostingu: NASADIT.cmd --rollback ' + prior.id + ' ' + base);
     await confirm();
 
-    const artifact = await prepareArtifact(ROOT, head, await stagingWebConfig(), { withFunctions, withRules });
+    const artifact = await prepareArtifact(ROOT, head, await stagingWebConfig(), { withFunctions, withRules, withStorageRules });
     const deploy = (only, message) => {
       const args = [artifact.cli, 'deploy', '--non-interactive', '--project', PROJECT, '--config', artifact.configName, '--only', only];
       if (message) args.push('--message', message);
@@ -245,7 +271,7 @@ async function run() {
         if (!isDeepStrictEqual(await functionTargets(functions, head), targets)) throw new Error('Inventář Functions se od náhledu změnil.');
         await deployFunctions(functions, targets, artifact.zip);
       }
-      if (withRules) deploy('firestore:rules,storage');
+      if (withRules) deploy(withStorageRules ? 'firestore:rules,storage' : 'firestore:rules');
       if (!isDeepStrictEqual(await current(), prior)) throw new Error('Aktivní Hosting se během nasazení změnil.');
       deploy('hosting', messagePrefix + head);
       const deployed = await current();

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { verifyMain, functionSourcePatch } from './nasadit.mjs';
+import { verifyMain, storageBucketExists, functionSourcePatch } from './nasadit.mjs';
 import { deploymentConfig } from './artefakt.mjs';
 
 const head = 'a'.repeat(40);
@@ -84,13 +84,37 @@ test('ověřuje přesný push na main a Quality gate z aktuálního pokusu', () 
 test('povolí jen určený Hosting a výslovně přidané Rules', () => {
   const hosting = { site: 'justkviz-v2', public: 'apps/web/dist', rewrites: [{ source: '**', destination: '/index.html' }] };
   assert.deepEqual(deploymentConfig(hosting, false), { hosting });
-  assert.deepEqual(deploymentConfig(hosting, true), {
+  assert.deepEqual(deploymentConfig(hosting, true, false), { hosting, firestore: { database: '(default)', rules: 'firestore.rules' } });
+  assert.deepEqual(deploymentConfig(hosting, true, true), {
     hosting,
     firestore: { database: '(default)', rules: 'firestore.rules' },
     storage: [{ bucket: 'filmovy-kviz-v2-staging.firebasestorage.app', rules: 'storage.rules' }],
   });
   assert.throws(() => deploymentConfig({ ...hosting, site: 'filmovy-kviz-v2-staging' }, false), /site/u);
   assert.throws(() => deploymentConfig({ ...hosting, rewrites: [{ source: '**', function: 'health' }] }, false), /statické/u);
+});
+
+test('ověřuje pouze metadata cílového bucketu a při 404 jej vynechá', async () => {
+  const bucket = 'filmovy-kviz-v2-staging.firebasestorage.app';
+  assert.equal(await storageBucketExists({
+    async get(path, options) {
+      assert.equal(path, 'b/' + bucket);
+      assert.deepEqual(options, { queryParams: { fields: 'name,projectNumber' } });
+      return { body: { name: bucket, projectNumber: '177615774316' } };
+    },
+  }), true);
+  assert.equal(await storageBucketExists({
+    async get() { throw Object.assign(new Error('Not Found'), { status: 404 }); },
+  }), false);
+});
+
+test('odmítnutí přístupu a jiný projekt nejsou chybějící bucket', async () => {
+  await assert.rejects(storageBucketExists({
+    async get() { throw Object.assign(new Error('Forbidden'), { status: 403 }); },
+  }), /Forbidden/u);
+  await assert.rejects(storageBucketExists({
+    async get() { return { body: { name: 'filmovy-kviz-v2-staging.firebasestorage.app', projectNumber: '1' } }; },
+  }), /v produkčním projektu/u);
 });
 
 test('změna Functions obsahuje pouze jméno a zdroj sestavení', () => {

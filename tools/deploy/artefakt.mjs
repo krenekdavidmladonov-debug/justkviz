@@ -27,7 +27,7 @@ export function removeArtifact(directory) {
   rmSync(directory, { recursive: true, force: true });
 }
 
-export function deploymentConfig(hosting, withRules) {
+export function deploymentConfig(hosting, withRules, withStorageRules) {
   if (hosting?.site !== SITE || hosting.public !== 'apps/web/dist' ||
       Object.keys(hosting).some(key => !['site', 'public', 'headers', 'ignore', 'rewrites'].includes(key)) ||
       !isDeepStrictEqual(hosting.rewrites, [{ source: '**', destination: '/index.html' }])) {
@@ -36,7 +36,7 @@ export function deploymentConfig(hosting, withRules) {
   const config = { hosting };
   if (withRules) {
     config.firestore = { database: '(default)', rules: 'firestore.rules' };
-    config.storage = [{ bucket: BUCKET, rules: 'storage.rules' }];
+    if (withStorageRules) config.storage = [{ bucket: BUCKET, rules: 'storage.rules' }];
   }
   return config;
 }
@@ -116,7 +116,7 @@ async function packageFunctions(source, directory, cliRequire) {
   return zip;
 }
 
-export async function prepareArtifact(root, head, sdk, { withFunctions, withRules }) {
+export async function prepareArtifact(root, head, sdk, { withFunctions, withRules, withStorageRules }) {
   const paths = execFileSync('git', ['ls-tree', '-r', head], { cwd: root, encoding: 'utf8', windowsHide: true });
   if (/^(?:120000|160000) /mu.test(paths)) throw new Error('Zdroje vydání nesmí obsahovat odkazy ani submoduly.');
   const directory = mkdtempSync(path.join(realpathSync(tmpdir()), 'justkviz-deploy-'));
@@ -136,7 +136,7 @@ export async function prepareArtifact(root, head, sdk, { withFunctions, withRule
     validateWeb(path.join(web, 'dist'));
 
     const hosting = readJson(path.join(source, 'firebase.offline-hosting.json')).hosting;
-    const config = deploymentConfig(hosting, withRules);
+    const config = deploymentConfig(hosting, withRules, withStorageRules);
     const configName = 'firebase.produkce.json';
     writeFileSync(path.join(source, configName), JSON.stringify(config, null, 2));
     const require = createRequire(path.join(source, 'package.json'));
