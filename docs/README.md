@@ -7,5 +7,6 @@
 - [Datový model](DATA_MODEL.md)
 - [Provoz kvízového večera](PROVOZ_VECERA.md)
 - [Lokální QA](LOCAL_QA.md)
+- [Nasazení z main](NASAZENI.md)
 
 Původní specifikace, návody k vydání a záznamy jsou v [archivu](archive/). Pro aktuální pravidla práce platí [AGENTS.md](../AGENTS.md).
