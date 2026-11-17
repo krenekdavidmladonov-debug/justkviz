@@ -42,6 +42,16 @@ function PublicEventRegistration({ eventId }: { readonly eventId: string | undef
   useEffect(() => { void load(); return () => { loadVersion.current++; }; }, [load]);
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 15000); return () => window.clearInterval(timer); }, []);
 
+  useEffect(() => {
+    if (!event) return;
+    const previousTitle = document.title;
+    const title = event.startsAt ? event.title + ' – ' + eventDateLabel(event, false) : event.title;
+    document.title = title;
+    return () => {
+      if (document.title === title) document.title = previousTitle;
+    };
+  }, [event]);
+
   if (loading) return <section className="public-event-detail"><div className="event-public-state" role="status">Načítám akci…</div></section>;
   if (!event) return <section className="public-event-detail"><div className="event-public-state"><h1>Akce není dostupná</h1>{error && <><p role="alert">{error}</p><button className="secondary-button" type="button" onClick={() => void load()}>Načíst znovu</button></>}<Link className="back-link" to="/">← Zpět na akce</Link></div></section>;
   const registration = registrationPresentation(event, now);

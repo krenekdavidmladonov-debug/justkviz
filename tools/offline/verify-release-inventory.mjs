@@ -29,6 +29,13 @@ assert.deepEqual(inventory.origins, ['https://justkviz.cz', 'https://justkviz-v2
 assert.deepEqual(Object.keys(hosting), ['hosting']);
 assert.equal(hosting.hosting.site, inventory.hostingSite);
 assert.equal(hosting.hosting.public, 'apps/web/dist');
+const indexExclusions = hosting.hosting.headers.flatMap(rule => rule.headers
+  .filter(header => header.key.toLowerCase() === 'x-robots-tag')
+  .map(header => ({ source: rule.source, value: header.value })));
+assert.deepEqual(indexExclusions, [{
+  source: '/{admin,admin/**,projector,projector/**,referee,referee/**,account,invite,invite/**,events/*/registration/**,offline.html}',
+  value: 'noindex, nofollow',
+}]);
 assert.equal(new Set(names).size, 6);
 assert.equal(inventory.default, 'disabled');
 

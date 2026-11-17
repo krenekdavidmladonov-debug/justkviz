@@ -39,10 +39,12 @@ export function eventCountdown(event: EventTiming, now: Date | number = Date.now
   const days = calendarDay(event.startsAt, event.timeZone) - calendarDay(new Date(millis(now)), event.timeZone);
   return days < 0 ? 'Akce skončila' : days === 0 ? 'Dnes' : days === 1 ? 'Zítra' : `Za ${days} ${days < 5 ? 'dny' : 'dní'}`;
 }
-export function eventDateLabel(event: EventTiming): string {
+export function eventDateLabel(event: EventTiming, includeTime = true): string {
   if (!validDate(event.startsAt)) return 'Termín není stanoven';
-  try { return new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short', timeZone: event.timeZone ?? 'Europe/Prague' }).format(event.startsAt); }
-  catch { return new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Prague' }).format(event.startsAt); }
+  const options: Intl.DateTimeFormatOptions = { dateStyle: 'medium' };
+  if (includeTime) options.timeStyle = 'short';
+  try { return new Intl.DateTimeFormat('cs-CZ', { ...options, timeZone: event.timeZone ?? 'Europe/Prague' }).format(event.startsAt); }
+  catch { return new Intl.DateTimeFormat('cs-CZ', { ...options, timeZone: 'Europe/Prague' }).format(event.startsAt); }
 }
 export function eventCapacity(event: Pick<RegistrationEvent, 'teamCapacity' | 'peopleCapacity' | 'acceptedTeams' | 'acceptedPeople'>) {
   return {
