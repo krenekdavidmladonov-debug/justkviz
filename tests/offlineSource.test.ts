@@ -25,7 +25,7 @@ function snapshotFor(path: string) {
     : path.endsWith('/registrations') ? registrations.map(item => row(item.id, item.data)) : [];
   return { docs, size: docs.length, empty: docs.length === 0 };
 }
-const transaction = { get: ({ path }: { path: string }) => Promise.resolve(snapshotFor(path)) } as unknown as Transaction;
+const transaction = { get: ({ path }: { path: string }) => Promise.resolve(snapshotFor(path)), getAll: () => Promise.resolve([]) } as unknown as Transaction;
 
 beforeEach(() => {
   sdk.firestore.mockReturnValue({ doc: reference, collection: reference });
