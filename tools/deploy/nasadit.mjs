@@ -110,15 +110,21 @@ function exportedFunctions(head) {
   return names.sort();
 }
 
-async function functionTargets(client, head) {
+export async function listDeployedFunctions(client) {
   const deployed = new Map();
   let pageToken;
   do {
-    const { body } = await client.get(location + '/functions', { queryParams: { pageSize: 100, pageToken } });
+    // apiv2 serializuje undefined jako text "undefined" – první stránka se proto ptá bez pageToken.
+    const { body } = await client.get(location + '/functions', { queryParams: pageToken ? { pageSize: 100, pageToken } : { pageSize: 100 } });
     if (body.unreachable?.length) throw new Error('Inventář Functions není úplný.');
     for (const fn of body.functions ?? []) deployed.set(fn.name, fn);
     pageToken = body.nextPageToken;
   } while (pageToken);
+  return deployed;
+}
+
+async function functionTargets(client, head) {
+  const deployed = await listDeployedFunctions(client);
   return exportedFunctions(head).map(entryPoint => {
     const name = location + '/functions/' + entryPoint;
     const fn = deployed.get(name);

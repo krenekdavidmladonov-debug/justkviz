@@ -44,3 +44,10 @@ overrides:
 
 patchedDependencies:
   minimatch@11.0.3: tools/dependencies/patches/minimatch@11.0.3.patch
+
+# Dočasná výjimka: picomatch <=4.0.7 (ReDoS) zatím nemá opravené vydání.
+# Týká se jen vývojových nástrojů (typescript-eslint, firebase-tools > node-gyp),
+# ne runtime webu ani Functions. Odstranit, jakmile vyjde picomatch >=4.0.8.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-fc5q-39xc-vjpf

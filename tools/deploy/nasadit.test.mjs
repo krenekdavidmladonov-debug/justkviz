@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
-import { verifyMain, storageBucketExists, functionSourcePatch } from './nasadit.mjs';
+import { verifyMain, storageBucketExists, functionSourcePatch, listDeployedFunctions } from './nasadit.mjs';
 import { deploymentConfig } from './artefakt.mjs';
 
 const head = 'a'.repeat(40);
@@ -148,4 +148,17 @@ test('změna Functions obsahuje pouze jméno a zdroj sestavení', () => {
   const name = 'projects/filmovy-kviz-v2-staging/locations/europe-west1/functions/health';
   const storageSource = { bucket: 'staging-upload', object: 'function.zip', generation: '123' };
   assert.deepEqual(functionSourcePatch(name, storageSource), { name, buildConfig: { source: { storageSource } } });
+});
+
+test('function inventory asks for the first page without a pageToken and follows nextPageToken', async () => {
+  const calls = [];
+  const pages = [
+    { functions: [{ name: 'a' }], nextPageToken: 'p2' },
+    { functions: [{ name: 'b' }] },
+  ];
+  const client = { async get(path, options) { calls.push(options.queryParams); return { body: pages[calls.length - 1] }; } };
+  const deployed = await listDeployedFunctions(client);
+  assert.deepEqual([...deployed.keys()], ['a', 'b']);
+  assert.deepEqual(calls, [{ pageSize: 100 }, { pageSize: 100, pageToken: 'p2' }]);
+  assert.ok(!('pageToken' in calls[0]));
 });
