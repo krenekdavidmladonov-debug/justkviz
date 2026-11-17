@@ -130,7 +130,7 @@ export async function authorizeOperation(name: string, request: CallableRequest,
       assertEventOperational((tx ? await tx.get(eventRef) : await eventRef.get()).data());
     }
     const required: Permission[] = ['event.live'];
-    if (name === 'revealAnswer' || name === 'selectRecapQuestion' || (name === 'playMedia' && data?.mode === 'original')) required.push(eventBound ? 'event.answers.read' : 'quiz.answers.read');
+    if ((name === 'revealAnswer' && data?.action !== 'hide') || name === 'selectRecapQuestion' || (name === 'playMedia' && data?.mode === 'original')) required.push(eventBound ? 'event.answers.read' : 'quiz.answers.read');
     return authorize(request.auth, required, eventBound ? { kind: 'event', id: resourceId(session.eventId) } : { kind: 'quiz', id: resourceId(session.quizId) }, tx);
   }
   throw new HttpsError('permission-denied', 'Operace nemá definovanou politiku přístupu.');

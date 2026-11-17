@@ -187,3 +187,36 @@ it.each(['saved', 'failed', 'stale'] as const)('forwards local audio completion 
     expect(host.querySelector('[data-offline-sync-receipt]')).not.toBeNull();
   }
 });
+
+it.each(['complete', 'missing', 'changed'] as const)('keeps offline standings private until confirmation (%s scores)', async outcome => {
+  HTMLDialogElement.prototype.showModal = function () { this.open = true; };
+  HTMLDialogElement.prototype.close = function () { this.open = false; };
+  const manifest = offlineManifest();
+  const initial = initialOfflineState(manifest);
+  const state = { ...initial, status: 'active' as const,
+    scores: initial.scores.map(score => ({ ...score, halfPoints: outcome === 'missing' ? null : 2 })) };
+  const append = vi.fn<OfflineRuntime['append']>().mockResolvedValue(undefined);
+  const runtime = { manifest, state, operations: [], playBlock: null, append, close: vi.fn() } as unknown as OfflineRuntime;
+  vi.mocked(listOfflineSessions).mockResolvedValue([{ sessionId: manifest.sessionId, title: manifest.event.title, sequence: 0 } as Awaited<ReturnType<typeof listOfflineSessions>>[number]]);
+  vi.mocked(openOfflineRuntime).mockResolvedValue(runtime);
+  await render();
+  const password = host.querySelector<HTMLInputElement>('input[type=password]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(password, 'synthetic-offline-password');
+    password.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => button('Odemknout a pokračovat').click());
+  await act(async () => button('Průběžné výsledky · strana 1').click());
+  expect(host.querySelector('dialog[open]')).not.toBeNull(); expect(append).not.toHaveBeenCalled();
+  if (outcome === 'missing') {
+    expect(host.querySelector('dialog [role="alert"]')?.textContent).toContain('QA01');
+    expect(button('Ukázat sálu').disabled).toBe(true);
+    await act(async () => button('Zavřít náhled').click());
+    expect(append).not.toHaveBeenCalled();
+    return;
+  }
+  if (outcome === 'changed') Object.assign(state, { headHash: 'changed-after-preview' });
+  await act(async () => button('Ukázat sálu').click());
+  if (outcome === 'changed') expect(append).not.toHaveBeenCalled();
+  else expect(append).toHaveBeenCalledExactlyOnceWith({ type: 'results', payload: { throughRoundId: manifest.rounds[0]!.id, final: false, page: 0 } });
+});

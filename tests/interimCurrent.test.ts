@@ -32,7 +32,7 @@ vi.mock('../functions/node_modules/firebase-admin/lib/esm/firestore/index.js', a
   Timestamp: (await import('firebase/firestore')).Timestamp, getFirestore: () => database,
 }));
 vi.mock('../functions/node_modules/firebase-admin/lib/esm/auth/index.js', () => ({ getAuth: () => ({ getUser: () => Promise.resolve(state.user) }) }));
-const { controlInterimResults } = await import('../functions/src/leaderboard/callables');
+const { controlInterimResults, previewInterimResults } = await import('../functions/src/leaderboard/callables');
 const auth = { uid: 'moderator', token: { email_verified: true, auth_time: 100, role: 'moderator' } };
 const command = (action = 'current', extra: Record<string, unknown> = {}) => ({ eventId: 'event', sessionId: 'session', requestId: randomUUID(),
   expectedRevision: state.records['sessions/session']!.revision, action, ...extra });
@@ -99,8 +99,8 @@ test('current versions stay frozen through score edits and pages; hide restores 
   expect(publicState().interimResults).not.toEqual(version);
 });
 
-test('current requires fresh revision and rejects client totals, round selections, preview fingerprints and style overrides', async () => {
-  for (const extra of [{ expectedRevision: 6 }, { throughRoundId: 'r1' }, { sourceFingerprint: 'forged' }, { rows: [] }, { presentationStyle: 'classic' }, { motion: 'static' }]) {
+test('current requires fresh revision and rejects client totals, round selections and style overrides', async () => {
+  for (const extra of [{ expectedRevision: 6 }, { throughRoundId: 'r1' }, { rows: [] }, { presentationStyle: 'classic' }, { motion: 'static' }]) {
     await expect(call(command('current', extra))).rejects.toMatchObject({ code: 'expectedRevision' in extra ? 'aborted' : 'invalid-argument' });
     expect(state.writes).toEqual([]);
   }
@@ -128,4 +128,70 @@ test('current and receipt replay recheck active scoped membership and fresh Auth
   state.beforeTransaction = () => { member.status = 'suspended'; };
   await expect(call(command())).rejects.toMatchObject({ code: 'permission-denied' });
   expect(state.writes).toHaveLength(writesBefore);
+});
+
+const preview = (data: Record<string, unknown> = {}) => previewInterimResults.run({ auth,
+  data: { eventId: 'event', sessionId: 'session', scope: 'current', ...data },
+} as unknown as Parameters<typeof previewInterimResults.run>[0]);
+
+test('current preview is private and read-only, names missing scores and confirms exactly the previewed totals', async () => {
+  const before = structuredClone(publicState());
+  const result = await preview();
+  expect(result).toMatchObject({ complete: false, sessionRevision: 7 });
+  expect(result.missing).toContainEqual(expect.objectContaining({ teamName: 'Team 2', roundId: 'r1' }));
+  expect(result.rows[0]).toMatchObject({ teamName: 'Team 0', halfPoints: 12 });
+  expect(state.writes).toEqual([]); expect(publicState()).toEqual(before);
+  await call(command('current', { sourceFingerprint: result.sourceFingerprint }));
+  expect((publicState().interimResults as { rows: unknown[] }).rows).toEqual(result.rows.slice(0, 6));
+});
+
+test('a changed score invalidates the private preview even if the session revision is unchanged', async () => {
+  const result = await preview();
+  state.records['events/event/scores/a']!.halfPoints = 8;
+  await expect(call(command('current', { sourceFingerprint: result.sourceFingerprint }))).rejects.toMatchObject({ code: 'aborted' });
+  expect(state.writes).toEqual([]); expect(publicState().interimResults).toBeUndefined();
+});
+
+test('preview rejects ambiguous or unknown scopes and unauthorized membership without writes', async () => {
+  for (const data of [{ scope: 'unknown' }, { throughRoundId: 'r1' }]) {
+    await expect(preview(data)).rejects.toMatchObject({ code: 'invalid-argument' });
+  }
+  state.records['memberships/moderator']!.permissions = ['event.read'];
+  await expect(preview()).rejects.toMatchObject({ code: 'permission-denied' });
+  expect(state.writes).toEqual([]);
+});
+
+const { revealAnswer } = await import('../functions/src/live/callables');
+const answerAction = (data: Record<string, unknown>) => revealAnswer.run({ auth, data: { sessionId: 'session', ...data } } as unknown as Parameters<typeof revealAnswer.run>[0]);
+
+test('the warm answer callable hides with live permission, removes private fields and preserves legacy reveal', async () => {
+  state.records['memberships/moderator']!.permissions = ['event.read', 'event.live'];
+  await answerAction({ action: 'hide', expectedHideRevision: 7 });
+  expect(publicState().revealedAnswer).toBeUndefined(); expect(publicState().answerImage).toBeUndefined();
+  expect(session()).toMatchObject({ revision: 8, answerRevealed: false, currentSlidePosition: 1 });
+  await expect(answerAction({ expectedRevision: 8 })).rejects.toMatchObject({ code: 'permission-denied' });
+  state.records['memberships/moderator']!.permissions = ['event.read', 'event.live', 'event.answers.read'];
+  await answerAction({ expectedRevision: 8 });
+  expect(publicState().revealedAnswer).toBe('PRIVATE_ANSWER');
+});
+
+test('answer hiding rejects stale revisions and ambiguous hide payloads without changing projection', async () => {
+  await expect(answerAction({ action: 'hide', expectedHideRevision: 6 })).rejects.toMatchObject({ code: 'aborted' });
+  for (const data of [{ action: 'hide', expectedRevision: 7 }, { action: 'hide', expectedHideRevision: 7, expectedRevision: 7 },
+    { action: 'unknown', expectedRevision: 7 }, { action: 'hide' }]) {
+    await expect(answerAction(data)).rejects.toMatchObject({ code: 'invalid-argument' });
+  }
+  expect(state.writes).toEqual([]); expect(publicState().revealedAnswer).toBe('PRIVATE_ANSWER');
+});
+
+test('answer hiding rechecks live permission, resource scope and in-transaction revocation', async () => {
+  const member = state.records['memberships/moderator']!;
+  member.permissions = ['event.read'];
+  await expect(answerAction({ action: 'hide', expectedHideRevision: 7 })).rejects.toMatchObject({ code: 'permission-denied' });
+  member.permissions = ['event.read', 'event.live']; member.events = { mode: 'selected', ids: ['foreign'] };
+  await expect(answerAction({ action: 'hide', expectedHideRevision: 7 })).rejects.toMatchObject({ code: 'permission-denied' });
+  member.events = { mode: 'all', ids: [] };
+  state.beforeTransaction = () => { member.status = 'suspended'; };
+  await expect(answerAction({ action: 'hide', expectedHideRevision: 7 })).rejects.toMatchObject({ code: 'permission-denied' });
+  expect(state.writes).toEqual([]);
 });

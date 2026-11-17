@@ -51,11 +51,22 @@ test('missing-score dialog offers an isolated demo without publishing results', 
   expect(host.querySelectorAll('dialog[open]')).toHaveLength(1);
   expect(calls.invoke).not.toHaveBeenCalled();
 });
-test('one button publishes current saved scores, then closes without round settings', async () => {
+async function openInterimPreview() {
+  calls.invoke.mockResolvedValueOnce({ data: { sessionRevision: state.revision, sourceFingerprint: 'preview-fingerprint',
+    rows: [{ rank: 1, teamName: 'Alfa', halfPoints: 8 }], missing: [{ teamId: 'beta', teamName: 'Beta' }] } });
+  await act(async () => host.querySelector('button')!.click());
+}
+function interimConfirmation() {
+  return [...host.querySelectorAll<HTMLButtonElement>('dialog button')].find(button => button.textContent === 'Ukázat sálu')!;
+}
+test('opens a private preview, publishes current scores only on confirmation, then closes', async () => {
   expect(host.querySelectorAll('button')).toHaveLength(2);
   expect(host.querySelector('select')).toBeNull();
-  await act(async () => host.querySelector('button')!.click());
-  expect(calls.invoke).toHaveBeenCalledWith('controlInterimResults', expect.objectContaining({ action: 'current', expectedRevision: 10 }));
+  await openInterimPreview();
+  expect(calls.invoke).toHaveBeenCalledExactlyOnceWith('previewInterimResults', expect.objectContaining({ scope: 'current' }));
+  expect(host.querySelector('dialog[open] [role="alert"]')?.textContent).toContain('Beta');
+  await act(async () => interimConfirmation().click());
+  expect(calls.invoke).toHaveBeenLastCalledWith('controlInterimResults', expect.objectContaining({ action: 'current', expectedRevision: 10, sourceFingerprint: 'preview-fingerprint' }));
   await render({ revision: 11, interimResults: { versionId: 'a'.repeat(64), roundNumber: 2, page: 0, pageCount: 1, presentationStyle: 'show', pageSize: 6 } });
   await act(async () => host.querySelector('button')!.click());
   expect(calls.invoke).toHaveBeenLastCalledWith('controlInterimResults', expect.objectContaining({ action: 'hide', expectedRevision: 11 }));
@@ -169,7 +180,8 @@ test('keeps the original interim timer intent when it fires after render but bef
   expect(calls.invoke).not.toHaveBeenCalled();
 });
 async function publishInterim(pageCount = 2) {
-  await act(async () => host.querySelector('button')!.click());
+  await openInterimPreview(); calls.invoke.mockClear();
+  await act(async () => interimConfirmation().click());
   await render({ revision: 11, interimResults: { ...interimPage, pageCount } });
 }
 async function pollInterim(milliseconds: number) {
@@ -208,8 +220,9 @@ test('only the initiating operator with an acknowledged revision advances interi
 });
 test('pending acknowledgement, shared commands and ended sessions block automatic interim pages', async () => {
   let acknowledge!: (value: unknown) => void;
+  await openInterimPreview(); calls.invoke.mockClear();
   calls.invoke.mockImplementation(() => new Promise(resolve => { acknowledge = resolve; }));
-  await act(async () => host.querySelector('button')!.click());
+  await act(async () => interimConfirmation().click());
   await render({ revision: 11, interimResults: { ...interimPage } });
   await act(async () => { vi.advanceTimersByTime(14000); });
   expect(calls.invoke).toHaveBeenCalledTimes(1);
@@ -437,11 +450,27 @@ test('a newer command from another operator pauses the automatic sequence', asyn
   await act(async () => { vi.advanceTimersByTime(10000); });
   expect(calls.invoke).not.toHaveBeenCalled(); expect(host.textContent).toContain('Odhalit další místo');
 });
-test('failed current results request leaves closeable error and never sends team/answer content', async () => {
+test('failed preview request leaves closeable error and never sends team/answer content', async () => {
   calls.invoke.mockRejectedValue(new Error('offline'));
   await act(async () => host.querySelector('button')!.click());
   expect(host.querySelector('[role="alert"]')).not.toBeNull();
   expect(host.querySelector('button')!.disabled).toBe(false);
   const payload = calls.invoke.mock.calls[0]![1];
-  expect(Object.keys(payload).sort()).toEqual(['action', 'eventId', 'expectedRevision', 'requestId', 'sessionId']);
+  expect(Object.keys(payload).sort()).toEqual(['eventId', 'scope', 'sessionId']);
+});
+
+test('closing the private preview publishes nothing and does not acquire automatic page ownership', async () => {
+  await openInterimPreview(); calls.invoke.mockClear();
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>('dialog button')].find(button => button.textContent === 'Zavřít náhled')!.click());
+  expect(host.querySelector('dialog')).toBeNull();
+  await act(async () => { vi.advanceTimersByTime(14000); });
+  expect(calls.invoke).not.toHaveBeenCalled();
+});
+
+test('an intervening revision prevents publishing a previously opened preview', async () => {
+  await openInterimPreview(); calls.invoke.mockClear();
+  await render({ revision: 11 });
+  await act(async () => interimConfirmation().click());
+  expect(calls.invoke).not.toHaveBeenCalled();
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('Projekce se mezitím změnila');
 });

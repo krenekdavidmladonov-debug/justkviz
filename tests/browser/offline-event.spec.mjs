@@ -402,7 +402,17 @@ async function offlinePhase() {
     await projector.close(); projector = await openProjector(page);
     await expect(projector.getByText(recapSlide.correctAnswer, { exact: true })).toBeVisible();
     expect(await storedHead(page, credentials.sessionId)).toEqual(recapHead);
+    const hideAnswer = button(page, 'Skrýt odpověď a výsledky');
+    const hideStarted = Date.now();
+    await hideAnswer.click();
+    await expect(projector.locator('.slide-answer')).toHaveCount(0, { timeout: 500 });
+    expect(Date.now() - hideStarted).toBeLessThanOrEqual(500);
     await page.getByRole('combobox', { name: 'Kolo', exact: true }).selectOption(manifest.rounds[0].id);
+    const preview = page.getByRole('dialog', { name: 'Náhled průběžných výsledků' });
+    await button(page, 'Průběžné výsledky · strana 1').click();
+    await expect(preview.getByRole('alert')).toContainText('Neúplné výsledky');
+    await expect(button(preview, 'Ukázat sálu')).toBeDisabled();
+    await button(preview, 'Zavřít náhled').click();
     for (let team = 1; team <= 10; team++) await page.getByLabel(`Body — QA${String(team).padStart(2, '0')}`, { exact: true }).fill(team === 1 ? '0,5' : String(team));
     await confirmed(page, credentials.sessionId, () => button(page, 'Uložit body kola').click());
     await page.getByLabel('Body — QA01', { exact: true }).fill('1');
@@ -411,7 +421,12 @@ async function offlinePhase() {
     await page.locator('[data-offline-score-history] summary').click();
     await expect(page.locator('[data-offline-score-history]')).toContainText('QA01 — 1 b. · revize 2 · Oprava zkušebního půlbodu');
     for (const [number, count] of [[1, 6], [2, 4]]) {
-      await confirmed(page, credentials.sessionId, () => button(page, `Průběžné výsledky · strana ${number}`).click());
+      const beforePreview = await storedHead(page, credentials.sessionId);
+      await button(page, 'Průběžné výsledky · strana ' + number).click();
+      await expect(preview).toBeVisible();
+      expect(await storedHead(page, credentials.sessionId)).toEqual(beforePreview);
+      await expect(projector.locator('.sm-row')).toHaveCount(number === 1 ? 0 : 6);
+      await confirmed(page, credentials.sessionId, () => button(preview, 'Ukázat sálu').click());
       await expect(projector.locator('.sm-row')).toHaveCount(count);
       const rows = await projector.locator('.sm-row').evaluateAll(rows => rows.map(row => ({
         rank: row.querySelector('.sm-rank').textContent, team: row.querySelector('[role="rowheader"]').textContent,

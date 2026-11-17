@@ -368,7 +368,17 @@ export const reportMediaPlayback = securedOnCall('reportMediaPlayback', callable
 export const goToSlide = securedOnCall('goToSlide', callableOptions, (request) => mutateSession(request, 'go-to-slide'));
 export const nextSlide = securedOnCall('nextSlide', callableOptions, (request) => mutateSession(request, 'next-slide'));
 export const previousSlide = securedOnCall('previousSlide', callableOptions, (request) => mutateSession(request, 'previous-slide'));
-export const revealAnswer = securedOnCall('revealAnswer', callableOptions, (request) => mutateSession(request, 'reveal-answer'));
+export const revealAnswer = securedOnCall('revealAnswer', callableOptions, request => {
+  const data: unknown = request.data;
+  if (isObject(data) && data.action !== undefined) {
+    if (data.action !== 'hide' || Object.keys(data).some(key => !['action', 'sessionId', 'expectedHideRevision'].includes(key))) {
+      throw new HttpsError('invalid-argument', 'Invalid answer action.');
+    }
+    // An older version of this callable must reject hide requests instead of interpreting them as a reveal.
+    return mutateSession({ ...request, data: { sessionId: data.sessionId, expectedRevision: data.expectedHideRevision } }, 'hide-answer');
+  }
+  return mutateSession(request, 'reveal-answer');
+});
 export const hideAnswer = securedOnCall('hideAnswer', callableOptions, (request) => mutateSession(request, 'hide-answer'));
 export const selectRecapQuestion = securedOnCall('selectRecapQuestion', callableOptions, (request) => mutateSession(request, 'select-recap-question'));
 export const playMedia = securedOnCall('playMedia', callableOptions, (request) => mutateSession(request, 'play-media'));
