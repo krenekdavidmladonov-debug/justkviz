@@ -135,6 +135,8 @@ lost-response deduplication.
 
 Authoritative event record implemented by Events Foundation: `schemaVersion`, title/start/time zone, private venue configuration, team capacity, retained legacy people capacity, accepted team/people counters, per-event team-size bounds (up to four for new settings and new/edited registrations), registration window/publication/status, lifecycle status, nullable immutable quiz assignment, fixed-point scoring foundation (`unitScale: 2`, `rankingMode: dense`, server-owned `started`), monotonic revision, and trusted audit fields. Staff may read the root; every client write is denied and mutations use trusted Functions.
 
+Explicit full quiz completion from the moderator uses the existing completed lifecycle and completion/capability fields. The current bound session and all other event sessions end in the same transaction; registration publication closes and publicEvents is removed. The event, registrations, scores, snapshot and confirmed finalVersions remain available to authorized history/PDF reads. Bare presentation closure and standalone rehearsals retain their existing behavior.
+
 Event `pricing` is `{ mode: 'per-team' | 'per-event' | 'agreement', amountCzk, hidden? }`.
 Numeric modes require integer CZK from 0 to 1,000,000; agreement requires null.
 Absent historical pricing means 350 CZK per team. Creates persist that default;

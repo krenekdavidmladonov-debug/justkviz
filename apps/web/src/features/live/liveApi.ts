@@ -25,7 +25,8 @@ export const playMedia = (sessionId: string, expectedRevision: number, mode: 'cl
 export const stopMedia = revisionAction('stopMedia');
 export const replayMedia = revisionAction('replayMedia');
 export const startIntro = revisionAction('startIntro');
-export const endLiveSession = revisionAction('endLiveSession');
+export const endLiveSession = (sessionId: string, expectedRevision: number, completeEvent = false) =>
+  invoke('endLiveSession', { sessionId, expectedRevision, ...(completeEvent ? { completeEvent: true } : {}) });
 
 export function goToSlide(sessionId: string, expectedRevision: number, position: number): Promise<LiveActionResponse> {
   return invoke('goToSlide', { sessionId, expectedRevision, position });

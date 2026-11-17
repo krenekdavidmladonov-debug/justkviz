@@ -130,3 +130,18 @@ test('one click and one shortcut before React rerenders only dispatch one Next',
   });
   expect(invoke).toHaveBeenCalledExactlyOnceWith('goToSlide', { sessionId: 'A', expectedRevision: 10, direction: 1 });
 });
+
+test('ending a bound quiz explicitly requests completion of its event', async () => {
+  records.set('A', { ...session('A'), eventId: 'event-A', snapshotId: 'snapshot-A' });
+  await mount();
+  const end = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Ukončit kvíz')!;
+  await act(async () => end.click());
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('endLiveSession', { sessionId: 'A', expectedRevision: 10, completeEvent: true });
+});
+
+test('ending a standalone rehearsal keeps the existing presentation-only request', async () => {
+  await mount();
+  const end = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Ukončit kvíz')!;
+  await act(async () => end.click());
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('endLiveSession', { sessionId: 'A', expectedRevision: 10 });
+});
