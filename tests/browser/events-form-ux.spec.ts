@@ -200,3 +200,75 @@ for (const [width, height] of [[1280, 720], [1024, 768], [390, 844]]) {
     }
   });
 }
+
+test('missing public location is marked, focused and scrolled into view at 375px', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.goto('/admin/events/new');
+  await page.getByLabel('Název akce').fill('Akce s chybějícím místem');
+  await page.getByLabel('Datum a čas').fill('2030-11-20T19:00');
+  await page.getByLabel('Místo', { exact: true }).fill('Testovací sál');
+  const location = page.getByLabel('Veřejné upřesnění místa');
+  await expect(location.locator('..')).toContainText('*');
+  await page.getByRole('button', { name: 'Vytvořit akci', exact: true }).click();
+  await expect(page).toHaveURL(/\/admin\/events\/new$/u);
+  expect(await page.evaluate(() => window.uxCalls)).toEqual([]);
+  await expect(location).toBeFocused();
+  await expect(location).toHaveAttribute('aria-invalid', 'true');
+  await expect(location.locator('..').getByRole('alert')).toHaveText('Vyplňte toto pole.');
+  const bounds = await location.boundingBox();
+  expect(bounds).not.toBeNull(); expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(667);
+  await location.fill('Nový Malín');
+  await page.getByRole('button', { name: 'Vytvořit akci', exact: true }).click();
+  await expect(page).toHaveURL(/synthetic-event$/u);
+});
+
+for (const [date, expected] of [
+  ['2030-11-20T19:00', '2030-11-20T18:00:00.000Z'],
+  ['2030-07-20T19:00', '2030-07-20T17:00:00.000Z'],
+]) {
+  test('Prague offset is automatic for ' + date, async ({ page }) => {
+    await page.goto('/admin/events/new');
+    await page.getByLabel('Název akce').fill('Automatický pražský čas');
+    await page.getByLabel('Datum a čas').fill(date!);
+    await page.getByLabel('Místo', { exact: true }).fill('Testovací sál');
+    await page.getByLabel('Veřejné upřesnění místa').fill('Nový Malín');
+    await expect(page.getByRole('option', { name: /Letní čas|Zimní čas/u })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Vytvořit akci', exact: true }).click();
+    await expect(page).toHaveURL(/synthetic-event$/u);
+    expect(await page.evaluate(() => window.uxEventReads.at(-1)?.startsAt.toISOString())).toBe(expected);
+  });
+}
+
+test('a past event requires confirmation and cancellation keeps the new form editable', async ({ page }) => {
+  await page.goto('/admin/events/new');
+  await page.getByLabel('Název akce').fill('Zpětně zadávaná akce');
+  await page.getByLabel('Datum a čas').fill('2020-01-01T19:00');
+  await page.getByLabel('Místo', { exact: true }).fill('Testovací sál');
+  await page.getByLabel('Veřejné upřesnění místa').fill('Nový Malín');
+  const save = page.getByRole('button', { name: 'Vytvořit akci', exact: true });
+  page.once('dialog', async dialog => { expect(dialog.message()).toBe('Akce je v minulosti, opravdu?'); await dialog.dismiss(); });
+  await save.click();
+  expect(await page.evaluate(() => window.uxCalls)).toEqual([]);
+  await expect(page.getByLabel('Datum a čas')).toBeEnabled();
+  await expect(page.getByLabel('Datum a čas')).toHaveValue('2020-01-01T19:00');
+  page.once('dialog', async dialog => { expect(dialog.message()).toBe('Akce je v minulosti, opravdu?'); await dialog.accept(); });
+  await save.click(); await expect(page).toHaveURL(/synthetic-event$/u);
+  expect(await page.evaluate(() => window.uxCalls.length)).toBe(1);
+  expect(await page.evaluate(() => window.uxEventReads.at(-1)?.startsAt.toISOString())).toBe('2020-01-01T18:00:00.000Z');
+});
+
+test('editing an existing autumn event preserves its stored instant until the date is changed', async ({ page }) => {
+  await page.goto('/admin/events/synthetic-event?lateAutumn=1');
+  const date = page.getByLabel('Datum a čas');
+  await expect(date).toHaveValue('2026-10-25T02:30');
+  expect(await page.evaluate(() => window.uxCalls)).toEqual([]);
+  await page.getByLabel('Popis akce').fill('Upravený popis již existující akce');
+  await page.getByRole('button', { name: 'Uložit změny', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('Změny akce byly uloženy.');
+  expect(await page.evaluate(() => window.uxEventReads.at(-1)?.startsAt.toISOString())).toBe('2026-10-25T01:30:00.000Z');
+  await date.fill('2030-10-27T02:30');
+  await page.getByRole('button', { name: 'Uložit změny', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveText('Změny akce byly uloženy.');
+  expect(await page.evaluate(() => window.uxEventReads.at(-1)?.startsAt.toISOString())).toBe('2030-10-27T00:30:00.000Z');
+});
