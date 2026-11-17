@@ -38,7 +38,10 @@ export function renderEventPreview(html: string, eventId: string, event: Record<
   if (!title) return html;
   const venue = [...new Set([publicText(event.venueName), publicText(event.publicLocation)].filter(Boolean))].join(', ');
   const description = [dateLabel(event.startsAt, event.timeZone), venue, teamCapacityLabel(event.capacity)].filter(Boolean).join(' · ');
-  const tags = { title, description: description || title, url: 'https://justkviz.cz/events/' + encodeURIComponent(eventId) };
-  return html.replace(/(<meta property="og:(title|description|url)" content=")[^"]*(")/gu,
-    (_match, start: string, tag: keyof typeof tags, end: string) => start + escapeAttribute(tags[tag]) + end);
+  const tags = { title, description: description || title };
+  const url = 'https://justkviz.cz/events/' + encodeURIComponent(eventId);
+  return html.replace(/(<meta property="og:(title|description)" content=")[^"]*(")/gu,
+    (_match, start: string, tag: keyof typeof tags, end: string) => start + escapeAttribute(tags[tag]) + end)
+    .replace(/([ \t]*)<\/head>/u, (_match, indent: string) =>
+      `${indent}  <meta property="og:url" content="${escapeAttribute(url)}" />\n${indent}</head>`);
 }

@@ -25,11 +25,13 @@ describe('event link preview', () => {
     expect(normalized).toMatch(/property="og:description" content="20\. 11\. 2031.*19:00.*Sál u D&#39;Artagnana, Nový Malín · Volná místa pro týmy: 4"/u);
     expect(rendered).toContain('property="og:url" content="https://justkviz.cz/events/synthetic-id"');
     expect(rendered).not.toMatch(/UNUSED_EVENT_DESCRIPTION|PRIVATE_EMAIL_SENTINEL/u);
-    const meta = /(<meta property="og:(?:title|description|url)" content=")[^"]+/gu;
-    expect(rendered.replace(meta, '$1')).toBe(html.replace(meta, '$1'));
+    const meta = /(<meta property="og:(?:title|description)" content=")[^"]+/gu;
+    const withoutCanonicalUrl = rendered.replace(/^\s*<meta property="og:url" [^>]*>\r?\n/mu, '');
+    expect(withoutCanonicalUrl.replace(meta, '$1')).toBe(html.replace(meta, '$1'));
   });
 
   it('keeps default metadata for missing, unpublished and malformed events', () => {
+    expect(html).not.toContain('property="og:url"');
     expect(renderEventPreview(html, 'missing', undefined)).toBe(html);
     expect(renderEventPreview(html, 'private', { ...event, registrationPublished: false })).toBe(html);
     expect(renderEventPreview(html, 'invalid', { registrationPublished: true })).toBe(html);
