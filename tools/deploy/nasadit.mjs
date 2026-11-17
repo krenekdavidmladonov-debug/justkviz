@@ -8,6 +8,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { stagingClient, stagingWebConfig } from '../staging/cloud.mjs';
 import { STAGING_PROJECT as PROJECT } from '../staging/guard.mjs';
 import { deploymentConfig, eventPreviewRewrite, prepareArtifact, removeArtifact } from './artefakt.mjs';
+import { assertEventPreviewAbsent, createEventPreview, eventPreviewCreationDetails, eventPreviewRollbackRecord, verifyEventPreviewForHosting } from './event-preview-create.mjs';
 
 const SITE = 'justkviz-v2';
 const LIVE_URL = 'https://justkviz.cz';
@@ -117,18 +118,6 @@ function activeFunction(fn, entryPoint) {
   }
 }
 
-export async function verifyEventPreviewForHosting(client, hosting) {
-  if (!hosting.rewrites.some(rewrite => isDeepStrictEqual(rewrite, eventPreviewRewrite))) return;
-  const { functionId } = eventPreviewRewrite.function;
-  try {
-    const { body } = await client.get(location + '/functions/' + functionId);
-    activeFunction(body, functionId);
-  } catch (error) {
-    if (error.status !== 404) throw error;
-    throw new Error('Před změnou Hostingu je potřeba schválené první vytvoření funkce ' + functionId + '.', { cause: error });
-  }
-}
-
 async function functionTargets(client, head) {
   const deployed = new Map();
   let pageToken;
@@ -164,7 +153,7 @@ export function functionSourcePatch(name, storageSource) {
   return { name, buildConfig: { source: { storageSource } } };
 }
 
-async function deployFunctions(client, targets, zip) {
+async function uploadFunctionSource(client, zip) {
   const { body: { uploadUrl, storageSource } } = await client.post(location + '/functions:generateUploadUrl');
   const url = new URL(uploadUrl);
   if (url.origin !== 'https://storage.googleapis.com' || url.username || url.password || url.hash ||
@@ -180,7 +169,16 @@ async function deployFunctions(client, targets, zip) {
   if (!upload.ok) throw new Error('Nahrání zdroje Functions selhalo (HTTP ' + upload.status + ').');
   const generation = upload.headers.get('x-goog-generation');
   if (generation && /^\d+$/u.test(generation)) storageSource.generation = generation;
+  return storageSource;
+}
+
+function waitForFunctionOperation(name) {
   const { pollOperation } = require('firebase-tools/lib/operation-poller');
+  return pollOperation({ apiOrigin: functionsOrigin, apiVersion: 'v2', operationResourceName: name, masterTimeout: 900_000 });
+}
+
+async function deployFunctions(client, targets, zip) {
+  const storageSource = await uploadFunctionSource(client, zip);
   for (let offset = 0; offset < targets.length; offset += FUNCTION_BATCH_SIZE) {
     const batch = await Promise.allSettled(targets.slice(offset, offset + FUNCTION_BATCH_SIZE).map(async target => {
       const { body } = await client.get(target.name);
@@ -191,7 +189,7 @@ async function deployFunctions(client, targets, zip) {
         { queryParams: { updateMask: 'buildConfig.source.storageSource' } });
       if (!operation.name?.startsWith(location + '/operations/') &&
           !operation.name?.startsWith('projects/177615774316/locations/' + REGION + '/operations/')) throw new Error('Neočekávaná operace pro ' + target.entryPoint);
-      await pollOperation({ apiOrigin: functionsOrigin, apiVersion: 'v2', operationResourceName: operation.name, masterTimeout: 900_000 });
+      await waitForFunctionOperation(operation.name);
       console.log('Functions hotovo: ' + target.entryPoint);
     }));
     const failure = batch.find(result => result.status === 'rejected');
@@ -214,8 +212,8 @@ async function run() {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     const selection = options.mode === '--rollback' ? undefined : await rl.question(
-      'PRODUKCE ' + LIVE_URL + '\n1) Jen web\n2) Web + Functions\n3) Web + Functions + Rules\nVolba: ');
-    if (selection !== undefined && !['1', '2', '3'].includes(selection)) throw new Error('Neplatná volba.');
+      'PRODUKCE ' + LIVE_URL + '\n1) Jen web\n2) Web + Functions\n3) Web + Functions + Rules\n4) První vytvoření funkce náhledu akce\nVolba: ');
+    if (selection !== undefined && !['1', '2', '3', '4'].includes(selection)) throw new Error('Neplatná volba.');
     const hosting = await stagingClient('https://firebasehosting.googleapis.com', 'v1beta1');
     const { body: site } = await hosting.get('projects/' + PROJECT + '/sites/' + SITE);
     if (!['projects/' + PROJECT + '/sites/' + SITE, 'projects/177615774316/sites/' + SITE].includes(site.name)) {
@@ -251,12 +249,40 @@ async function run() {
     }
 
     const base = previousCommit(prior, options, head);
-    const withFunctions = selection !== '1';
-    const withRules = selection === '3';
     const { Client } = require('firebase-tools/lib/apiv2');
     const functions = new Client({ urlPrefix: functionsOrigin, apiVersion: 'v2' });
+    const cloudRun = new Client({ urlPrefix: 'https://run.googleapis.com', apiVersion: 'v2' });
     const { hosting: hostingConfig } = deploymentConfig(JSON.parse(git(['show', head + ':firebase.offline-hosting.json'])).hosting);
-    if (!withFunctions) await verifyEventPreviewForHosting(functions, hostingConfig);
+    if (selection === '4') {
+      const { functionId } = eventPreviewRewrite.function;
+      if (!hostingConfig.rewrites.some(rewrite => isDeepStrictEqual(rewrite, eventPreviewRewrite)) || !exportedFunctions(head).includes(functionId)) {
+        throw new Error('Aktuální main neobsahuje funkci náhledu a její Hosting rewrite.');
+      }
+      await assertEventPreviewAbsent(functions, cloudRun);
+      const { functionName, runName, serviceAccountEmail } = eventPreviewCreationDetails();
+      console.log('Vytvoří se pouze ' + functionName + ' z main ' + head + '.');
+      console.log('Runtime účet: ' + serviceAccountEmail + '.');
+      console.log('Nová služba ' + runName + ' získá veřejné oprávnění roles/run.invoker pro allUsers.');
+      console.log('Hosting a Rules se touto volbou nenasazují.');
+      console.log('Návrat Hostingu po pozdějším vydání: NASADIT.cmd --rollback ' + prior.id + ' ' + base);
+      await confirm();
+      const artifact = await prepareArtifact(ROOT, head, await stagingWebConfig(), { withFunctions: true, withRules: false });
+      try {
+        await recheck();
+        await assertEventPreviewAbsent(functions, cloudRun);
+        const record = eventPreviewRollbackRecord(ROOT, head, prior, base);
+        console.log('Záznam pro rollback: ' + record.filename);
+        const storageSource = await uploadFunctionSource(functions, artifact.zip);
+        await createEventPreview({ functions, run: cloudRun, head, record, storageSource, waitForOperation: waitForFunctionOperation });
+        console.log('Funkce je aktivní a veřejně volatelná. Pro nasazení Hostingu použijte již schválenou volbu 2.');
+      } finally {
+        removeArtifact(artifact.directory);
+      }
+      return;
+    }
+    const withFunctions = selection !== '1';
+    const withRules = selection === '3';
+    await verifyEventPreviewForHosting(functions, cloudRun, hostingConfig);
     const withStorageRules = withRules && await storageBucketExists(
       new Client({ urlPrefix: 'https://storage.googleapis.com', apiVersion: 'storage/v1' }));
     const targets = withFunctions ? await functionTargets(functions, head) : [];
@@ -288,9 +314,8 @@ async function run() {
       if (withFunctions) {
         if (!isDeepStrictEqual(await functionTargets(functions, head), targets)) throw new Error('Inventář Functions se od náhledu změnil.');
         await deployFunctions(functions, targets, artifact.zip);
-      } else {
-        await verifyEventPreviewForHosting(functions, hostingConfig);
       }
+      await verifyEventPreviewForHosting(functions, cloudRun, hostingConfig);
       if (withRules) deploy(withStorageRules ? 'firestore:rules,storage' : 'firestore:rules');
       if (!isDeepStrictEqual(await current(), prior)) throw new Error('Aktivní Hosting se během nasazení změnil.');
       deploy('hosting', messagePrefix + head);

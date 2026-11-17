@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
-import { verifyMain, storageBucketExists, functionSourcePatch, verifyEventPreviewForHosting } from './nasadit.mjs';
+import { verifyMain, storageBucketExists, functionSourcePatch } from './nasadit.mjs';
 import { deploymentConfig, eventPreviewRewrite } from './artefakt.mjs';
+import { assertEventPreviewAbsent, createEventPreview, eventPreviewRollbackRecord, verifyEventPreviewForHosting } from './event-preview-create.mjs';
 
 const head = 'a'.repeat(40);
 const origin = 'https://github.com/krenekdavidmladonov-debug/justkviz.git';
@@ -103,20 +106,135 @@ test('povolí jen určený Hosting a výslovně přidané Rules', () => {
   ]) assert.throws(() => deploymentConfig({ ...hosting, rewrites }, false), /rewrites/u);
 });
 
-test('volba Jen web vyžaduje existující funkci pro náhled akce', async () => {
+test('Hosting rewrite vyžaduje aktivní veřejnou funkci náhledu', async () => {
   const hosting = { rewrites: [eventPreviewRewrite] };
-  const expectedPath = 'projects/filmovy-kviz-v2-staging/locations/europe-west1/functions/servePublicEventMeta';
-  const active = { environment: 'GEN_2', state: 'ACTIVE', buildConfig: { runtime: 'nodejs22', entryPoint: 'servePublicEventMeta' }, updateTime: '2026-11-17' };
-  let reads = 0;
-  const client = { async get(name) { reads++; assert.equal(name, expectedPath); return { body: active }; } };
-  await verifyEventPreviewForHosting(client, { rewrites: [{ source: '**', destination: '/index.html' }] });
-  assert.equal(reads, 0);
-  await verifyEventPreviewForHosting(client, hosting);
-  assert.equal(reads, 1);
-  await assert.rejects(verifyEventPreviewForHosting({ async get() { throw Object.assign(new Error('Missing'), { status: 404 }); } }, hosting), /první vytvoření/u);
-  await assert.rejects(verifyEventPreviewForHosting({ async get() { return { body: { ...active, state: 'FAILED' } }; } }, hosting), /Gen 2/u);
+  const { functions, run, active } = eventPreviewFixture();
+  await verifyEventPreviewForHosting({}, {}, { rewrites: [{ source: '**', destination: '/index.html' }] });
+  await assert.rejects(verifyEventPreviewForHosting(functions, run, hosting), /první vytvoření/u);
+  const present = { get: async () => ({ body: active }) };
+  await assert.rejects(verifyEventPreviewForHosting(present, run, hosting), /veřejné oprávnění/u);
+  await verifyEventPreviewForHosting(present, { get: async () => ({ body: { bindings: [{ role: 'roles/run.invoker', members: ['allUsers'] }] } }) }, hosting);
+  await assert.rejects(verifyEventPreviewForHosting({ get: async () => ({ body: { ...active, state: 'FAILED' } }) }, run, hosting), /HTTPS konfiguraci/u);
 });
 
+const previewLocation = 'projects/filmovy-kviz-v2-staging/locations/europe-west1';
+const previewName = previewLocation + '/functions/servePublicEventMeta';
+const previewService = previewLocation + '/services/servepubliceventmeta';
+
+function notFound() { return Object.assign(new Error('Missing'), { status: 404 }); }
+
+function eventPreviewFixture() {
+  const operation = previewLocation + '/operations/create-preview';
+  const id = '12345678-1234-1234-1234-1234567890ab';
+  const active = {
+    name: previewName, environment: 'GEN_2', state: 'ACTIVE', updateTime: '2026-11-17T12:00:00Z',
+    buildConfig: { runtime: 'nodejs22', entryPoint: 'servePublicEventMeta' },
+    serviceConfig: { service: previewService, serviceAccountEmail: '177615774316-compute@developer.gserviceaccount.com' },
+    labels: { 'justkviz-source': head, 'justkviz-first-create': id },
+  };
+  const iam = { etag: 'original-etag', version: 3, bindings: [
+    { role: 'roles/run.viewer', members: ['user:demo@example.test'] },
+    { role: 'roles/run.invoker', members: ['user:demo@example.test'] },
+  ] };
+  const calls = [], states = [];
+  let created = false;
+  const functions = {
+    async get(name) {
+      assert.equal(name, previewName);
+      if (!created) throw notFound();
+      return { body: active };
+    },
+    async post(resource, body, options) {
+      calls.push({ resource, body, options });
+      assert.equal(resource, previewLocation + '/functions');
+      assert.equal(body.name, previewName);
+      assert.deepEqual(options.queryParams, { functionId: 'servePublicEventMeta' });
+      created = true;
+      return { body: { name: operation } };
+    },
+  };
+  const run = {
+    async get(resource) {
+      if (resource === previewService) throw notFound();
+      assert.equal(resource, previewService + ':getIamPolicy');
+      return { body: iam };
+    },
+    async post(resource, body) {
+      assert.equal(resource, previewService + ':setIamPolicy');
+      calls.push({ resource, body });
+      return { body: body.policy };
+    },
+  };
+  const input = {
+    functions, run, head, storageSource: { bucket: 'source', object: 'artifact' },
+    record: { id, update: patch => states.push(patch) },
+    waitForOperation: async name => assert.equal(name, operation),
+  };
+  return { input, functions, run, active, calls, states };
+}
+
+test('první vytvoření používá POST jediného ID a omezenou změnu IAM s etagem', async () => {
+  const { input, calls, states } = eventPreviewFixture();
+  await createEventPreview(input);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0].body.buildConfig.source, { storageSource: input.storageSource });
+  assert.equal(calls[0].body.serviceConfig.maxInstanceCount, 3);
+  assert.equal(calls[0].body.serviceConfig.timeoutSeconds, 10);
+  assert.equal(calls[0].body.serviceConfig.serviceAccountEmail, '177615774316-compute@developer.gserviceaccount.com');
+  assert.deepEqual(calls[1].body, { updateMask: 'bindings,etag', policy: {
+    etag: 'original-etag', version: 3, bindings: [
+      { role: 'roles/run.viewer', members: ['user:demo@example.test'] },
+      { role: 'roles/run.invoker', members: ['user:demo@example.test', 'allUsers'] },
+    ],
+  } });
+  assert.deepEqual(states.map(state => state.state ?? 'operation'), ['creating', 'operation', 'created', 'ready']);
+});
+
+test('první vytvoření se zastaví při existujícím prostředku, chybě oprávnění a souběhu', async () => {
+  const { input, functions, run, calls, states } = eventPreviewFixture();
+  await assert.rejects(assertEventPreviewAbsent({ get: async () => ({ body: {} }) }, run), /nepřítomný/u);
+  await assert.rejects(assertEventPreviewAbsent(functions, { get: async () => ({ body: {} }) }), /nepřítomný/u);
+  await assert.rejects(assertEventPreviewAbsent({ async get() { throw Object.assign(new Error('Denied'), { status: 403 }); } }, run), /Denied/u);
+  await assert.rejects(createEventPreview({ ...input, waitForOperation: async () => { throw new Error('ALREADY_EXISTS'); } }), /ALREADY_EXISTS/u);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(states.map(state => state.state ?? 'operation'), ['creating', 'operation']);
+});
+
+test('při neshodě vytvořeného endpointu či chybějícím etagu se IAM nemění', async () => {
+  const mismatch = eventPreviewFixture();
+  mismatch.active.labels['justkviz-first-create'] = 'different';
+  await assert.rejects(createEventPreview(mismatch.input), /neodpovídá/u);
+  assert.equal(mismatch.calls.length, 1);
+  const noEtag = eventPreviewFixture();
+  const original = noEtag.run.get;
+  noEtag.run.get = async name => name === previewService ? original(name) : ({ body: {} });
+  await assert.rejects(createEventPreview(noEtag.input), /etag/u);
+  assert.equal(noEtag.calls.length, 1);
+  assert.equal(noEtag.states.at(-1).state, 'created');
+});
+
+test('záznam pro rollback uchová výchozí Hosting před vytvořením i výsledek', t => {
+  const prefix = path.join(realpathSync(tmpdir()), 'justkviz-preview-record-');
+  const root = mkdtempSync(prefix);
+  t.after(() => {
+    assert.equal(realpathSync(root), root);
+    assert(root.startsWith(prefix));
+    rmSync(root, { recursive: true, force: true });
+  });
+  const prior = { id: 'release-before', version: 'version-before' };
+  const previous = 'b'.repeat(40);
+  const record = eventPreviewRollbackRecord(root, head, prior, previous);
+  const read = () => JSON.parse(readFileSync(record.filename, 'utf8'));
+  assert.equal(read().state, 'prepared');
+  assert.equal(read().functionBefore, null);
+  assert.equal(read().hostingRollback, 'NASADIT.cmd --rollback release-before ' + previous);
+  record.update({ state: 'creating', operation: 'op' });
+  record.update({ state: 'ready', functionAfter: { name: previewName } });
+  assert.deepEqual(read().hostingBefore, { ...prior, commit: previous });
+  assert.equal(read().sourceCommit, head);
+  assert.equal(read().operation, 'op');
+  assert.deepEqual(read().functionAfter, { name: previewName });
+});
 test('produkční konfigurace omezuje noindex na soukromé a offline trasy', () => {
   const require = createRequire(import.meta.url);
   const requireFirebase = createRequire(require.resolve('firebase-tools/package.json'));
