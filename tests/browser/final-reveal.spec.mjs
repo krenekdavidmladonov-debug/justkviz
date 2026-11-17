@@ -93,6 +93,7 @@ test('three-round finale: current controls, referee correction, all public group
     const before = await f.rawPublic(), grant = await f.referee(); refereeContext = await browser.newContext({ baseURL }); await guard(refereeContext); const referee = await refereeContext.newPage();
     await referee.goto('/'); await referee.evaluate(destination => { const state = { idx: 1, key: crypto.randomUUID() }; window.history.pushState(state, '', destination); window.dispatchEvent(new window.PopStateEvent('popstate', { state })); }, '/referee/' + grant.eventId + '#access=' + grant.accessId + '&key=' + grant.key);
     await referee.getByLabel('Kolo', { exact: true }).selectOption('r3'); await referee.getByLabel('Body — Alfa', { exact: true }).fill('5,5'); await referee.getByLabel('Důvod opravy — Alfa', { exact: true }).fill('Synthetic final correction');
+    referee.once('dialog', dialog => dialog.accept());
     await referee.getByRole('button', { name: 'Uložit body celého kola', exact: true }).click(); await expect(referee.getByText('Body kola jsou uložené. Potvrzeno serverem.', { exact: true })).toBeVisible(); expect(await f.rawPublic()).toEqual(before);
     for (const rank of [3, 2, 1]) { await step(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.rank).toBe(rank); safeFinal(await f.rawPublic(), preview.rows.filter(row => row.rank === rank), 'group'); }
     await expect(projector.getByRole('heading', { name: 'Alfa', exact: true })).toBeVisible(); await expect.poll(() => starts(page)).toBe(1);

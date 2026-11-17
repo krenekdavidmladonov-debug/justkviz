@@ -9,7 +9,7 @@ import { AdminEventScoringPage } from '../apps/web/src/routes/admin/AdminEventSc
 vi.mock('../apps/web/src/auth/AuthProvider', () => ({ useAuth: () => ({ can: (permission: string) => permission === 'event.score' }) }));
 
 vi.mock('../apps/web/src/features/scoring/api', () => ({
-  loadRounds: vi.fn<typeof loadRounds>(async () => [{ id: 'r1', title: 'První' }, { id: 'r2', title: 'Druhé' }]),
+  loadRounds: vi.fn<typeof loadRounds>(async () => [{ id: 'r1', title: 'První', questionCount: 1 }, { id: 'r2', title: 'Druhé', questionCount: 10 }]),
   watchScoringEvent: vi.fn<typeof watchScoringEvent>((_id, receive) => { receive('s', true, 'Akce'); return () => undefined; }),
   watchRoster: vi.fn<typeof watchRoster>((_id, receive) => { receive([{ id: 't', name: 'Tým', accepted: true }]); return () => undefined; }),
   watchScores: vi.fn<typeof watchScores>((_id, receive) => { receive({}); return () => undefined; }),
@@ -40,6 +40,7 @@ it('protects unsaved values on round changes, route navigation and browser unloa
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '2,5');
     input.dispatchEvent(new Event('input', { bubbles: true }));
   });
+  expect(input.closest('.round-score-team')?.textContent).toContain('Víc bodů než otázek v kole (1) – opravdu?');
   const select = host.querySelector('select')!;
   await act(async () => { select.value = 'r2'; select.dispatchEvent(new Event('change', { bubbles: true })); });
   expect(select.value).toBe('r1'); expect(input.value).toBe('2,5');

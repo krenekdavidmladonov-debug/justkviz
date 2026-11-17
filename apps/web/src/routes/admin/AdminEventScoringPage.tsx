@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useBlocker, useParams } from 'react-router-dom';
 import { loadRounds, watchRoster, watchScores, watchScoringEvent } from '../../features/scoring/api';
-import { emptyScore, type Score } from '../../features/scoring/model';
+import { emptyScore, type Score, type ScoreRound } from '../../features/scoring/model';
 import { RoundScoreForm } from '../../features/scoring/RoundScoreForm';
 import { useAuth } from '../../auth/AuthProvider';
 import '../../features/scoring/scoring.css';
@@ -18,7 +18,7 @@ function AdminEventScoringEvent({ eventId }: { readonly eventId: string }) {
   const [title, setTitle] = useState('');
   const [allowed, setAllowed] = useState(false);
   const [eventLoaded, setEventLoaded] = useState(false);
-  const [rounds, setRounds] = useState<{ id: string; title: string }[]>([]);
+  const [rounds, setRounds] = useState<ScoreRound[]>([]);
   const [roundId, setRoundId] = useState('');
   const [teams, setTeams] = useState<{ id: string; name: string; accepted: boolean }[]>([]);
   const [scores, setScores] = useState<Record<string, Score>>({});
@@ -59,6 +59,7 @@ function AdminEventScoringEvent({ eventId }: { readonly eventId: string }) {
       .catch(() => { if (active) setError('Kola připraveného kvízu se nepodařilo načíst. Obnovte stránku.'); });
     return () => { active = false; };
   }, [snapshotId]);
+  const round = rounds.find(item => item.id === roundId);
   const snapshotChanged = snapshotId !== liveSnapshotId;
   return <article className="event-detail-page">
     <Link className="back-link" to={'/admin/events/' + eventId}>← Zpět na detail akce</Link>
@@ -76,7 +77,7 @@ function AdminEventScoringEvent({ eventId }: { readonly eventId: string }) {
       }}>{rounds.map(round => <option key={round.id} value={round.id}>{round.title}</option>)}</select></label>
       <p className="event-muted">Povoleny jsou půlbody, například 0; 2,5 nebo 2.5. Prázdné pole uložené body nemaže.</p>
       {!scoresLoaded ? <p>Načítám uložené body…</p> : roundId && <RoundScoreForm
-        key={JSON.stringify([eventId, snapshotId, roundId])} eventId={eventId} snapshotId={snapshotId} roundId={roundId} roundTitle={rounds.find(round => round.id === roundId)?.title ?? 'Kolo'}
+        key={JSON.stringify([eventId, snapshotId, roundId])} eventId={eventId} snapshotId={snapshotId} roundId={roundId} roundTitle={round?.title ?? 'Kolo'} questionCount={round?.questionCount}
         teams={teams} scores={Object.fromEntries(teams.map(team => [team.id, scores[JSON.stringify([team.id, roundId])] ?? emptyScore]))}
         disabled={!can('event.score') || !allowed || snapshotChanged || !!error} onDirty={onDirty} onPending={onPending}
       />}

@@ -31,6 +31,10 @@
 .round-score-entry label { font-weight: 600; overflow-wrap: anywhere; }
 .round-score-entry small { display: block; color: var(--color-text-muted); font-weight: 400; margin-top: 4px; }
 .round-score-entry input { width: 100%; min-width: 0; min-height: 46px; box-sizing: border-box; padding: 10px; border: 1px solid var(--color-border-strong); border-radius: 9px; background: var(--color-surface-subtle); color: var(--color-text); font-size: 18px; }
+.round-score-entry input[aria-invalid='true'] { border-color: var(--color-error); background: var(--color-error-surface); }
+.round-score-input-error, .round-score-warning { margin: 6px 0 0; font-size: .9rem; }
+.round-score-input-error { color: var(--color-error); }
+.round-score-warning { color: var(--color-warning); }
 .round-score-reason { margin-top: 12px; }
 .round-score-details { margin-top: 6px; font-size: .85rem; }
 .round-score-details summary { min-height: 36px; align-content: center; cursor: pointer; color: var(--color-text-muted); }

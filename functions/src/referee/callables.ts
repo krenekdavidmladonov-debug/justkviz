@@ -8,6 +8,8 @@ import { HttpsError, onCall, type CallableRequest } from 'firebase-functions/v2/
 import { isObject } from '../events/validation.js';
 import { commitScore, commitRoundScores, scoreHash } from '../scoring/core.js';
 import { parseScoreRequest, parseRoundScoreRequest } from '../scoring/validation.js';
+import { registrationOrder } from '../registrations/order.js';
+import { snapshotRoundQuestionCounts } from '../scoring/snapshot-rounds.js';
 
 const options = { region: 'europe-west1', cors: true, maxInstances: 10 };
 const db = () => getFirestore();
@@ -99,13 +101,15 @@ export const readRefereeEvent = onCall(options, async request => {
     const { grant, event } = await accessIn(transaction, c);
     const snapshotId = record(event.quizAssignment).snapshotId;
     if (typeof snapshotId !== 'string') throw deny();
-    const rounds = await transaction.get(db().collection(`quizSnapshots/${snapshotId}/rounds`).orderBy('position'));
+    const snapshot = db().doc(`quizSnapshots/${snapshotId}`);
+    const rounds = await transaction.get(snapshot.collection('rounds').orderBy('position'));
+    const counts = await snapshotRoundQuestionCounts(transaction, snapshot.collection('slides'), rounds.docs);
     const teams = await transaction.get(db().collection(`events/${c.eventId}/registrations`).where('status', '==', 'accepted'));
     const scores = await transaction.get(db().collection(`events/${c.eventId}/scores`));
     const accepted = new Set(teams.docs.map(d => d.id));
     return { eventId: c.eventId, title: String(event.title), label: String(grant.label), snapshotId,
-      rounds: rounds.docs.map(d => ({ id: d.id, title: String(d.data().title ?? 'Kolo') })),
-      teams: teams.docs.map(d => ({ id: d.id, name: String(d.data().teamName) })),
+      rounds: rounds.docs.map(d => ({ id: d.id, title: String(d.data().title ?? 'Kolo'), questionCount: counts.get(d.id)! })),
+      teams: registrationOrder(teams.docs).map(d => ({ id: d.id, name: String(d.data().teamName) })),
       scores: scores.docs.filter(d => accepted.has(d.data().teamId as string)).map(d => { const s = d.data(); return { teamId: s.teamId as string, roundId: s.roundId as string, halfPoints: s.halfPoints as number | null, revision: s.revision as number }; }) };
   });
 });

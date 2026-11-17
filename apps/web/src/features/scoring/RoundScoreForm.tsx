@@ -1,16 +1,27 @@
 import { useEffect, useRef, useState } from 'react';
 import { loadHistory, saveRoundScores, type RoundScoreRequest, type RoundScoreResponse } from './api';
-import { emptyScore, parsePoints, pointsText, scoreLabel, type Score, type ScoreHistory } from './model';
+import { emptyScore, parseRoundPoints, pointsText, scoreLabel, type Score, type ScoreHistory } from './model';
 
 type Draft = { text: string; reason: string; clear: boolean; base: Score };
 interface Props {
-  eventId: string; snapshotId: string; roundId: string; roundTitle: string;
+  eventId: string; snapshotId: string; roundId: string; roundTitle: string; questionCount?: number | undefined;
   teams: { id: string; name: string; accepted?: boolean }[]; scores: Record<string, Score>; disabled: boolean;
   onDirty: (dirty: boolean) => void; onPending: (pending: boolean) => void;
   transport?: { save: (request: RoundScoreRequest) => Promise<RoundScoreResponse>; history: typeof loadHistory };
 }
-export function RoundScoreForm({ eventId, snapshotId, roundId, roundTitle, teams, scores, disabled, onDirty, onPending, transport }: Props) {
+function draftPoints(draft: Draft) {
+  if (draft.clear) return { halfPoints: null };
+  if (draft.text.trim() === pointsText(draft.base.halfPoints)) {
+    return { halfPoints: draft.base.halfPoints };
+  }
+  try { return { halfPoints: parseRoundPoints(draft.text) }; }
+  catch (error) { return { error: (error as Error).message }; }
+}
+
+export function RoundScoreForm({ eventId, snapshotId, roundId, roundTitle, questionCount, teams, scores, disabled, onDirty, onPending, transport }: Props) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const form = useRef<HTMLFormElement>(null);
   const [confirmed, setConfirmed] = useState<Record<string, Score>>({});
   const [conflicts, setConflicts] = useState<Record<string, Score>>({});
   const [pending, setPending] = useState(false);
@@ -22,28 +33,49 @@ export function RoundScoreForm({ eventId, snapshotId, roundId, roundTitle, teams
   const current = (id: string) => [scores[id] ?? emptyScore, confirmed[id], conflicts[id]].reduce<Score>((latest, score) => score && score.revision > latest.revision ? score : latest, emptyScore);
   function change(id: string, patch: Partial<Draft>) {
     retry.current = null; setError(''); setNotice('');
+    if ('text' in patch || 'clear' in patch) setFieldErrors(old => {
+      const next = { ...old }; delete next[id]; return next;
+    });
     setDrafts(old => ({ ...old, [id]: { ...(old[id] ?? { text: pointsText(current(id).halfPoints), reason: '', clear: false, base: current(id) }), ...patch } }));
   }
   const stale = Object.entries(drafts).some(([id, draft]) => draft.base.revision !== current(id).revision);
+  const warning = questionCount === undefined ? '' : `Víc bodů než otázek v kole (${questionCount}) – opravdu?`;
+  const exceedsQuestions = (halfPoints: number | null | undefined) =>
+    questionCount !== undefined && halfPoints != null && halfPoints > questionCount * 2;
   async function save() {
     if (busy.current || disabled || !dirty || (stale && !retry.current)) return;
     let request = retry.current;
     try {
       if (!request) {
+        const eligible = teams.filter(team => team.accepted !== false && Object.hasOwn(drafts, team.id));
+        if (eligible.length !== Object.keys(drafts).length) throw new Error('Soupiska se změnila. Zkontrolujte rozepsané body.');
         const changed: RoundScoreRequest['scores'] = [];
-        for (const [teamId, draft] of Object.entries(drafts)) {
-          if (!teams.some(team => team.id === teamId && team.accepted !== false)) throw new Error('Soupiska se změnila. Zkontrolujte rozepsané body.');
-          // An empty fresh field remains unset; clearing a saved result is explicit.
-          if (!draft.clear && !draft.text.trim() && draft.base.halfPoints === null) continue;
-          const halfPoints = draft.clear ? null : parsePoints(draft.text);
+        const errors = new Map<string, string>();
+        const overLimit: string[] = [];
+        for (const { id: teamId, name } of eligible) {
+          const draft = drafts[teamId]!;
+          const result = draftPoints(draft);
+          if (result.error !== undefined) { errors.set(teamId, result.error); continue; }
+          const { halfPoints } = result;
           if (halfPoints === draft.base.halfPoints) continue;
-          const reason = draft.reason.trim();
-          if ((draft.base.halfPoints !== null || draft.clear) && !reason) throw new Error('Doplňte důvod u každé opravy nebo vrácení na nezadáno.');
-          changed.push({ teamId, expectedRevision: draft.base.revision, halfPoints, reason });
+          changed.push({ teamId, expectedRevision: draft.base.revision, halfPoints, reason: draft.reason.trim() });
+          if (exceedsQuestions(halfPoints)) overLimit.push(name);
+        }
+        setFieldErrors(Object.fromEntries(errors));
+        const firstInvalid = eligible.find(team => errors.has(team.id));
+        if (firstInvalid) {
+          const input = form.current?.elements.namedItem('score-' + firstInvalid.id);
+          if (input instanceof HTMLInputElement) input.focus();
+          setError('');
+          return;
+        }
+        if (changed.some(score => !score.reason && (score.halfPoints === null || drafts[score.teamId]!.base.halfPoints !== null))) {
+          throw new Error('Doplňte důvod u každé opravy nebo vrácení na nezadáno.');
         }
         if (!changed.length) throw new Error('Žádné změněné body k uložení.');
         if (changed.length > 200) throw new Error('Najednou lze uložit nejvýše 200 změněných týmů.');
         if (changed.some(score => score.halfPoints === null) && !window.confirm('Vrátit označené výsledky v tomto kole na nezadáno? Historie zůstane zachována.')) return;
+        if (overLimit.length && !window.confirm(warning + '\n\n' + overLimit.join('\n'))) return;
         request = { eventId, snapshotId, roundId, requestId: crypto.randomUUID(), scores: changed };
       }
     } catch (issue) { setError((issue as Error).message); return; }
@@ -68,15 +100,20 @@ export function RoundScoreForm({ eventId, snapshotId, roundId, roundTitle, teams
     catch { setError('Historii se nepodařilo načíst.'); }
   }
   const saved = teams.filter(team => team.accepted !== false && current(team.id).halfPoints !== null).length;
-  return <form className="round-score-form" aria-label={'Body kola — ' + roundTitle} onSubmit={event => { event.preventDefault(); void save(); }}>
+  return <form ref={form} className="round-score-form" aria-label={'Body kola — ' + roundTitle} onSubmit={event => { event.preventDefault(); void save(); }}>
     <h2>{roundTitle}</h2>
     <p className="event-muted">Zadejte body za toto kolo všem týmům a uložte je společně. Nula je výsledek; prázdné pole je nezadáno.</p>
     <div className="round-score-table" role="table" aria-label="Body všech týmů">
       <div className="round-score-head" role="row"><span role="columnheader">Tým</span><span role="columnheader">Body</span></div>
       {teams.map(team => {
         const score = current(team.id), draft = drafts[team.id], conflict = draft && draft.base.revision !== score.revision;
+        const error = Object.hasOwn(fieldErrors, team.id) ? fieldErrors[team.id] : undefined;
+        const units = draft && draftPoints(draft).halfPoints;
+        const feedback = error || (units !== draft?.base.halfPoints && exceedsQuestions(units) ? warning : '');
+        const fieldId = 'score-' + team.id;
         return <div key={team.id} className="round-score-team" role="rowgroup" data-team-id={team.id}>
-          <div className="round-score-entry" role="row"><label htmlFor={'score-' + team.id} role="rowheader">{team.name}{team.accepted === false && ' (zrušený tým)'}<small>{scoreLabel(score.halfPoints)}</small></label><div role="cell"><input id={'score-' + team.id} aria-label={'Body — ' + team.name} inputMode="decimal" value={draft?.text ?? pointsText(score.halfPoints)} disabled={disabled || pending || team.accepted === false || draft?.clear} onChange={event => change(team.id, { text: event.target.value })} /></div></div>
+          <div className="round-score-entry" role="row"><label htmlFor={fieldId} role="rowheader">{team.name}{team.accepted === false && ' (zrušený tým)'}<small>{scoreLabel(score.halfPoints)}</small></label><div role="cell"><input id={fieldId} aria-invalid={error ? true : undefined} aria-describedby={feedback ? fieldId + '-feedback' : undefined} aria-label={'Body — ' + team.name} inputMode="decimal" value={draft?.text ?? pointsText(score.halfPoints)} disabled={disabled || pending || team.accepted === false || draft?.clear} onChange={event => change(team.id, { text: event.target.value })} /></div></div>
+          {feedback && <p id={fieldId + '-feedback'} role={error ? 'alert' : undefined} className={error ? 'round-score-input-error' : 'round-score-warning'}>{feedback}</p>}
           {(draft && (draft.base.halfPoints !== null || draft.clear)) && <label className="form-field round-score-reason"><span>Důvod opravy — {team.name}</span><input maxLength={300} value={draft.reason} disabled={disabled || pending} onChange={event => change(team.id, { reason: event.target.value })} /></label>}
           {conflict && <div className="score-conflict" role="alert"><p>Aktuálně uloženo: {scoreLabel(score.halfPoints)}. Rozepsáno: {draft.clear ? 'Nezadáno' : draft.text || '(prázdná hodnota)'}.</p><button type="button" className="secondary-button" disabled={disabled || pending} onClick={() => change(team.id, { base: score })}>Připravit opravu aktuální revize</button></div>}
           <details className="round-score-details"><summary>Historie a oprava — {team.name}</summary><div className="team-tool-actions">
@@ -90,7 +127,7 @@ export function RoundScoreForm({ eventId, snapshotId, roundId, roundTitle, teams
     </div>
     {error && <p role="alert">{error}</p>}{notice && <p role="status" className="event-notice">{notice}</p>}
     <div className="round-score-save"><p role="status">{pending ? 'Ukládám celé kolo…' : `${saved} / ${teams.filter(team => team.accepted !== false).length} týmů má uložené body`}{dirty && !pending && ' · rozepsané změny'}</p><button className="primary-button" type="submit" disabled={disabled || pending || !dirty || (stale && !retry.current)}>{pending ? 'Ukládám…' : 'Uložit body celého kola'}</button>
-      {dirty && <button type="button" className="secondary-button" disabled={pending} onClick={() => { if (!window.confirm('Zahodit rozepsané body tohoto kola?')) return; setDrafts({}); retry.current = null; setError(''); }}>Zahodit změny</button>}
+      {dirty && <button type="button" className="secondary-button" disabled={pending} onClick={() => { if (!window.confirm('Zahodit rozepsané body tohoto kola?')) return; setDrafts({}); setFieldErrors({}); retry.current = null; setError(''); }}>Zahodit změny</button>}
     </div>
   </form>;
 }

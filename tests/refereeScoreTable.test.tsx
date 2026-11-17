@@ -69,7 +69,7 @@ it('preserves a draft through conflicts and requires an explicit decision before
   await render(); await value('3');
   vi.mocked(saveScore).mockRejectedValueOnce({ code: 'functions/aborted', details: { revision: 2, halfPoints: 9 } });
   await click('Uložit');
-  expect(points()?.value).toBe('3'); expect(host.textContent).toContain('4,5 bodů');
+  expect(points()?.value).toBe('3'); expect(host.textContent).toContain('4,5 bodu');
   await click('Uložit'); expect(saveScore).toHaveBeenCalledTimes(1);
   await click('Připravit opravu uložených bodů'); await reason('Překontrolováno');
   vi.mocked(saveScore).mockResolvedValue({ halfPoints: 6, revision: 3 });

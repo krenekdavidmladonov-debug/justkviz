@@ -1,3 +1,6 @@
+import { Timestamp } from '../functions/node_modules/firebase-admin/lib/firestore/index.js';
+import { registrationOrder } from '../functions/src/registrations/order';
+import { registrationToPrintTeam } from '../functions/src/registrations/print-adapter';
 import { ColorTypes, PDFDocument, PDFPage, PDFName, PDFRawStream } from 'pdf-lib';
 import { PNG } from 'pngjs';
 import { describe, expect, test, vi } from 'vitest';
@@ -11,6 +14,22 @@ import { assertCurrentPrintSource } from '../functions/src/print/source-guard';
 import { brandArtwork } from '../packages/quiz-domain/src/brand-artwork';
 
 describe('PDF Print Center renderer', () => {
+  test('prints score table rows in registration order, including legacy teams with no timestamp', async () => {
+    const registrations = [
+      { id: 'a', name: 'Tym Alfa', createdAt: new Timestamp(10, 500) },
+      { id: 'n', name: 'Tym Nula' },
+      { id: 'z', name: 'Tym Zeta', createdAt: new Timestamp(10, 100) },
+      { id: 'b', name: 'Tym Beta', createdAt: new Timestamp(10, 500) },
+      { id: 'm', name: 'Tym Mimo' },
+    ].map(({ id, name, createdAt }) => ({ id, data: () => ({ teamName: name, status: 'accepted', createdAt }) }));
+    const teams = registrationOrder(registrations).map(doc => registrationToPrintTeam(doc.id, doc.data())!);
+    const drawText = vi.spyOn(PDFPage.prototype, 'drawText');
+    try {
+      await renderPrintArtifact(syntheticPrintEvent(), { artifactType: 'score-table', disposition: 'inline', teams });
+      const rows = drawText.mock.calls.map(([text]) => text).filter(text => text.startsWith('Tym '));
+      expect(rows).toEqual(['Tym Zeta', 'Tym Alfa', 'Tym Beta', 'Tym Mimo', 'Tym Nula']);
+    } finally { drawText.mockRestore(); }
+  });
   test('uses the shared vector logo in paper headers and respects hidden logos', async () => {
     const paths = vi.spyOn(PDFPage.prototype, 'drawSvgPath');
     try {

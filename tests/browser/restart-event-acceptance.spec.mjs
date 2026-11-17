@@ -147,6 +147,7 @@ test('one authored event: quiz, immutable snapshot, public teams, scores, staged
     expect((await identity.db.collection('events/' + eventId + '/registrations').get()).docs.filter(doc => doc.data().status === 'accepted')).toHaveLength(2);
     await page.goto('/admin/events/' + eventId + '/scoring');
     for (const [index, team] of teams.entries()) await page.getByLabel('Body — ' + team, { exact: true }).fill(index === 0 ? '3' : '1');
+    page.once('dialog', dialog => dialog.accept());
     await page.getByRole('button', { name: 'Uložit body celého kola', exact: true }).click();
     await expect(page.getByText('Body kola jsou uložené. Potvrzeno serverem.', { exact: true })).toBeVisible();
     await page.reload(); await expect(page.getByLabel('Body — ' + teams[0], { exact: true })).toHaveValue('3');

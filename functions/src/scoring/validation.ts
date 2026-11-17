@@ -1,3 +1,4 @@
+import { MAX_ROUND_HALF_POINTS } from '@filmovy-kviz/quiz-domain';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { isObject, requiredId } from '../events/validation.js';
 
@@ -17,6 +18,9 @@ export function parseScoreRequest(data: unknown) {
   }
   if (data.halfPoints !== null && (!Number.isSafeInteger(data.halfPoints) || (data.halfPoints as number) < 0)) {
     throw new HttpsError('invalid-argument', 'Points must be safe non-negative integer half-point units or null.');
+  }
+  if (typeof data.halfPoints === 'number' && data.halfPoints > MAX_ROUND_HALF_POINTS) {
+    throw new HttpsError('invalid-argument', 'Zadejte nejvýše 1000 bodů.');
   }
   if (typeof data.reason !== 'string' || data.reason.length > 300 || /[\p{Cc}\p{Cf}]/u.test(data.reason)) {
     throw new HttpsError('invalid-argument', 'Reason must be at most 300 characters.');

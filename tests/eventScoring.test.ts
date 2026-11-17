@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { parsePoints, pointsText, scoreLabel } from '../apps/web/src/features/scoring/model';
+import { parsePoints, parseRoundPoints, pointsText, scoreLabel } from '../apps/web/src/features/scoring/model';
 import { parseScoreRequest, parseRoundScoreRequest } from '../functions/src/scoring/validation';
 import { commitRoundScores } from '../functions/src/scoring/core';
 
@@ -28,6 +28,19 @@ describe('event scoring values', () => {
     for (const value of ['', ' ', '-1', '-0', '0.25', '1,75', 'NaN', 'Infinity', '1e2', '1.50000000000000001', '4503599627370496', '4503599627370495.75', '1 000']) {
       expect(() => parsePoints(value)).toThrow();
     }
+  });
+  it.each([[0, '0 bodů'], [1, '0,5 bodu'], [2, '1 bod'], [4, '2 body'], [5, '2,5 bodu'], [6, '3 body'], [8, '4 body'], [10, '5 bodů'], [11, '5,5 bodu'], [20, '10 bodů']] as const)(
+    'inflects half-point value %s as %s', (units, label) => expect(scoreLabel(units)).toBe(label),
+  );
+  it('rejects scores above 1000 points for single and round writes', () => {
+    const ids = { eventId: 'e', snapshotId: 's', roundId: 'r', requestId: 'request' };
+    const team = { teamId: 'b', expectedRevision: 0, reason: '' };
+    expect(parseRoundPoints('1000')).toBe(2000);
+    expect(() => parseRoundPoints('1000,5')).toThrow('nejvýše 1000 bodů');
+    expect(parseScoreRequest({ ...ids, ...team, halfPoints: 2000 }).halfPoints).toBe(2000);
+    expect(() => parseScoreRequest({ ...ids, ...team, halfPoints: 2001 })).toThrow('nejvýše 1000 bodů');
+    expect(parseRoundScoreRequest({ ...ids, scores: [{ ...team, halfPoints: 2000 }] }).scores[0]?.halfPoints).toBe(2000);
+    expect(() => parseRoundScoreRequest({ ...ids, scores: [{ ...team, halfPoints: 2001 }] })).toThrow('nejvýše 1000 bodů');
   });
   it('validates the strict server contract and safe numeric ranges', () => {
     const input = { eventId: 'e', snapshotId: 's', teamId: 't', roundId: 'r', requestId: 'id', expectedRevision: 0, halfPoints: 0, reason: '' };

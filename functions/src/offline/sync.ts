@@ -1,7 +1,7 @@
 import { getFirestore, Timestamp, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { applyOfflineOperation, canonicalOfflineJson, eventDisposition, initialOfflineState, offlineEventLimits as limits,
-  offlineOperationContent, parseOfflineManifest, parseOfflineOperations, parseQuizAsset,
+  MAX_ROUND_HALF_POINTS, offlineOperationContent, parseOfflineManifest, parseOfflineOperations, parseQuizAsset,
   type OfflineEventManifest, type OfflineOperation, type OfflineScore, type OfflineState, type OfflineSyncConflict,
   type OfflineSyncPreview, type OfflineSyncReceipt, type OfflineSyncResolution } from '@filmovy-kviz/quiz-domain';
 import { authorize, freshIdentity, type AuthIdentity } from '../access/authorization.js';
@@ -162,6 +162,9 @@ async function previewIn(tx: Transaction, auth: AuthIdentity, input: ReturnType<
     if (input.completeRecovery && importState.status === 'active') merged = { ...merged, complete: result(manifest, importState.scores).complete };
     if (importHistory.length > limits.scoreMutations || new Set(importHistory.map(item => JSON.stringify([item.teamId, item.roundId]))).size + importHistory.length + 6 > 456)
       conflicts.push({ reason: 'Zvolená sloučení přesahují bezpečný limit historie. Zvolte ponechání online bodů; původní offline průběh zůstane v nouzovém souboru.' });
+  }
+  if (importHistory.some(change => change.halfPoints !== null && change.halfPoints > MAX_ROUND_HALF_POINTS)) {
+    throw new HttpsError('invalid-argument', 'Zadejte nejvýše 1000 bodů.');
   }
   const currentManifest = { ...manifest, rounds: current.rounds, teams: current.teams, baseScores: current.baseScores };
   const serverResult = result(currentManifest, current.baseScores);

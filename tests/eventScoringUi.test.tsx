@@ -37,7 +37,7 @@ describe('score entry UI', () => {
     expect(saveScore).not.toHaveBeenCalled();
     await render({ revision: 1, halfPoints: 4 });
     expect(host.querySelector('input')!.value).toBe('2,5');
-    expect(host.textContent).toContain('Aktuálně uloženo: 2 bodů');
+    expect(host.textContent).toContain('Aktuálně uloženo: 2 body');
     await click('Uložit'); expect(saveScore).not.toHaveBeenCalled();
     await click('Připravit opravu aktuální revize');
     await click('Uložit'); expect(saveScore).not.toHaveBeenCalled();
@@ -80,7 +80,7 @@ describe('score entry UI', () => {
     vi.mocked(saveScore).mockRejectedValue({ code: 'functions/aborted', details: { revision: 2, halfPoints: 9 } });
     await click('Uložit');
     expect(host.querySelector('input')!.value).toBe('3');
-    expect(host.textContent).toContain('4,5 bodů');
+    expect(host.textContent).toContain('4,5 bodu');
     expect(host.textContent).toContain('Konflikt');
   });
 });
