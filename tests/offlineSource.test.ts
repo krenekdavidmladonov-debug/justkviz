@@ -12,7 +12,7 @@ const eventId = 'synthetic-event', snapshotId = 'synthetic-snapshot';
 const identity = { uid: 'synthetic-staff', token: {} } as Parameters<typeof readOfflineSource>[2];
 let registrations: { id: string; data: Record<string, unknown> }[];
 function reference(path: string) {
-  return { path, id: path.split('/').at(-1), collection: (name: string) => reference(path + '/' + name),
+  return { path, id: path.split('/').at(-1), collection: (name: string) => reference(path + '/' + name), doc: (id: string) => reference(path + '/' + id),
     orderBy: () => reference(path), limit: () => reference(path), where: () => reference(path) };
 }
 const row = (id: string, data: Record<string, unknown>) => ({ id, data: () => data });
