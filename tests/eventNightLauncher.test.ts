@@ -15,11 +15,11 @@ const hasUtf8Bom = (file: string) => {
 };
 
 describe('event-night launcher safety contract', () => {
-  const startCmd = read('START_EVENT_NIGHT.cmd');
-  const stopCmd = read('STOP_EVENT_NIGHT.cmd');
-  const prepareCmd = read('PREPARE_EVENT_NIGHT.cmd');
-  const backupCmd = read('BACKUP_EVENT_NIGHT.cmd');
-  const fallbackCmd = read('OPEN_V1_FALLBACK.cmd');
+  const startCmd = read('tools/legacy/START_EVENT_NIGHT.cmd');
+  const stopCmd = read('tools/legacy/STOP_EVENT_NIGHT.cmd');
+  const prepareCmd = read('tools/legacy/PREPARE_EVENT_NIGHT.cmd');
+  const backupCmd = read('tools/legacy/BACKUP_EVENT_NIGHT.cmd');
+  const fallbackCmd = read('tools/legacy/OPEN_V1_FALLBACK.cmd');
   const common = read('tools/event-night/EventNight.Common.ps1');
   const start = read('tools/event-night/Start-EventNight.ps1');
   const stop = read('tools/event-night/Stop-EventNight.ps1');
@@ -28,10 +28,10 @@ describe('event-night launcher safety contract', () => {
   const worker = read('tools/event-night/EventNight.Worker.ps1');
 
   test('keeps entrypoints thin and the V1 fallback inert until manual use', () => {
-    expect(startCmd).toContain('tools\\event-night\\Start-EventNight.ps1');
-    expect(stopCmd).toContain('tools\\event-night\\Stop-EventNight.ps1');
-    expect(prepareCmd).toContain('tools\\event-night\\Prepare-EventNight.ps1');
-    expect(backupCmd).toContain('tools\\event-night\\Backup-EventNight.ps1');
+    expect(startCmd).toContain('..\\event-night\\Start-EventNight.ps1');
+    expect(stopCmd).toContain('..\\event-night\\Stop-EventNight.ps1');
+    expect(prepareCmd).toContain('..\\event-night\\Prepare-EventNight.ps1');
+    expect(backupCmd).toContain('..\\event-night\\Backup-EventNight.ps1');
     expect(fallbackCmd.trim().split(/\r?\n/u)).toEqual([
       '@echo off',
       'start "" "https://filmovy-kviz.web.app/"',

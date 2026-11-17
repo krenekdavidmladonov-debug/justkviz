@@ -25,7 +25,7 @@ try {
       [string]$state.repositoryRoot -ne $repoRoot -or
       [string]$state.projectId -ne $script:EventNightProjectId -or
       -not (Test-EventNightWorker $state.emulators ([string]$state.runToken))) {
-    Throw-QaError 'Neběží identitou ověřené event-night prostředí.' 'Nejdřív spusťte START_EVENT_NIGHT.cmd.'
+    Throw-QaError 'Neběží identitou ověřené event-night prostředí.' 'Nejdřív spusťte tools\legacy\START_EVENT_NIGHT.cmd.'
   }
 
   $nodeTool = Resolve-NodeTool $repoRoot

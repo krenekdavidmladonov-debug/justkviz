@@ -27,7 +27,7 @@ try {
       [string]$state.repositoryRoot -ne $repoRoot -or
       [string]$state.projectId -ne $script:EventNightProjectId -or
       -not (Test-EventNightWorker $state.emulators ([string]$state.runToken))) {
-    Throw-QaError 'Neběží identitou ověřené event-night prostředí.' 'Nejdřív spusťte START_TONIGHT_REPAIR.cmd.'
+    Throw-QaError 'Neběží identitou ověřené event-night prostředí.' 'Nejdřív spusťte tools\legacy\START_TONIGHT_REPAIR.cmd.'
   }
 
   Assert-SafeLocalConfiguration $repoRoot $script:EventNightProjectId
@@ -60,7 +60,7 @@ try {
     Write-Host 'NO-GO — USE V1' -ForegroundColor Yellow
     Write-Host ''
     Write-Host "Zbývá $($repair.readiness.blockers) problémů."
-    Write-Host 'Použijte START_TONIGHT_REPAIR.cmd.'
+    Write-Host 'Použijte tools\legacy\START_TONIGHT_REPAIR.cmd.'
   }
   Write-Host ''
   Write-Host 'Sanitizovaný lokální report: .local-data\tonight-repair\go-no-go-report.json'

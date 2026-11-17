@@ -112,8 +112,8 @@ test('later exports belong to their feature manifests or documented quiz-trash/c
     assert.equal(feature.projectId, manifest.projectId);
     assert.equal(feature.region, manifest.region);
   }
-  for (const name of ['restoreQuiz', 'trashQuiz']) assert(read('docs/QUIZ_TRASH.md').includes('`' + name + '`'));
-  assert(read('docs/EVENT_MANAGEMENT.md').includes('completeEvent'));
+  for (const name of ['restoreQuiz', 'trashQuiz']) assert(read('docs/archive/QUIZ_TRASH.md').includes('`' + name + '`'));
+  assert(read('docs/archive/EVENT_MANAGEMENT.md').includes('completeEvent'));
 });
 
 test('omitted legacy handlers, duplicates and accidental email activation fail the inventory contract', () => {

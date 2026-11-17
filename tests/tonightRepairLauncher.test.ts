@@ -12,8 +12,8 @@ const hasUtf8Bom = (file: string) => {
 };
 
 describe('tonight repair launcher safety contract', () => {
-  const startCmd = read('START_TONIGHT_REPAIR.cmd');
-  const verifyCmd = read('VERIFY_TONIGHT_GO_NO_GO.cmd');
+  const startCmd = read('tools/legacy/START_TONIGHT_REPAIR.cmd');
+  const verifyCmd = read('tools/legacy/VERIFY_TONIGHT_GO_NO_GO.cmd');
   const common = read('tools/tonight-repair/TonightRepair.Common.ps1');
   const start = read('tools/tonight-repair/Start-TonightRepair.ps1');
   const verify = read('tools/tonight-repair/Verify-TonightGoNoGo.ps1');
@@ -23,10 +23,10 @@ describe('tonight repair launcher safety contract', () => {
   test('keeps one-click entrypoints thin and PowerShell 5 UTF-8 compatible', () => {
     expect(startCmd.trim().split(/\r?\n/u)).toEqual([
       '@echo off',
-      'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0tools\\tonight-repair\\Start-TonightRepair.ps1"',
+      'powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\\tonight-repair\\Start-TonightRepair.ps1"',
       'exit /b %ERRORLEVEL%',
     ]);
-    expect(verifyCmd).toContain('tools\\tonight-repair\\Verify-TonightGoNoGo.ps1');
+    expect(verifyCmd).toContain('..\\tonight-repair\\Verify-TonightGoNoGo.ps1');
     for (const file of [
       'tools/tonight-repair/TonightRepair.Common.ps1',
       'tools/tonight-repair/Start-TonightRepair.ps1',

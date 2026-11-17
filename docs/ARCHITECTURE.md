@@ -1,14 +1,14 @@
 # Architecture
 
 Images use their verified original web sources in editor and frozen event views;
-Drive remains the video/audio backend. See [ORIGINAL_IMAGE_SOURCES.md](ORIGINAL_IMAGE_SOURCES.md).
+Drive remains the video/audio backend. See [ORIGINAL_IMAGE_SOURCES.md](archive/ORIGINAL_IMAGE_SOURCES.md).
 
 Native player lifecycle and conditional private-media reads are documented in
-[MEDIA_PLAYBACK_REVALIDATION.md](MEDIA_PLAYBACK_REVALIDATION.md).
+[MEDIA_PLAYBACK_REVALIDATION.md](archive/MEDIA_PLAYBACK_REVALIDATION.md).
 Exact imported-clip resolution for older immutable event snapshots is documented
-in [SNAPSHOT_DRIVE_CLIPS.md](SNAPSHOT_DRIVE_CLIPS.md).
+in [SNAPSHOT_DRIVE_CLIPS.md](archive/SNAPSHOT_DRIVE_CLIPS.md).
 
-The live V2 address is `https://justkviz-v2.web.app`. Its Hosting site uses the existing V2 Firebase project and its already deployed backend, without moving accounts or content. The technical project ID retains its historical `-staging` suffix. See [LIVE_RELEASE.md](LIVE_RELEASE.md) for the owner-directed transition and preserved old links.
+The live V2 address is `https://justkviz-v2.web.app`. Its Hosting site uses the existing V2 Firebase project and its already deployed backend, without moving accounts or content. The technical project ID retains its historical `-staging` suffix. See [LIVE_RELEASE.md](archive/LIVE_RELEASE.md) for the owner-directed transition and preserved old links.
 
 ## Goals
 
@@ -26,7 +26,7 @@ Local-only tooling lives outside deployable units. `tools/migration-v1` is a fai
 The optional Windows media companion in `tools/media-companion` prepares bounded
 YouTube clips through an outbound, revocable device capability. Upload, private
 Drive credentials, media validation and quiz attachment remain server-side.
-See [LOCAL_MEDIA_COMPANION.md](LOCAL_MEDIA_COMPANION.md).
+See [LOCAL_MEDIA_COMPANION.md](archive/LOCAL_MEDIA_COMPANION.md).
 
 Keeping one web application avoids duplicated infrastructure while route-level modules preserve separation between audiences.
 
@@ -77,9 +77,9 @@ Sensitive state transitions—quiz editing, team registration, quiz publication,
 
 ## Frontend modules
 
-An explicitly entered offline event runtime is separate from the online Firebase-authoritative routes. It uses one scoped, time-bounded signed snapshot export, encrypted local persistence and an independently saved file. A pinned local projector receives only the current public allowlist. Reconnection uses a fresh authorized, baseline-checked atomic journal import rather than Firestore persistence. The candidate protocol and acceptance status are in [OFFLINE_MODE.md](OFFLINE_MODE.md).
+An explicitly entered offline event runtime is separate from the online Firebase-authoritative routes. It uses one scoped, time-bounded signed snapshot export, encrypted local persistence and an independently saved file. A pinned local projector receives only the current public allowlist. Reconnection uses a fresh authorized, baseline-checked atomic journal import rather than Firestore persistence. The candidate protocol and acceptance status are in [OFFLINE_MODE.md](archive/OFFLINE_MODE.md).
 
-The demo-only local image backup adds an alternate byte source for bounded owned PNG/JPEG/WebP assets in one locked snapshot. Firebase still authorizes every displayed slide and the projector obtains its own exact media authority. A pinned popup relay transfers one selected image at a time, with fresh operator authorization and short renewable leases. Answer exports require the existing additional answer permissions and public delivery requires an actual revealed answer. See [LOCAL_IMAGE_BACKUP.md](LOCAL_IMAGE_BACKUP.md).
+The demo-only local image backup adds an alternate byte source for bounded owned PNG/JPEG/WebP assets in one locked snapshot. Firebase still authorizes every displayed slide and the projector obtains its own exact media authority. A pinned popup relay transfers one selected image at a time, with fresh operator authorization and short renewable leases. Answer exports require the existing additional answer permissions and public delivery requires an actual revealed answer. See [LOCAL_IMAGE_BACKUP.md](archive/LOCAL_IMAGE_BACKUP.md).
 
 - `app`: router and top-level application composition.
 - `routes`: route-group screens and future nested routing.
@@ -101,7 +101,7 @@ The first implemented feature is the read-only admin quiz library. `features/qui
 
 The live feature now provides that trusted boundary. Staff control `/admin/live/:sessionId`, while anonymous `/projector/:sessionId` subscribes only to one `publicSessions` document. `functions/src/live/publication.ts` allowlists slide publication; the interim-results boundary independently publishes only a reviewed page of rank/name/total rows. The dedicated projector route is outside admin layout and renders a responsive 16:9 canvas through the same `SlideRenderer` used by editor draft preview. The projector refuses cached snapshots and clears visible state when the browser goes offline, preventing an old recap answer from lingering after a disconnected slide transition.
 
-Media and recap commands are revisioned trusted mutations with monotonic media-generation tokens. Moderator command intent is separate from confirmed player lifecycle. Normal AUDIO deliberately omits its source from the public projector model and plays from a visible moderator player; its vinyl moves only after confirmed PLAYING. VIDEO mounts one projector player only while preparing/playing and falls back to the question on error. Recap publishes one selected answer at a time. The projector accepts presentation state only from Firestore; inbound BroadcastChannel presentation messages are ignored. The channel retains only player lifecycle reporting to the moderator. Details are in `PROJECTOR_ARCHITECTURE.md` and `MEDIA_ARCHITECTURE.md`.
+Media and recap commands are revisioned trusted mutations with monotonic media-generation tokens. Moderator command intent is separate from confirmed player lifecycle. Normal AUDIO deliberately omits its source from the public projector model and plays from a visible moderator player; its vinyl moves only after confirmed PLAYING. VIDEO mounts one projector player only while preparing/playing and falls back to the question on error. Recap publishes one selected answer at a time. The projector accepts presentation state only from Firestore; inbound BroadcastChannel presentation messages are ignored. The channel retains only player lifecycle reporting to the moderator. Details are in [PROJECTOR_ARCHITECTURE.md](archive/PROJECTOR_ARCHITECTURE.md) and [MEDIA_ARCHITECTURE.md](archive/MEDIA_ARCHITECTURE.md).
 
 The round-first quiz editor lives at `/admin/quizzes/:quizId/edit`. A memoized semantic facade turns the private global slide stream into quiz, introduction, rounds, locally numbered questions, and system recap nodes without rewriting migrated records. Its focused responsive shell provides structure, type-specific form, and local projector-style preview panels. Admins can mutate; moderators receive the same private read model in a disabled read-only UI. Every write calls `functions/src/editor/callables.ts`; Firestore Rules continue to reject all direct quiz writes. The client sends the quiz revision it rendered, and a stale editor receives `aborted` instead of overwriting another save. New-question drafts and form changes remain local until the one explicit Save action; there is no autosave.
 
@@ -113,13 +113,13 @@ The guided repair layer lives at `/admin/quizzes/:quizId/readiness/repair`. It c
 
 The first Events Foundation slice adds `/admin/events`, event create/detail/configuration, and immutable quiz preparation. Event mutations are admin-only callable Functions with expected revisions; moderators have operational read-only access. Locking imports the same quiz-domain mapper and computes an advisory preflight summary without rejecting editorial findings or requiring warning acknowledgement, then atomically copies the exact private slide stream and round metadata into a new `quizSnapshots` document tree and attaches it to the event. Relock creates another snapshot and is allowed only while server-owned scoring state has not started. `publicEvents` is a whole-document allowlist projection with safe aggregate capacities and registration window but no quiz references, team identities, answers, or contacts.
 
-Public registrations use trusted create/get/edit/cancel operations. Capacity and unique names are transactional; records retain only the management-token verifier. Private email intents, encrypted capability envelopes, replay receipts and a safe organizer delivery summary are documented in [TRANSACTIONAL_EMAIL.md](TRANSACTIONAL_EMAIL.md). Gmail delivery uses a private Cloud Tasks worker. Default-off discovery binds no secrets. The separately approved 972ed71 V2 staging activation enabled only new public online registrations from 2026-10-15T15:26:19.550Z; the queue is RUNNING and the owner confirmed all three create/update/cancel messages. The earlier selected-recipient activation in [EMAIL_ACTIVATION_EXECUTION.md](EMAIL_ACTIVATION_EXECUTION.md) is historical evidence. This source revision adds Czech templates, an encrypted management link for new update intents and conservative handling of uncertain provider outcomes; its deployment requires a separate exact release approval. Local verification uses a fake Gmail transport. Internal round scoring uses the scoped saveEventScore callable; see EVENT_SCORING.md.
+Public registrations use trusted create/get/edit/cancel operations. Capacity and unique names are transactional; records retain only the management-token verifier. Private email intents, encrypted capability envelopes, replay receipts and a safe organizer delivery summary are documented in [TRANSACTIONAL_EMAIL.md](archive/TRANSACTIONAL_EMAIL.md). Gmail delivery uses a private Cloud Tasks worker. Default-off discovery binds no secrets. The separately approved 972ed71 V2 staging activation enabled only new public online registrations from 2026-10-15T15:26:19.550Z; the queue is RUNNING and the owner confirmed all three create/update/cancel messages. The earlier selected-recipient activation in [EMAIL_ACTIVATION_EXECUTION.md](archive/EMAIL_ACTIVATION_EXECUTION.md) is historical evidence. This source revision adds Czech templates, an encrypted management link for new update intents and conservative handling of uncertain provider outcomes; its deployment requires a separate exact release approval. Local verification uses a fake Gmail transport. Internal round scoring uses the scoped saveEventScore callable; see [EVENT_SCORING.md](archive/EVENT_SCORING.md).
 
-Event team tools add two admin-only manual-team callables over that same registration ledger (not a parallel team store), plus shared manual-team and public-link/QR UI. See `EVENT_TEAM_TOOLS.md` for idempotency and delivery scope.
+Event team tools add two admin-only manual-team callables over that same registration ledger (not a parallel team store), plus shared manual-team and public-link/QR UI. See [EVENT_TEAM_TOOLS.md](archive/EVENT_TEAM_TOOLS.md) for idempotency and delivery scope.
 
 The PDF Print Center adds `/admin/events/:eventId/print` and a binary HTTPS Function. The Function resolves the event's immutable snapshot and accepted registration roster, maps them into minimal typed print models, and passes those models to a deterministic Firestore-independent renderer. `PrintTeam` contains only a stable registration ID and display name. Admins can generate all document types; moderators can generate team sheets and score tables but not answer keys. The browser owns only Blob preview/download lifecycle and never supplies answer-bearing content, team contacts, or roster contents.
 
-The print redesign retains that boundary and derives answer mode independently of media from shared domain semantics. Player sheets draw only response labels/counts, while the separate privileged answer key uses answer content. Standard/compact A4 and transient color/grayscale options share the same real PDF preview/download. The editor's undefined inline field classes were replaced with scoped responsive fields. Implementation, verification and release scope: [PRINT_CENTER_REDESIGN.md](PRINT_CENTER_REDESIGN.md).
+The print redesign retains that boundary and derives answer mode independently of media from shared domain semantics. Player sheets draw only response labels/counts, while the separate privileged answer key uses answer content. Standard/compact A4 and transient color/grayscale options share the same real PDF preview/download. The editor's undefined inline field classes were replaced with scoped responsive fields. Implementation, verification and release scope: [PRINT_CENTER_REDESIGN.md](archive/PRINT_CENTER_REDESIGN.md).
 
 Player and organizer sheets are now laid out directly as two independent half-A4 portrait panels on one landscape A4, with a central cut guide and per-panel identity/pagination. The new `organizer-sheets` artifact uses the same current answer-read/export permissions as the separate answer key. Both private choices require an explicit UI confirmation before generation and carry conspicuous private labels and distinct filenames; that confirmation is only a UX safeguard, never server authority. Player rendering remains answer-independent. No stored document, roster or Rules schema changes.
 
@@ -127,7 +127,7 @@ Player and organizer sheets are now laid out directly as two independent half-A4
 
 ## Firebase services
 
-Whole-evening visual authoring adds bounded quiz/round/slide design inheritance and frozen result/print templates to these same boundaries. The moderator preview consumes the actual public payload; questions, scores and results retain their original authoritative sources. See [WHOLE_EVENING_DESIGN.md](WHOLE_EVENING_DESIGN.md).
+Whole-evening visual authoring adds bounded quiz/round/slide design inheritance and frozen result/print templates to these same boundaries. The moderator preview consumes the actual public payload; questions, scores and results retain their original authoritative sources. See [WHOLE_EVENING_DESIGN.md](archive/WHOLE_EVENING_DESIGN.md).
 
 - Authentication: staff sign-in; authorization through current server-managed membership, permissions and resource scopes.
 - Firestore: operational and public projection data.
@@ -146,17 +146,17 @@ Production credentials stay outside the repository.
 
 The quality gate includes static checks, production builds, unit/migration tests, Firestore Rules emulator tests, and Auth/Firestore/Functions emulator E2E flows for live control, editor CRUD, guided repair, and trusted event/snapshot workflows. Separate local-only migrated-data checks open all 4 offline V1 quizzes and 315 slides through the editor read shape, round-trip one representative of each observed slide kind, and run whole-quiz readiness over all 263 questions without printing private values. The real export is never available to CI. Event-night repair reports and progress live only below Git-ignored `.local-data/tonight-repair/` and contain semantic references/counts, never question copy, options, answers, media URLs, notes, or raw legacy values.
 
-Internal scoring lives at /admin/events/:eventId/scoring, linked from the event detail. It uses the existing registration roster and immutable snapshot round IDs. Revision-checked score changes, append-only history, idempotency receipts, and the first scoring.started transition share one transaction. Current membership and event scope are rechecked on every callable invocation and inside the score transaction. Private subscriptions preserve local drafts; there is no publication or BroadcastChannel path. See EVENT_SCORING.md for the data and lifecycle contract.
+Internal scoring lives at /admin/events/:eventId/scoring, linked from the event detail. It uses the existing registration roster and immutable snapshot round IDs. Revision-checked score changes, append-only history, idempotency receipts, and the first scoring.started transition share one transaction. Current membership and event scope are rechecked on every callable invocation and inside the score transaction. Private subscriptions preserve local drafts; there is no publication or BroadcastChannel path. See [EVENT_SCORING.md](archive/EVENT_SCORING.md) for the data and lifecycle contract.
 
 ## Referee access
 
-The separate /referee/:eventId surface uses event-scoped bearer grants and minimal callable read models. It shares the staff scoring transaction and never receives private snapshots or registration contacts. See [REFEREE_ACCESS.md](REFEREE_ACCESS.md) for the authorization, lifecycle and deployment contract.
+The separate /referee/:eventId surface uses event-scoped bearer grants and minimal callable read models. It shares the staff scoring transaction and never receives private snapshots or registration contacts. See [REFEREE_ACCESS.md](archive/REFEREE_ACCESS.md) for the authorization, lifecycle and deployment contract.
 
 
-Event-bound moderation and explicitly reviewed cumulative result versions use the existing live/projector routes. See [INTERIM_RESULTS.md](INTERIM_RESULTS.md) for binding, transactional confirmation, pagination, closure and deployment dependencies.
+Event-bound moderation and explicitly reviewed cumulative result versions use the existing live/projector routes. See [INTERIM_RESULTS.md](archive/INTERIM_RESULTS.md) for binding, transactional confirmation, pagination, closure and deployment dependencies.
 
 
-Final reveal extends the same event-bound live session with private immutable finalVersions, revisioned finalOperations and an explicitly revealed public page. Staff confirmation, corrections, closure and moderator-only synthetic sound are documented in [FINAL_REVEAL.md](FINAL_REVEAL.md). No Rules, indexes or cloud data change is required by this implementation.
+Final reveal extends the same event-bound live session with private immutable finalVersions, revisioned finalOperations and an explicitly revealed public page. Staff confirmation, corrections, closure and moderator-only synthetic sound are documented in [FINAL_REVEAL.md](archive/FINAL_REVEAL.md). No Rules, indexes or cloud data change is required by this implementation.
 
 Show Mode extends these same confirmed-result transactions and public session
 allowlist; it does not create another score or ranking source. New show versions
@@ -170,7 +170,7 @@ groups. Server cue metadata authorizes visual presentation, never future rows or
 client-driven navigation. Event-scoped show preferences/audio bindings and a narrow
 authenticated media gateway let moderators play linked owned MP3/WAV locally.
 The integrated moderator queue serializes live and result commands. Details and
-verification are in [SHOW_MODE_IMPLEMENTATION.md](SHOW_MODE_IMPLEMENTATION.md);
+verification are in [SHOW_MODE_IMPLEMENTATION.md](archive/SHOW_MODE_IMPLEMENTATION.md);
 the deployment inventory is a local plan, not deployment authorization.
 
 ## Event organizational email
@@ -179,7 +179,7 @@ Owner registration notifications share the existing private email outbox and
 Cloud Tasks worker. A successful new public registration atomically creates one
 separate organizer intent, enabled only by trusted recipient/owner UID/cutoff
 configuration. Current membership and event scope are rechecked at delivery;
-participant mail remains independent. See [TRANSACTIONAL_EMAIL.md](TRANSACTIONAL_EMAIL.md).
+participant mail remains independent. See [TRANSACTIONAL_EMAIL.md](archive/TRANSACTIONAL_EMAIL.md).
 
 Registration email has a backward-compatible, explicit recipient policy in the
 trusted runtime. Missing `REGISTRATION_EMAIL_RECIPIENT_POLICY` means `selected`,
@@ -197,7 +197,7 @@ with a RUNNING queue and the cutoff above. Organizational campaigns and automati
 organizer notifications remain outside the activated dispatch policy. No historical
 outbox replay, public worker access or production activation is implied.
 
-Admin-only preview/confirmation creates an immutable emailCampaigns record and recipient snapshots in the existing emailIntents outbox. The shared task worker delivers plain-text organizational messages without management capabilities or changes to registration confirmation status. All client campaign/intent access remains denied; safe history and status are exposed only through fresh-admin callables. Atomic recipient limits, snapshot/idempotence contracts and offline tests: [EVENT_TEAM_EMAIL.md](EVENT_TEAM_EMAIL.md).
+Admin-only preview/confirmation creates an immutable emailCampaigns record and recipient snapshots in the existing emailIntents outbox. The shared task worker delivers plain-text organizational messages without management capabilities or changes to registration confirmation status. All client campaign/intent access remains denied; safe history and status are exposed only through fresh-admin callables. Atomic recipient limits, snapshot/idempotence contracts and offline tests: [EVENT_TEAM_EMAIL.md](archive/EVENT_TEAM_EMAIL.md).
 
 ## Owned media foundation
 
@@ -208,27 +208,27 @@ OAuth/Picker project is separate from the existing V2 Firebase runtime and Gmail
 project because Google revocation applies across a project's OAuth clients. Connection credentials
 never use the existing Gmail grant or the chat connector. This initial slice does
 not change media playback by itself. The separately gated media extension adds
-private Drive-backed assets and import jobs; see [GOOGLE_DRIVE_MEDIA.md](GOOGLE_DRIVE_MEDIA.md).
-Connection lifecycle remains in [GOOGLE_DRIVE_CONNECTION.md](GOOGLE_DRIVE_CONNECTION.md).
+private Drive-backed assets and import jobs; see [GOOGLE_DRIVE_MEDIA.md](archive/GOOGLE_DRIVE_MEDIA.md).
+Connection lifecycle remains in [GOOGLE_DRIVE_CONNECTION.md](archive/GOOGLE_DRIVE_CONNECTION.md).
 
-Quiz-scoped image, audio and MP4 uploads use private asset metadata, create-only Storage grants and a current-role/current-publication HTTP read gateway. Immutable event snapshots keep stable asset references and generations; no cleanup runs. The existing MediaPlayer lifecycle selects YouTube or native audio/video while retaining the one-player budget. See [MEDIA_STORAGE.md](MEDIA_STORAGE.md) for boundaries and future deployment checks.
+Quiz-scoped image, audio and MP4 uploads use private asset metadata, create-only Storage grants and a current-role/current-publication HTTP read gateway. Immutable event snapshots keep stable asset references and generations; no cleanup runs. The existing MediaPlayer lifecycle selects YouTube or native audio/video while retaining the one-player budget. See [MEDIA_STORAGE.md](archive/MEDIA_STORAGE.md) for boundaries and future deployment checks.
 
-Media authoring extends the shared picker/gateway/renderer to question, private answer and background roles. Explicit empty fields detach without deleting legacy data or snapshot assets. See MEDIA_AUTHORING_RELEASE.md for the complete contract and deployment scope.
+Media authoring extends the shared picker/gateway/renderer to question, private answer and background roles. Explicit empty fields detach without deleting legacy data or snapshot assets. See [MEDIA_AUTHORING_RELEASE.md](archive/MEDIA_AUTHORING_RELEASE.md) for the complete contract and deployment scope.
 
 
-Complete editor extends the same private ordered stream with explicit draft/ready authoring, independent answer mode, default appearance, atomic round/recap creation and private in-memory rehearsal. Drafts remain editorial findings in optional preflight; saved drafts can be used for rehearsal and event snapshots through the same sanitized publication boundary. See [COMPLETE_EDITOR_RELEASE.md](COMPLETE_EDITOR_RELEASE.md) for field compatibility, authorization, verification and the integrated deployment manifest.
+Complete editor extends the same private ordered stream with explicit draft/ready authoring, independent answer mode, default appearance, atomic round/recap creation and private in-memory rehearsal. Drafts remain editorial findings in optional preflight; saved drafts can be used for rehearsal and event snapshots through the same sanitized publication boundary. See [COMPLETE_EDITOR_RELEASE.md](archive/COMPLETE_EDITOR_RELEASE.md) for field compatibility, authorization, verification and the integrated deployment manifest.
 
 ## Current personal access boundary
 
-[PERSONAL_ACCESS.md](PERSONAL_ACCESS.md) supersedes the historical admin/moderator descriptions above. Private repositories use scoped server views; raw data is available only with all sensitive permissions. Every existing staff callable and gateway enforces current membership independently. Preset labels do not authorize access. AuthProvider watches its own server membership and remounts private views on identity/version changes. See the release document for the explicit deployment inventory and invitation activation gate.
+[PERSONAL_ACCESS.md](archive/PERSONAL_ACCESS.md) supersedes the historical admin/moderator descriptions above. Private repositories use scoped server views; raw data is available only with all sensitive permissions. Every existing staff callable and gateway enforces current membership independently. Preset labels do not authorize access. AuthProvider watches its own server membership and remounts private views on identity/version changes. See the release document for the explicit deployment inventory and invitation activation gate.
 
 ## Event management extension
 
 The main dashboard uses the existing scoped event and quiz summary reads. It does
 not fetch registration rosters or snapshot contents to calculate attendance.
 Manual publication and the anonymous event boundary are described in
-[EVENT_PUBLICATION.md](EVENT_PUBLICATION.md).
+[EVENT_PUBLICATION.md](archive/EVENT_PUBLICATION.md).
 
-See [EVENT_MANAGEMENT.md](EVENT_MANAGEMENT.md) for the independent disposition overlay, scoped permission mapping, shared transactional guards, capability revocation and exact server-side deletion ownership/allowlist. No content backfill or Storage cleanup is introduced. Cloud team email remains disabled.
+See [EVENT_MANAGEMENT.md](archive/EVENT_MANAGEMENT.md) for the independent disposition overlay, scoped permission mapping, shared transactional guards, capability revocation and exact server-side deletion ownership/allowlist. No content backfill or Storage cleanup is introduced. Cloud team email remains disabled.
 
-Moderator presentation END and event completion are independent. END only closes the selected presentation; explicit completeEvent in event settings applies current scoped manage/live checks, closes sessions when explicitly requested, and retains scores/snapshots/confirmed result history. Explicit question jumps can atomically dismiss result overlays into an unrevealed snapshot slide; finale publication remains reviewed and revision-protected. See EVENT_MANAGEMENT.md and FINAL_REVEAL.md.
+Moderator presentation END and event completion are independent. END only closes the selected presentation; explicit completeEvent in event settings applies current scoped manage/live checks, closes sessions when explicitly requested, and retains scores/snapshots/confirmed result history. Explicit question jumps can atomically dismiss result overlays into an unrevealed snapshot slide; finale publication remains reviewed and revision-protected. See [EVENT_MANAGEMENT.md](archive/EVENT_MANAGEMENT.md) and [FINAL_REVEAL.md](archive/FINAL_REVEAL.md).
