@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { verifyMain, storageBucketExists, functionSourcePatch } from './nasadit.mjs';
 import { deploymentConfig } from './artefakt.mjs';
@@ -92,6 +94,31 @@ test('povolí jen určený Hosting a výslovně přidané Rules', () => {
   });
   assert.throws(() => deploymentConfig({ ...hosting, site: 'filmovy-kviz-v2-staging' }, false), /site/u);
   assert.throws(() => deploymentConfig({ ...hosting, rewrites: [{ source: '**', function: 'health' }] }, false), /statické/u);
+});
+
+test('produkční konfigurace omezuje noindex na soukromé a offline trasy', () => {
+  const require = createRequire(import.meta.url);
+  const requireFirebase = createRequire(require.resolve('firebase-tools/package.json'));
+  const { configMatcher } = requireFirebase('superstatic/lib/utils/patterns.js');
+  const { hosting } = JSON.parse(readFileSync(new URL('../../firebase.offline-hosting.json', import.meta.url), 'utf8'));
+  const config = deploymentConfig(hosting, false);
+  function headersFor(url) {
+    const pathname = new URL(url, 'https://justkviz.cz').pathname;
+    const headers = new Map(config.hosting.headers.filter(rule => configMatcher(pathname, rule))
+      .flatMap(rule => rule.headers.map(({ key, value }) => [key.toLowerCase(), value])));
+    assert.equal(headers.get('x-content-type-options'), 'nosniff', url);
+    assert.equal(headers.get('referrer-policy'), 'strict-origin-when-cross-origin', url);
+    return headers;
+  }
+  for (const url of ['/', '/privacy', '/events', '/events/quiz', '/robots.txt', '/sitemap.xml',
+    '/offline.webmanifest', '/offline-sw.js', '/admin-guide', '/events/quiz/registration-info']) {
+    assert.equal(headersFor(url).has('x-robots-tag'), false, url);
+  }
+  for (const url of ['/admin', '/admin/login', '/projector', '/projector/demo', '/referee', '/referee/demo',
+    '/account', '/account/', '/invite/demo', '/events/quiz/registration/manage?view=demo', '/offline.html']) {
+    assert.equal(headersFor(url).get('x-robots-tag'), 'noindex, nofollow', url);
+  }
+  assert.equal(headersFor('/offline.html').get('cache-control'), 'no-cache, max-age=0, must-revalidate');
 });
 
 test('ověřuje pouze metadata cílového bucketu a při 404 jej vynechá', async () => {

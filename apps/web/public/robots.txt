@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /projector
+Disallow: /referee
+Disallow: /account
+Disallow: /invite
+
+Sitemap: https://justkviz.cz/sitemap.xml

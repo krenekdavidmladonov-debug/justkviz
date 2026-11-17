@@ -57,6 +57,21 @@ async function submit() { await act(async () => { host.querySelector('form')!.di
 const button = () => host.querySelector<HTMLButtonElement>('button[type=submit]')!;
 const email = () => host.querySelector<HTMLInputElement>('input[type=email]')?.value;
 
+it('sets the public name and local date in the title and restores it on exit', async () => {
+  const before = document.title;
+  document.title = 'Akce | JustKvíz';
+  try {
+    await render();
+    expect(document.title.replace(/\u00a0/g, ' ')).toBe('Event a – 10. 11. 2099');
+    await navigate('b');
+    expect(document.title.replace(/\u00a0/g, ' ')).toBe('Event b – 10. 11. 2099');
+    await act(async () => root.render(null));
+    expect(document.title).toBe('Akce | JustKvíz');
+  } finally {
+    document.title = before;
+  }
+});
+
 it('clears the draft on A → B navigation and initializes B with its own minimum', async () => {
   await render(); await fill('a'); await input('input[type=number]', '4');
   expect(email()).toBe('a@example.test');
