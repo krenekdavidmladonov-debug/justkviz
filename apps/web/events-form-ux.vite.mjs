@@ -4,6 +4,7 @@ import { fileURLToPath, URL } from 'node:url';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const mocks = fileURLToPath(new URL('../../tests/browser/events-form-ux.mocks.ts', import.meta.url));
 export default defineConfig({
+  optimizeDeps: { entries: ['tests/browser/events-form-ux.harness.html'] },
   root, plugins: [react(), {
     name: 'event-form-isolated-fixtures',
     enforce: 'pre',

@@ -20,7 +20,8 @@ window.uxEventReads = [];
 const params = new URLSearchParams(window.location.search);
 const auth = createEventFormAuth(params.get('role'));
 export const useAuth = () => auth;
-const data = createEventFormData(window.location.pathname === '/admin/events/new' ? null : eventFormRecord(), params.has('fail'));
+const initial = { ...eventFormRecord(), ...(params.has('lateAutumn') ? { startsAt: new Date('2026-10-25T01:30:00Z') } : {}) };
+const data = createEventFormData(window.location.pathname === '/admin/events/new' ? null : initial, params.has('fail'));
 function requirePermission(permission: Permission, eventId?: string) {
   if (!auth.can(permission) || (eventId !== undefined && !auth.membership?.events.ids.includes(eventId))) {
     throw new Error('K této změně nemáte oprávnění.');

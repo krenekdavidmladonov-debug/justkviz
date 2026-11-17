@@ -91,7 +91,7 @@ function EventCreationForm({ uid, isCurrentEntry }: { readonly uid: string; read
       <header className="event-page-heading event-form-heading"><h1>Vytvořit akci</h1><p className="lead">Vyplňte základní údaje a kapacitu. Registrace nastavíte v detailu akce.</p></header>
       {error && <p className="round-editor-error" role="alert">{error}</p>}
       {!attempt && <p role="alert">Předchozí pokus nelze bezpečně načíst. Než začnete nový, zkontrolujte přehled akcí.</p>}
-      <EventForm values={values} fieldsLocked={!attempt || attempt.submittedValues !== null} pending={pending || leaving || !attempt} submitLabel={attempt?.submittedValues ? 'Zkusit znovu' : 'Vytvořit akci'} pendingLabel={leaving ? 'Otevírám stránku…' : 'Vytvářím…'} onChange={setValues} onSubmit={submit} />
+      <EventForm values={values} confirmPastDate fieldsLocked={!attempt || attempt.submittedValues !== null} pending={pending || leaving || !attempt} submitLabel={attempt?.submittedValues ? 'Zkusit znovu' : 'Vytvořit akci'} pendingLabel={leaving ? 'Otevírám stránku…' : 'Vytvářím…'} onChange={setValues} onSubmit={submit} />
       {(!attempt || attempt.submittedValues !== null) && <div className="event-form-section">
         <p>Při nejasném výsledku opakujte stejný pokus. Před novým pokusem <Link to="/admin/events">zkontrolujte přehled akcí</Link>, zda už akce vznikla.</p>
         <label><input type="checkbox" checked={checkedEvents} disabled={pending || leaving} onChange={event => setCheckedEvents(event.target.checked)} /> Zkontroloval(a) jsem přehled a chci začít nový pokus.</label>

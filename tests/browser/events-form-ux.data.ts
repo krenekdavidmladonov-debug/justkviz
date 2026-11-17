@@ -1,7 +1,7 @@
 import type { EventFormValues, EventMutationResponse, EventRecord } from '../../apps/web/src/features/events/types';
 import type { Access } from '../../apps/web/src/features/referee/api';
 import { canMutateEvent, defaultScoringConfiguration, validateEventConfiguration } from '../../functions/src/events/model';
-import { pragueInstant } from '../../packages/quiz-domain/src/event-management';
+import { eventFormInstant } from '../../apps/web/src/features/events/eventFormTime';
 import { eventFormPricing, mapEventPricing } from '../../apps/web/src/features/events/eventPricing';
 
 export function eventFormRecord(): EventRecord {
@@ -21,7 +21,7 @@ function configuration(values: EventFormValues) {
   // Same Prague wall-clock conversion as eventApi; form-only keys are not stored.
   const fields = {
     title: values.title.trim(), description: (values.description ?? '').trim(),
-    startsAt: new Date(pragueInstant(values.startsAt, values.utcOffset)), timeZone: 'Europe/Prague',
+    startsAt: new Date(eventFormInstant(values)), timeZone: 'Europe/Prague',
     venue: { name: values.venueName.trim(), publicLocation: values.publicLocation.trim() },
     pricing: mapEventPricing(eventFormPricing(values)),
     teamCapacity: values.teamCapacity, peopleCapacity: values.peopleCapacity,

@@ -1,16 +1,16 @@
-import { pragueInstant } from '@filmovy-kviz/quiz-domain';
 import { FunctionsError, httpsCallable } from 'firebase/functions';
 
 import { getFirebaseServices } from '../../services/firebase/client';
 import type { EventFormValues, EventMutationResponse } from './types';
 import { eventFormPricing } from './eventPricing';
+import { eventFormInstant } from './eventFormTime';
 
 function eventPayload(values: EventFormValues): Record<string, unknown> {
   return {
     title: values.title,
     pricing: eventFormPricing(values),
     description: values.description ?? '',
-    startsAt: pragueInstant(values.startsAt, values.utcOffset),
+    startsAt: eventFormInstant(values),
     timeZone: 'Europe/Prague',
     venue: { name: values.venueName, publicLocation: values.publicLocation },
     teamCapacity: values.teamCapacity,
