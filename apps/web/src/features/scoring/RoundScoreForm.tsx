@@ -28,6 +28,13 @@ export function RoundScoreForm({ eventId, snapshotId, roundId, roundTitle, quest
   const busy = useRef(false), retry = useRef<RoundScoreRequest | null>(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [histories, setHistories] = useState<Record<string, ScoreHistory[]>>({});
+  useEffect(() => {
+    const accepted = new Set(teams.filter(team => team.accepted !== false).map(team => team.id));
+    if (!Object.keys(drafts).some(id => !accepted.has(id))) return;
+    setDrafts(current => Object.fromEntries(Object.entries(current).filter(([id]) => accepted.has(id))));
+    retry.current = null;
+    setError('Soupiska se změnila. Rozepsané body vyřazených týmů byly odstraněny; ostatní zůstávají.');
+  }, [teams, drafts]);
   const dirty = Object.keys(drafts).length > 0;
   useEffect(() => { onDirty(dirty || pending); }, [dirty, pending, onDirty]);
   const current = (id: string) => [scores[id] ?? emptyScore, confirmed[id], conflicts[id]].reduce<Score>((latest, score) => score && score.revision > latest.revision ? score : latest, emptyScore);
@@ -105,7 +112,7 @@ export function RoundScoreForm({ eventId, snapshotId, roundId, roundTitle, quest
     <p className="event-muted">Zadejte body za toto kolo všem týmům a uložte je společně. Nula je výsledek; prázdné pole je nezadáno.</p>
     <div className="round-score-table" role="table" aria-label="Body všech týmů">
       <div className="round-score-head" role="row"><span role="columnheader">Tým</span><span role="columnheader">Body</span></div>
-      {teams.map(team => {
+      {teams.filter(team => team.accepted !== false).map(team => {
         const score = current(team.id), draft = drafts[team.id], conflict = draft && draft.base.revision !== score.revision;
         const error = Object.hasOwn(fieldErrors, team.id) ? fieldErrors[team.id] : undefined;
         const units = draft && draftPoints(draft).halfPoints;

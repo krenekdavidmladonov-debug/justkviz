@@ -3,7 +3,7 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { loadRounds, watchRoster, watchScores, watchScoringEvent } from '../apps/web/src/features/scoring/api';
+import { loadRounds, watchRoster, watchScores, watchScoringEvent, saveRoundScores } from '../apps/web/src/features/scoring/api';
 import { AdminEventScoringPage } from '../apps/web/src/routes/admin/AdminEventScoringPage';
 
 vi.mock('../apps/web/src/auth/AuthProvider', () => ({ useAuth: () => ({ can: (permission: string) => permission === 'event.score' }) }));
@@ -13,7 +13,7 @@ vi.mock('../apps/web/src/features/scoring/api', () => ({
   watchScoringEvent: vi.fn<typeof watchScoringEvent>((_id, receive) => { receive('s', true, 'Akce'); return () => undefined; }),
   watchRoster: vi.fn<typeof watchRoster>((_id, receive) => { receive([{ id: 't', name: 'Tým', accepted: true }]); return () => undefined; }),
   watchScores: vi.fn<typeof watchScores>((_id, receive) => { receive({}); return () => undefined; }),
-  saveScore: vi.fn(), loadHistory: vi.fn(),
+  saveScore: vi.fn(), saveRoundScores: vi.fn(), loadHistory: vi.fn(),
 }));
 let host: HTMLDivElement, root: Root;
 let router: ReturnType<typeof createMemoryRouter>;
@@ -127,4 +127,29 @@ it('scopes scoring to the new event before any of its subscriptions resolve', as
   expect(draft.value).toBe('6');
   expect(draft.disabled).toBe(true);
   expect(vi.mocked(loadRounds).mock.calls).toEqual([['snímek A'], ['snímek B']]);
+});
+
+
+it('hides cancelled teams and preserves other drafts when a team is cancelled during scoring', async () => {
+  let receiveRoster!: Parameters<typeof watchRoster>[1];
+  vi.mocked(watchRoster).mockImplementation((_id, receive) => {
+    receiveRoster = receive;
+    receive([{ id: 'a', name: 'Alfa', accepted: true }, { id: 'b', name: 'Beta', accepted: true }, { id: 'c', name: 'Zrušený', accepted: false }]);
+    return () => undefined;
+  });
+  await openScoring('e');
+  expect(host.querySelector('[aria-label="Body — Zrušený"]')).toBeNull();
+  for (const [name, text] of [['Alfa', '1'], ['Beta', '0,5']]) {
+    const input = host.querySelector<HTMLInputElement>('[aria-label="Body — ' + name + '"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, text);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+  await act(async () => receiveRoster([{ id: 'a', name: 'Alfa', accepted: false }, { id: 'b', name: 'Beta', accepted: true }]));
+  expect(host.querySelector('[aria-label="Body — Alfa"]')).toBeNull();
+  expect(host.querySelector<HTMLInputElement>('[aria-label="Body — Beta"]')?.value).toBe('0,5');
+  vi.mocked(saveRoundScores).mockResolvedValue({ scores: [{ teamId: 'b', revision: 1, halfPoints: 1 }] });
+  await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Uložit body celého kola')!.click());
+  expect(saveRoundScores).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ scores: [{ teamId: 'b', expectedRevision: 0, halfPoints: 1, reason: '' }] }));
 });
