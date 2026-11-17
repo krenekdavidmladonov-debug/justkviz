@@ -11,7 +11,8 @@ const BUCKET = PROJECT + '.firebasestorage.app';
 const readJson = file => JSON.parse(readFileSync(file, 'utf8'));
 const spaRewrite = { source: '**', destination: '/index.html' };
 export const eventPreviewRewrite = {
-  regex: '^/events/[A-Za-z0-9_-]+$', function: { functionId: 'servePublicEventMeta', region: 'europe-west1' },
+  // The Hosting emulator normalizes separators on Windows.
+  regex: '^[/\\\\]events[/\\\\][A-Za-z0-9_-]+$', function: { functionId: 'servePublicEventMeta', region: 'europe-west1' },
 };
 
 function run(command, args, cwd, env = process.env) {

@@ -145,7 +145,9 @@ test('produkční konfigurace omezuje noindex na soukromé a offline trasy', () 
     assert.equal(configMatcher(url, config.hosting.rewrites[0]), false, url);
     assert.equal(headersFor(url).get('cache-control'), 'no-cache, max-age=0, must-revalidate', url);
   }
-  assert.deepEqual(config.hosting.rewrites.find(rule => configMatcher('/events/quiz', rule)), eventPreviewRewrite);
+  for (const url of ['/events/quiz', '\\events\\quiz']) {
+    assert.deepEqual(config.hosting.rewrites.find(rule => configMatcher(url, rule)), eventPreviewRewrite, url);
+  }
 });
 
 test('ověřuje pouze metadata cílového bucketu a při 404 jej vynechá', async () => {
