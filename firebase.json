@@ -10,7 +10,10 @@
       { "key": "Cache-Control", "value": "no-cache, max-age=0, must-revalidate" },
       { "key": "X-Content-Type-Options", "value": "nosniff" }
     ] }],
-    "rewrites": [{ "source": "**", "destination": "/index.html" }]
+    "rewrites": [
+      { "regex": "^/events/[A-Za-z0-9_-]+$", "function": { "functionId": "servePublicEventMeta", "region": "europe-west1" } },
+      { "source": "**", "destination": "/index.html" }
+    ]
   },
   "firestore": {
     "rules": "firestore.rules",

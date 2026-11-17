@@ -73,6 +73,7 @@
     "cancelEventRegistration": "Unchanged anonymous registration capability flow",
     "updateEventRegistration": "Unchanged anonymous registration capability flow",
     "createEventRegistration": "Unchanged anonymous registration capability flow",
+    "servePublicEventMeta": "Public event preview introduced by T10. Outside the historical access deployment scope.",
     "health": "No data access; unchanged health handler",
     "getEventRegistration": "Unchanged anonymous registration capability flow",
     "dispatchRegistrationEmail": "Unchanged email trigger; no new email infrastructure is authorized",

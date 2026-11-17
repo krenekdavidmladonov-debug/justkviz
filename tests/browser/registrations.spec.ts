@@ -40,18 +40,27 @@ async function createOpenEvent(page: Page, baseURL: string | undefined, title: s
 }
 
 async function register(page: Page, baseURL: string | undefined, eventId: string, teamName: string, email: string) {
-  await page.goto(`${baseURL}/events/${eventId}`);
+  const response = await page.goto(`${baseURL}/events/${eventId}`);
   await expect(page.getByRole('heading', { name: 'Přihlásit tým', exact: true })).toBeVisible();
   await page.getByLabel('Název týmu').fill(teamName);
   await page.getByLabel('Počet členů').fill('4');
   await page.getByLabel('E-mail').fill(email);
   await page.getByRole('button', { name: 'Přihlásit tým' }).click();
   await expect(page.getByRole('heading', { name: 'Děkujeme, tým byl přihlášen.' })).toBeVisible();
+  return response;
 }
 
-test('public team registration returns only its secure management link', async ({ page, baseURL }) => {
-  const eventId = await createOpenEvent(page, baseURL, 'Veřejná registrace E2E');
-  await register(page, baseURL, eventId, 'Syntetický veřejný tým', 'public@example.test');
+test('public event serves its link preview and team registration returns only its secure management link', async ({ page, baseURL }) => {
+  const title = 'Veřejná registrace E2E';
+  const eventId = await createOpenEvent(page, baseURL, title);
+  const response = await register(page, baseURL, eventId, 'Syntetický veřejný tým', 'public@example.test');
+  expect(response?.status()).toBe(200);
+  expect(response?.headers()['cache-control']).toContain('s-maxage=600');
+  expect(await response?.text()).toContain(`<meta property="og:title" content="${title}"`);
+  await expect(page.locator('meta[property="og:title"]')).toHaveAttribute('content', title);
+  await expect(page.locator('meta[property="og:description"]')).toHaveAttribute('content', /19:00.*Syntetický sál.*Volná místa pro týmy: 20/u);
+  const missing = await page.request.get('/events/missing-preview-event');
+  expect(await missing.text()).toContain('property="og:url" content="https://justkviz.cz/"');
   const link = page.getByRole('link', { name: 'Spravovat registraci' });
   expect(/registration=.*&token=/u.test(await link.getAttribute('href') ?? '')).toBe(true);
 });

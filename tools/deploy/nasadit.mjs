@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { stagingClient, stagingWebConfig } from '../staging/cloud.mjs';
 import { STAGING_PROJECT as PROJECT } from '../staging/guard.mjs';
-import { prepareArtifact, removeArtifact } from './artefakt.mjs';
+import { deploymentConfig, eventPreviewRewrite, prepareArtifact, removeArtifact } from './artefakt.mjs';
 
 const SITE = 'justkviz-v2';
 const LIVE_URL = 'https://justkviz.cz';
@@ -110,6 +110,25 @@ function exportedFunctions(head) {
   return names.sort();
 }
 
+function activeFunction(fn, entryPoint) {
+  if (fn?.environment !== 'GEN_2' || fn.state !== 'ACTIVE' || fn.buildConfig?.runtime !== 'nodejs22' ||
+      fn.buildConfig.entryPoint !== entryPoint || !fn.updateTime) {
+    throw new Error('Nelze bezpečně aktualizovat existující Gen 2 funkci ' + entryPoint + '.');
+  }
+}
+
+export async function verifyEventPreviewForHosting(client, hosting) {
+  if (!hosting.rewrites.some(rewrite => isDeepStrictEqual(rewrite, eventPreviewRewrite))) return;
+  const { functionId } = eventPreviewRewrite.function;
+  try {
+    const { body } = await client.get(location + '/functions/' + functionId);
+    activeFunction(body, functionId);
+  } catch (error) {
+    if (error.status !== 404) throw error;
+    throw new Error('Před změnou Hostingu je potřeba schválené první vytvoření funkce ' + functionId + '.', { cause: error });
+  }
+}
+
 async function functionTargets(client, head) {
   const deployed = new Map();
   let pageToken;
@@ -122,10 +141,7 @@ async function functionTargets(client, head) {
   return exportedFunctions(head).map(entryPoint => {
     const name = location + '/functions/' + entryPoint;
     const fn = deployed.get(name);
-    if (fn?.environment !== 'GEN_2' || fn.state !== 'ACTIVE' || fn.buildConfig?.runtime !== 'nodejs22' ||
-        fn.buildConfig.entryPoint !== entryPoint || !fn.updateTime) {
-      throw new Error('Nelze bezpečně aktualizovat existující Gen 2 funkci ' + entryPoint + '.');
-    }
+    activeFunction(fn, entryPoint);
     return { name, entryPoint, updateTime: fn.updateTime };
   });
 }
@@ -238,10 +254,12 @@ async function run() {
     const withFunctions = selection !== '1';
     const withRules = selection === '3';
     const { Client } = require('firebase-tools/lib/apiv2');
-    const functions = withFunctions ? new Client({ urlPrefix: functionsOrigin, apiVersion: 'v2' }) : undefined;
+    const functions = new Client({ urlPrefix: functionsOrigin, apiVersion: 'v2' });
+    const { hosting: hostingConfig } = deploymentConfig(JSON.parse(git(['show', head + ':firebase.offline-hosting.json'])).hosting);
+    if (!withFunctions) await verifyEventPreviewForHosting(functions, hostingConfig);
     const withStorageRules = withRules && await storageBucketExists(
       new Client({ urlPrefix: 'https://storage.googleapis.com', apiVersion: 'storage/v1' }));
-    const targets = functions ? await functionTargets(functions, head) : [];
+    const targets = withFunctions ? await functionTargets(functions, head) : [];
     console.log('\nNasadí se Hosting site ' + SITE + ' (web) v projektu ' + PROJECT + '.');
     const batches = Math.ceil(targets.length / FUNCTION_BATCH_SIZE);
     const estimate = batches
@@ -267,9 +285,11 @@ async function run() {
     };
     try {
       await recheck();
-      if (functions) {
+      if (withFunctions) {
         if (!isDeepStrictEqual(await functionTargets(functions, head), targets)) throw new Error('Inventář Functions se od náhledu změnil.');
         await deployFunctions(functions, targets, artifact.zip);
+      } else {
+        await verifyEventPreviewForHosting(functions, hostingConfig);
       }
       if (withRules) deploy(withStorageRules ? 'firestore:rules,storage' : 'firestore:rules');
       if (!isDeepStrictEqual(await current(), prior)) throw new Error('Aktivní Hosting se během nasazení změnil.');

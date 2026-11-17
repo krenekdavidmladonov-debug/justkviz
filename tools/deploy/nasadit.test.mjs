@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
-import { verifyMain, storageBucketExists, functionSourcePatch } from './nasadit.mjs';
-import { deploymentConfig } from './artefakt.mjs';
+import { verifyMain, storageBucketExists, functionSourcePatch, verifyEventPreviewForHosting } from './nasadit.mjs';
+import { deploymentConfig, eventPreviewRewrite } from './artefakt.mjs';
 
 const head = 'a'.repeat(40);
 const origin = 'https://github.com/krenekdavidmladonov-debug/justkviz.git';
@@ -93,7 +93,28 @@ test('povolí jen určený Hosting a výslovně přidané Rules', () => {
     storage: [{ bucket: 'filmovy-kviz-v2-staging.firebasestorage.app', rules: 'storage.rules' }],
   });
   assert.throws(() => deploymentConfig({ ...hosting, site: 'filmovy-kviz-v2-staging' }, false), /site/u);
-  assert.throws(() => deploymentConfig({ ...hosting, rewrites: [{ source: '**', function: 'health' }] }, false), /statické/u);
+  const preview = { ...hosting, rewrites: [eventPreviewRewrite, ...hosting.rewrites] };
+  assert.deepEqual(deploymentConfig(preview, false), { hosting: preview });
+  for (const rewrites of [
+    [{ source: '**', function: 'health' }],
+    [{ ...eventPreviewRewrite, regex: '^/events/.*$' }, ...hosting.rewrites],
+    [{ ...eventPreviewRewrite, function: { ...eventPreviewRewrite.function, pinTag: true } }, ...hosting.rewrites],
+    [...hosting.rewrites, eventPreviewRewrite],
+  ]) assert.throws(() => deploymentConfig({ ...hosting, rewrites }, false), /rewrites/u);
+});
+
+test('volba Jen web vyžaduje existující funkci pro náhled akce', async () => {
+  const hosting = { rewrites: [eventPreviewRewrite] };
+  const expectedPath = 'projects/filmovy-kviz-v2-staging/locations/europe-west1/functions/servePublicEventMeta';
+  const active = { environment: 'GEN_2', state: 'ACTIVE', buildConfig: { runtime: 'nodejs22', entryPoint: 'servePublicEventMeta' }, updateTime: '2026-11-17' };
+  let reads = 0;
+  const client = { async get(name) { reads++; assert.equal(name, expectedPath); return { body: active }; } };
+  await verifyEventPreviewForHosting(client, { rewrites: [{ source: '**', destination: '/index.html' }] });
+  assert.equal(reads, 0);
+  await verifyEventPreviewForHosting(client, hosting);
+  assert.equal(reads, 1);
+  await assert.rejects(verifyEventPreviewForHosting({ async get() { throw Object.assign(new Error('Missing'), { status: 404 }); } }, hosting), /první vytvoření/u);
+  await assert.rejects(verifyEventPreviewForHosting({ async get() { return { body: { ...active, state: 'FAILED' } }; } }, hosting), /Gen 2/u);
 });
 
 test('produkční konfigurace omezuje noindex na soukromé a offline trasy', () => {
@@ -119,6 +140,12 @@ test('produkční konfigurace omezuje noindex na soukromé a offline trasy', () 
     assert.equal(headersFor(url).get('x-robots-tag'), 'noindex, nofollow', url);
   }
   assert.equal(headersFor('/offline.html').get('cache-control'), 'no-cache, max-age=0, must-revalidate');
+  assert.equal(headersFor('/events/quiz').has('cache-control'), false);
+  for (const url of ['/events', '/events/quiz/', '/events/quiz/registration/manage']) {
+    assert.equal(configMatcher(url, config.hosting.rewrites[0]), false, url);
+    assert.equal(headersFor(url).get('cache-control'), 'no-cache, max-age=0, must-revalidate', url);
+  }
+  assert.deepEqual(config.hosting.rewrites.find(rule => configMatcher('/events/quiz', rule)), eventPreviewRewrite);
 });
 
 test('ověřuje pouze metadata cílového bucketu a při 404 jej vynechá', async () => {

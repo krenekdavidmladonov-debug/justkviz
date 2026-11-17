@@ -9,6 +9,10 @@ import { assertStagingEnvironment, STAGING_PROJECT as PROJECT } from '../staging
 const SITE = 'justkviz-v2';
 const BUCKET = PROJECT + '.firebasestorage.app';
 const readJson = file => JSON.parse(readFileSync(file, 'utf8'));
+const spaRewrite = { source: '**', destination: '/index.html' };
+export const eventPreviewRewrite = {
+  regex: '^/events/[A-Za-z0-9_-]+$', function: { functionId: 'servePublicEventMeta', region: 'europe-west1' },
+};
 
 function run(command, args, cwd, env = process.env) {
   execFileSync(command, args, { cwd, env, stdio: 'inherit', windowsHide: true });
@@ -30,8 +34,8 @@ export function removeArtifact(directory) {
 export function deploymentConfig(hosting, withRules, withStorageRules) {
   if (hosting?.site !== SITE || hosting.public !== 'apps/web/dist' ||
       Object.keys(hosting).some(key => !['site', 'public', 'headers', 'ignore', 'rewrites'].includes(key)) ||
-      !isDeepStrictEqual(hosting.rewrites, [{ source: '**', destination: '/index.html' }])) {
-    throw new Error('Hosting musí používat pouze statické soubory explicitního produkčního site.');
+      ![[spaRewrite], [eventPreviewRewrite, spaRewrite]].some(rewrites => isDeepStrictEqual(hosting.rewrites, rewrites))) {
+    throw new Error('Hosting vyžaduje explicitní produkční site a povolené rewrites.');
   }
   const config = { hosting };
   if (withRules) {
