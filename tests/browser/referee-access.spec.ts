@@ -1,5 +1,5 @@
 import { seedEmulatorMembership } from '../../functions/src/dev/seed-membership.js';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import jsQR from 'jsqr';
 import { PNG } from 'pngjs';
 import { randomUUID } from 'node:crypto';
@@ -44,6 +44,20 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => { await cleanup?.(); });
 
+async function openReferee(page: Page, privateUrl: string) {
+  // Initial data uses the existing whole-test budget. DOM assertions keep their 15s limit.
+  const loaded = page.waitForResponse(response => response.url().endsWith('/readRefereeEvent') && response.request().method() === 'POST', { timeout: 0 });
+  await page.goto(privateUrl);
+  const response = await loaded;
+  expect(response.ok()).toBe(true);
+  const data = await response.json() as { result: { eventId: string; rounds: { id: string }[]; teams: { name: string }[] } };
+  expect(data.result.eventId).toBe(new URL(privateUrl).pathname.split('/').pop());
+  expect(data.result.rounds.map(round => round.id)).toEqual(['round-1', 'round-2']);
+  expect(data.result.teams.map(team => team.name)).toEqual(['Referee team', 'Second referee team']);
+  await expect(page.getByRole('combobox', { name: 'Kolo', exact: true })).toBeEnabled();
+  await expect(page.getByLabel('Body — Referee team', { exact: true })).toBeEnabled();
+}
+
 
 test('organizer issues private QR, referee scores, corrections survive and revocation blocks open access', async ({ page, context, browser }) => {
   // Never record traces, QR screenshots, access URLs, request bodies or downloaded keys.
@@ -81,7 +95,7 @@ test('organizer issues private QR, referee scores, corrections survive and revoc
   await refereeContext.route('**/*', route => ['localhost','127.0.0.1'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
   const referee = await refereeContext.newPage();
   try {
-    await referee.goto(privateUrl); await expect(referee.getByRole('heading', { name: 'Bodování', exact: true })).toBeVisible();
+    await openReferee(referee, privateUrl); await expect(referee.getByRole('heading', { name: 'Bodování', exact: true })).toBeVisible();
     await expect.poll(() => new URL(referee.url()).hash === '').toBe(true);
     const rounds = referee.getByRole('combobox', { name: 'Kolo', exact: true });
     const points = referee.getByLabel('Body — Referee team', { exact: true });
@@ -121,8 +135,10 @@ test('organizer issues private QR, referee scores, corrections survive and revoc
     referee.once('dialog', dialog => dialog.accept()); await rounds.selectOption('round-2'); await expect(points).toHaveValue('0');
     await rounds.selectOption('round-1'); await expect(points).toHaveValue('5'); await points.fill('6');
     expect(await referee.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    const sibling = await context.newPage(); await sibling.goto(privateUrl); await expect(sibling.getByRole('combobox', { name: 'Kolo', exact: true })).toBeVisible();
+    // Exercise tab-local referee access in the same anonymous profile as the first referee.
+    const sibling = await refereeContext.newPage(); await openReferee(sibling, privateUrl);
     await sibling.getByRole('button', { name: 'Ukončit přístup v tomto panelu' }).click(); await sibling.close();
+    await expect(rounds).toBeEnabled(); await expect(points).toHaveValue('6');
     await page.getByRole('link', { name: 'Zpět na detail akce' }).click(); await expect(panel).toBeVisible();
     page.once('dialog', dialog => dialog.accept()); await panel.getByRole('button', { name: 'Odebrat — Rozhodčí browser' }).click(); await expect(panel.getByRole('status')).toContainText('Přístup byl odebrán.');
     await expect(referee.getByRole('alert').filter({ hasText: 'Přístup vypršel / byl odebrán' })).toBeVisible(); await expect(points).toBeDisabled(); await expect(points).toHaveValue('6');

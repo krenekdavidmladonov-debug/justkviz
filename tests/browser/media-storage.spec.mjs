@@ -1,4 +1,4 @@
-/* global window, getComputedStyle */
+/* global window, getComputedStyle, HTMLMediaElement */
 import { test, expect } from '@playwright/test';
 import { mediaFixture, syntheticImage, syntheticAudio } from '../e2e/media-fixture.mjs';
 import { createMediaUploadFixtures, mediaUploadSha256 } from '../e2e/media-upload-fixtures.mjs';
@@ -8,8 +8,14 @@ async function openRounds(page) { await expect(page.locator('.outline-round').fi
 
 async function observeClipEnd(page, endSeconds) {
   await expect.poll(() => page.locator('audio').evaluate(audio => typeof audio.ontimeupdate)).toBe('function');
+  await expect.poll(() => page.locator('audio').evaluate(audio =>
+    audio.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA && !audio.seeking)).toBe(true);
   await page.locator('audio').evaluate((audio, end) => {
+    window.__JUSTKVIZ_CLIP_START__ = null;
     window.__JUSTKVIZ_CLIP_END__ = null; window.__JUSTKVIZ_CLIP_MAX__ = audio.currentTime;
+    audio.addEventListener('playing', () => {
+      window.__JUSTKVIZ_CLIP_START__ = { time: audio.currentTime, paused: audio.paused };
+    }, { once: true });
     audio.addEventListener('timeupdate', () => {
       const time = audio.currentTime; window.__JUSTKVIZ_CLIP_MAX__ = Math.max(window.__JUSTKVIZ_CLIP_MAX__, time);
       if (time >= end && window.__JUSTKVIZ_CLIP_END__ === null) window.__JUSTKVIZ_CLIP_END__ = { time, duration: audio.duration, paused: audio.paused };
@@ -18,6 +24,9 @@ async function observeClipEnd(page, endSeconds) {
 }
 async function stoppedAtFirstCrossing(page, endSeconds) {
   await expect.poll(() => page.evaluate(() => window.__JUSTKVIZ_CLIP_END__)).not.toBeNull();
+  const started = await page.evaluate(() => window.__JUSTKVIZ_CLIP_START__);
+  expect(started).toMatchObject({ paused: false });
+  expect(started.time).toBeLessThan(endSeconds);
   const sample = await page.evaluate(() => window.__JUSTKVIZ_CLIP_END__);
   expect(Number.isFinite(sample.time) && Number.isFinite(sample.duration)).toBe(true);
   expect(sample.time).toBeGreaterThanOrEqual(endSeconds); expect(sample.time).toBeLessThan(sample.duration); expect(sample.paused).toBe(true);
@@ -74,8 +83,7 @@ test('copies an owned image from the library and replaces it in the copy only @q
 });
 
 test('synthetic owned image/audio upload, editor preview, immutable projector image and manual audio lifecycle', async ({page,context,browser}) => {
-  const f=await mediaFixture();let projectorContext, unsubscribe, phase='login';
-  const playbackStates=[];
+  const f=await mediaFixture();let projectorContext, phase='login';
   console.log('Media browser: fixture ready');
   try {
     const localOnly=r=>['localhost','127.0.0.1'].includes(new URL(r.request().url()).hostname)?r.continue():r.abort();
@@ -130,7 +138,6 @@ test('synthetic owned image/audio upload, editor preview, immutable projector im
       defaultDesign: { layout: 'image-first', textAlign: 'center', textWidth: 70, mediaFit: 'cover' },
     } });
     await f.lock();const sessionId=await f.live();
-    await new Promise((resolve,reject)=>{unsubscribe=f.db.doc('sessions/'+sessionId).onSnapshot(snapshot=>{playbackStates.push(snapshot.data()?.mediaPlaybackState);resolve();},reject);});
     await f.navigate(sessionId,3);
     await page.goto('/admin/live/'+sessionId);
     projectorContext=await browser.newContext({baseURL:'http://127.0.0.1:5198',viewport:{width:1280,height:720}});
@@ -160,9 +167,13 @@ test('synthetic owned image/audio upload, editor preview, immutable projector im
     phase='moderator audio';
     await f.navigate(sessionId,4);await expect(projector.getByText('Syntetické audio',{exact:true})).toBeVisible();
     await expect(projector.locator('audio,iframe')).toHaveCount(0);
+    await expect(page.locator('.moderator-audio-player')).toHaveAttribute('data-media-lifecycle', 'READY');
+    await observeClipEnd(page, 2);
     await expect(page.getByRole('button',{name:'Play',exact:true})).toBeEnabled();
     await page.getByRole('button',{name:'Play',exact:true}).click();
-    await expect.poll(()=>playbackStates).toContain('playing');
+    // A one-second clip can finish before the coalesced server report publishes "playing".
+    // Observe the native player's event and first real clip-end crossing instead.
+    await stoppedAtFirstCrossing(page, 2);
     await expect.poll(async()=>(await f.db.doc('sessions/'+sessionId).get()).data().mediaPlaybackState).toBe('finished');
     await page.getByRole('button',{name:'Pustit znovu',exact:true}).click();
     await expect.poll(()=>page.locator('audio').evaluate(a=>a.paused)).toBe(false);
@@ -208,7 +219,7 @@ test('synthetic owned image/audio upload, editor preview, immutable projector im
     expect(await sameProfileProjector.evaluate(()=>window.__FILMOVY_KVIZ_MEDIA_DEBUG__.activePlayers)).toBe(0);
     await sameProfileProjector.close();
 
-  } catch(error) { console.error('Media browser failed during '+phase);  throw error; } finally {unsubscribe?.();await projectorContext?.close();await context.close();await f.dispose();}
+  } catch(error) { console.error('Media browser failed during '+phase);  throw error; } finally {await projectorContext?.close();await context.close();await f.dispose();}
 });
 
 test('owned MP4 and MP3 upload, snapshot, projector video playback and offline media validation', async ({ page, context, browser }) => {
