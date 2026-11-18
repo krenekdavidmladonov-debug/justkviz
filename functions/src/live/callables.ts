@@ -210,9 +210,11 @@ export async function loadSlide(transaction: Transaction, quizId: string, positi
     const assets = await loadSnapshotClipAssets(transaction, db, root.quizId as string, [raw]);
     slide = parseSlide(frozen, resolveSnapshotClip(root.quizId as string, raw, assets));
   }
-  const roundDesign: unknown = metadata[1]?.data()?.design;
+  const round = metadata[1]?.data();
+  const roundDesign: unknown = round?.design;
+  const roundNumber: unknown = round?.position;
   const appearance = resolveLegacySlideAppearance(root?.defaultAppearance, slide);
-  return { ...slide, ...(root?.defaultDesign === undefined ? {} : { defaultDesign: root.defaultDesign }), ...(roundDesign === undefined ? {} : { roundDesign }),
+  return { ...slide, ...(typeof roundNumber === 'number' && Number.isSafeInteger(roundNumber) && roundNumber > 0 ? { roundNumber } : {}), ...(root?.defaultDesign === undefined ? {} : { defaultDesign: root.defaultDesign }), ...(roundDesign === undefined ? {} : { roundDesign }),
     ...appearance };
 }
 

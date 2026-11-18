@@ -181,6 +181,7 @@ export function mapPublicLiveState(id: string, data: DocumentData): PublicLiveSt
     ...(data.showCue === undefined ? {} : { showCue: parseShowCue(data.showCue) }),
     ...(data.interimBackdrop === undefined ? {} : { interimBackdrop: parseInterimBackdrop(data.interimBackdrop) }),
     ...(object(data.design) ? { design: normalizeSlideDesign(data.design) } : {}),
+    ...(Number.isSafeInteger(data.roundNumber) && (data.roundNumber as number) > 0 ? { roundNumber: data.roundNumber as number } : {}),
     ...(optionalString(data, 'roundTitle') === undefined ? {} : { roundTitle: optionalString(data, 'roundTitle') }),
     ...(optionalString(data, 'subtitle') === undefined ? {} : { subtitle: optionalString(data, 'subtitle') }),
     sessionId: id,

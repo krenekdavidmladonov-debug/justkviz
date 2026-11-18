@@ -113,3 +113,12 @@ describe('offline public projection allowlist', () => {
     }
   });
 });
+
+it('uses the frozen round position for its projector number and omits missing legacy metadata', () => {
+  const original = offlineManifest();
+  const source = { ...original, slides: original.slides.map(slide => ({ ...slide, position: slide.position, ...(slide.position === 1 ? { roundId: 'round-2', kind: 'round' as const } : {}) })) };
+  const active = reduceOfflineCommand(source, initialOfflineState(source), { type: 'start', payload: {} });
+  expect(buildOfflineProjection(source, active).roundNumber).toBe(2);
+  const legacy = { ...source, rounds: [] };
+  expect(buildOfflineProjection(legacy, active)).not.toHaveProperty('roundNumber');
+});

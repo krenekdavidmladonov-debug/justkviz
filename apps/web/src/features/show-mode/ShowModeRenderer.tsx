@@ -1,4 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react';
+import { useProjectorPoints, ProjectorResultPoints } from './ProjectorResultRow';
+import { ProjectorMotionContext, useProjectorTransition } from './ProjectorMotion';
 import type { PublicResultRow, ResultTemplate } from '@filmovy-kviz/quiz-domain';
 import { pointUnit } from '../scoring/model';
 import { ResultsTable } from '../leaderboard/ResultsTable';
@@ -13,12 +15,13 @@ import './show-mode.css';
 const numberFormat = new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 1 });
 export const formatShowPoints = (halfPoints: number) => numberFormat.format(halfPoints / 2);
 
-function ScoreRow({ row, movement = false }: { readonly row: PublicResultRow; readonly movement?: boolean }) {
-  return <div className="sm-row" role="row">
+function ScoreRow({ row, movement = false, animated = false, delay = 0, maximum = 1 }: { readonly row: PublicResultRow; readonly movement?: boolean; readonly animated?: boolean; readonly delay?: number; readonly maximum?: number }) {
+  const points = useProjectorPoints(row.halfPoints, animated, delay);
+  return <div className="sm-row" role="row" style={{ '--pm-row-delay': delay + 'ms', '--pm-bar': Math.max(0, row.halfPoints) / Math.max(1, maximum) } as CSSProperties}>
     <span className="sm-rank" role="cell">{row.rank}.</span>
     <strong className="sm-team" role="rowheader">{row.teamName}</strong>
     {movement && <span role="cell" className={`sm-move ${row.movement !== undefined && row.movement > 0 ? 'sm-up' : ''}`} aria-label={row.movement === undefined ? 'Bez předchozího zveřejnění' : row.movement === 0 ? 'Beze změny' : `${row.movement > 0 ? 'Vzestup' : 'Pokles'} o ${Math.abs(row.movement)}`}>{row.movement === undefined ? '' : row.movement === 0 ? '—' : `${row.movement > 0 ? '↑' : '↓'} ${Math.abs(row.movement)}`}</span>}
-    <strong className="sm-points" role="cell">{formatShowPoints(row.halfPoints)}</strong>
+    <strong className="sm-points" role="cell">{formatShowPoints(points)}</strong>
   </div>;
 }
 
@@ -29,36 +32,41 @@ function PageLabel({ page, pageCount }: { readonly page: number; readonly pageCo
 
 /** Keep this component mounted around the normal slide fallback to observe fresh cues.
  * First load/remount/reconnect is static. All content and page selection come from Firestore. */
-export function ShowModeRenderer({ state, children }: { readonly state: PublicLiveState; readonly children?: ReactNode }) {
+export function ShowModeRenderer({ state, children, projector = false }: { readonly state: PublicLiveState; readonly children?: ReactNode; readonly projector?: boolean }) {
+  const transition = useProjectorTransition(state, projector && state.design?.projectorAnimations !== false);
   const motion = useShowMotion(state.sessionId, state.revision, state.showCue);
   const interim = state.interimResults, final = state.finalReveal;
-  if (!interim && !final) return children;
+  const animated = projector ? state.design?.projectorAnimations !== false && (state.showCue ? motion.animated : transition.animated) : motion.animated;
+  if (!interim && !final) return <ProjectorMotionContext.Provider value={projector ? transition : undefined}>{children}</ProjectorMotionContext.Provider>;
   const template: ResultTemplate = { ...(state.title === undefined ? {} : { title: state.title }), ...(state.subtitle === undefined ? {} : { subtitle: state.subtitle }), ...(state.design === undefined ? {} : { design: state.design }) };
   const mediaSessionId = state.sessionId;
-  if ((interim ?? final)?.presentationStyle !== 'show') return <div className="results-frame" data-version-id={(interim ?? final)?.versionId}>{final ? <FinalRevealView {...final} template={template} mediaSessionId={mediaSessionId} /> : interim && <ResultsTable {...interim} template={template} mediaSessionId={mediaSessionId} />}</div>;
+  if ((interim ?? final)?.presentationStyle !== 'show') return <ProjectorMotionContext.Provider value={projector ? { ...transition, animated } : undefined}><div className={'results-frame' + (projector ? ' pm-classic-results ' + (animated ? 'pm-animate' : 'pm-static') : '')} data-version-id={(interim ?? final)?.versionId}>{final ? <FinalRevealView {...final} template={template} mediaSessionId={mediaSessionId} /> : interim && <ResultsTable {...interim} template={template} mediaSessionId={mediaSessionId} />}</div></ProjectorMotionContext.Provider>;
 
   const style = { ...slideDesignStyle(template.design), ...(template.design?.backgroundColor ? { '--sm-panel': template.design.backgroundColor } : {}) } as CSSProperties;
   const isWinner = final?.mode === 'group' && final.rank === 1;
   const rows = interim?.rows ?? final?.rows ?? [];
+  const maximum = Math.max(1, ...rows.map(row => row.halfPoints));
+  const ranks = [...new Set(rows.map(row => row.rank))].sort((a, b) => b - a);
+  const rowMotion = (row: PublicResultRow) => ({ animated: projector && animated, maximum, delay: Math.max(0, ranks.indexOf(row.rank)) * Math.min(100, 400 / Math.max(1, ranks.length - 1)) });
   const longest = Math.max(0, ...rows.map(row => row.teamName.length));
   const groupClass = `sm-count-${rows.length}${longest > 30 ? ' sm-long-names' : ''}${longest > 60 ? ' sm-very-long-names' : ''}`;
   const hasMovement = Boolean(interim?.rows.some(row => row.movement !== undefined));
-  return <article className={`show-mode-canvas sm-scene-${interim ? 'interim' : final?.mode} ${isWinner ? 'sm-winner-scene' : ''} ${(template.title?.length ?? 0) > 30 || template.subtitle ? 'sm-dense-copy' : ''} ${motion.animated ? `sm-animate sm-motion-${motion.intensity}` : 'sm-static'}`} style={style} data-version-id={(interim ?? final)?.versionId} data-show-cue={motion.cueId} aria-label={interim ? 'Průběžné pořadí' : 'Finální vyhlášení'}>
+  return <ProjectorMotionContext.Provider value={projector ? { ...transition, animated } : undefined}><article className={`show-mode-canvas ${projector ? 'pm-results' : ''} sm-scene-${interim ? 'interim' : final?.mode} ${isWinner ? 'sm-winner-scene' : ''} ${(template.title?.length ?? 0) > 30 || template.subtitle ? 'sm-dense-copy' : ''} ${animated ? `sm-animate sm-motion-${motion.intensity}` : 'sm-static'}`} style={style} data-version-id={(interim ?? final)?.versionId} data-show-cue={motion.cueId} aria-label={interim ? 'Průběžné pořadí' : 'Finální vyhlášení'}>
     {interim && state.interimBackdrop && state.interimBackdrop.slideKind !== 'thank-you' && <div className="sm-slide-backdrop" aria-hidden="true"><SlideRenderer quizTitle={state.quizTitle} mediaSessionId={mediaSessionId} mode={state.interimBackdrop.renderMode} slide={{ ...state.interimBackdrop, kind: state.interimBackdrop.slideKind, options: state.interimBackdrop.options ?? [], media: [] }} /></div>}
     {interim ? <><div className="sm-dimmer" /><section className="sm-interim-panel">
       <ResultBackdrop template={template} mediaSessionId={mediaSessionId} />
       <header className="sm-interim-heading"><div><p className="sm-eyebrow">AKTUÁLNĚ ZAPSANÉ BODY</p><h1>Průběžné výsledky</h1></div><ResultBrand template={template} mediaSessionId={mediaSessionId} /></header>
-      <div className={`sm-table ${hasMovement ? 'sm-with-movement' : ''}`} role="table" aria-label="Průběžné výsledky"><div className="sm-table-heading" role="row"><span role="columnheader">POŘADÍ</span><span role="columnheader">TÝM</span>{hasMovement && <span role="columnheader">ZMĚNA</span>}<span role="columnheader">BODY</span></div>{rows.map((row, index) => <ScoreRow key={`${motion.cueId}-${index}-${row.rank}-${row.teamName}`} row={row} movement={hasMovement} />)}</div>
+      <div className={`sm-table ${hasMovement ? 'sm-with-movement' : ''}`} role="table" aria-label="Průběžné výsledky"><div className="sm-table-heading" role="row"><span role="columnheader">POŘADÍ</span><span role="columnheader">TÝM</span>{hasMovement && <span role="columnheader">ZMĚNA</span>}<span role="columnheader">BODY</span></div>{rows.map((row, index) => <ScoreRow key={`${motion.cueId}-${index}-${row.rank}-${row.teamName}`} row={row} {...rowMotion(row)} movement={hasMovement} />)}</div>
       <footer className="sm-interim-footer"><span>Průběžné výsledky · {state.quizTitle}</span><PageLabel {...interim} /></footer>
     </section></> : <>
       <ResultBackdrop template={template} mediaSessionId={mediaSessionId} />
       <div className={`sm-finale-light${isWinner ? ' is-winner' : ''}`} aria-hidden="true" key={`light-${motion.cueId}`}><i /><i /></div>
       <header className="sm-stage-header"><span>{state.quizTitle}<span className="sm-slash">/</span>FINÁLOVÉ VÝSLEDKY</span><ResultBrand template={template} mediaSessionId={mediaSessionId} /></header>
       {final?.mode === 'intro' ? <section key={motion.cueId} className="sm-intro"><p className="sm-eyebrow">FINÁLOVÉ VYHLÁŠENÍ</p><h1>{template.title || 'Celkové výsledky'}</h1><p>{template.subtitle || 'Za chvíli odhalíme konečné pořadí.'}</p></section>
-        : final?.mode === 'table' || final?.mode === 'lower' ? <section className="sm-final-table">{final.mode !== 'lower' && <p className="sm-eyebrow">KONEČNÉ POŘADÍ</p>}<h1>{template.title || (final.mode === 'lower' ? 'Díky za skvělou hru.' : 'Takový byl dnešní večer.')}</h1>{template.subtitle && <p className="sm-subtitle">{template.subtitle}</p>}<div className="sm-table" role="table" aria-label={final.mode === 'lower' ? 'Odhalená nižší pořadí' : 'Konečné pořadí'}><div className="sm-table-heading" role="row"><span role="columnheader">POŘADÍ</span><span role="columnheader">TÝM</span><span role="columnheader">BODY</span></div>{rows.map((row, index) => <ScoreRow key={`${index}-${row.rank}-${row.teamName}`} row={row} />)}</div><PageLabel {...final} /></section>
-        : isWinner ? <section className={`sm-winner ${groupClass}`}><div className="sm-winner-label"><span />{template.title || 'VÍTĚZOVÉ DNEŠNÍHO VEČERA'}<span /></div><div className="sm-winner-place">1.</div><div className="sm-winner-names" key={motion.cueId}>{rows.map((row, index) => <h1 key={index}>{row.teamName}</h1>)}</div><p className="sm-winner-score"><strong>{formatShowPoints(rows[0]?.halfPoints ?? 0)}</strong><span>{pointUnit(rows[0]?.halfPoints ?? 0)}</span></p><p className="sm-winner-message">{template.subtitle || (final && final.groupSize > 1 ? 'Jedno první místo. Společné vítězství.' : 'Tenhle večer patří vám.')}</p>{final && <PageLabel {...final} />}</section>
-        : final?.mode === 'group' && <div className="sm-finale-layout"><section className={`sm-rank-feature ${groupClass}`}><p className="sm-eyebrow">{template.title || 'PRÁVĚ ODHALENO'}</p><div className="sm-feature-number" key={`rank-${motion.cueId}`}>{final.rank}.</div><p className="sm-feature-label">{final.groupSize > 1 ? 'SDÍLENÉ MÍSTO' : 'MÍSTO'}</p><div className="sm-feature-teams" key={motion.cueId}>{rows.map((row, index) => <h1 key={index}>{row.teamName}</h1>)}</div><p className="sm-feature-score"><strong>{formatShowPoints(rows[0]?.halfPoints ?? 0)}</strong> {pointUnit(rows[0]?.halfPoints ?? 0)}</p>{template.subtitle && <p className="sm-subtitle">{template.subtitle}</p>}<PageLabel {...final} /></section><section className="sm-history">{final.history ? <><div role="table" aria-label="Dříve odhalená pořadí">{final.history.rows.map((row, index) => <ScoreRow key={`${motion.cueId}-${index}`} row={row} />)}</div>{final.history.pageCount > 1 && <p className="sm-history-page"><PageLabel {...final.history} /></p>}</> : <p className="sm-no-history">Další výsledky zatím nejsou odhalené.</p>}</section></div>}
+        : final?.mode === 'table' || final?.mode === 'lower' ? <section className="sm-final-table">{final.mode !== 'lower' && <p className="sm-eyebrow">KONEČNÉ POŘADÍ</p>}<h1>{template.title || (final.mode === 'lower' ? 'Díky za skvělou hru.' : 'Takový byl dnešní večer.')}</h1>{template.subtitle && <p className="sm-subtitle">{template.subtitle}</p>}<div className="sm-table" role="table" aria-label={final.mode === 'lower' ? 'Odhalená nižší pořadí' : 'Konečné pořadí'}><div className="sm-table-heading" role="row"><span role="columnheader">POŘADÍ</span><span role="columnheader">TÝM</span><span role="columnheader">BODY</span></div>{rows.map((row, index) => <ScoreRow key={`${index}-${row.rank}-${row.teamName}`} row={row} {...rowMotion(row)} />)}</div><PageLabel {...final} /></section>
+        : isWinner ? <section className={`sm-winner ${groupClass}`}><div className="sm-winner-label"><span />{template.title || 'VÍTĚZOVÉ DNEŠNÍHO VEČERA'}<span /></div><div className="sm-winner-place">1.</div><div className="sm-winner-names" key={motion.cueId}>{rows.map((row, index) => <h1 key={index}>{row.teamName}</h1>)}</div><p className="sm-winner-score"><strong><ProjectorResultPoints halfPoints={rows[0]?.halfPoints ?? 0} /></strong><span>{pointUnit(rows[0]?.halfPoints ?? 0)}</span></p><p className="sm-winner-message">{template.subtitle || (final && final.groupSize > 1 ? 'Jedno první místo. Společné vítězství.' : 'Tenhle večer patří vám.')}</p>{final && <PageLabel {...final} />}</section>
+        : final?.mode === 'group' && <div className="sm-finale-layout"><section className={`sm-rank-feature ${groupClass}`}><p className="sm-eyebrow">{template.title || 'PRÁVĚ ODHALENO'}</p><div className="sm-feature-number" key={`rank-${motion.cueId}`}>{final.rank}.</div><p className="sm-feature-label">{final.groupSize > 1 ? 'SDÍLENÉ MÍSTO' : 'MÍSTO'}</p><div className="sm-feature-teams" key={motion.cueId}>{rows.map((row, index) => <h1 key={index}>{row.teamName}</h1>)}</div><p className="sm-feature-score"><strong><ProjectorResultPoints halfPoints={rows[0]?.halfPoints ?? 0} /></strong> {pointUnit(rows[0]?.halfPoints ?? 0)}</p>{template.subtitle && <p className="sm-subtitle">{template.subtitle}</p>}<PageLabel {...final} /></section><section className="sm-history">{final.history ? <><div role="table" aria-label="Dříve odhalená pořadí">{final.history.rows.map((row, index) => <ScoreRow key={`${motion.cueId}-${index}`} row={row} {...rowMotion(row)} />)}</div>{final.history.pageCount > 1 && <p className="sm-history-page"><PageLabel {...final.history} /></p>}</> : <p className="sm-no-history">Další výsledky zatím nejsou odhalené.</p>}</section></div>}
       <footer className="sm-stage-footer"><span>{isWinner ? 'DĚKUJEME, ŽE HRAJETE S NÁMI.' : 'KAŽDÝ BOD MÁ SVŮJ PŘÍBĚH.'}</span></footer>
     </>}
-  </article>;
+  </article></ProjectorMotionContext.Provider>;
 }

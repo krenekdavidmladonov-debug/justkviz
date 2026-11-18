@@ -42,7 +42,7 @@ const stateKeys = new Set([
   'backgroundOverlay', 'clipStartSeconds', 'clipEndSeconds', 'answerRevealed', 'revealedAnswer', 'answerImage',
   'recapQuestionPosition', 'revision',
   'mediaPlaybackMode',
-  'design', 'roundTitle', 'subtitle', 'imageLayout', 'answerExplanation', 'showCue', 'interimBackdrop', 'interimResults', 'finalReveal',
+  'roundNumber', 'design', 'roundTitle', 'subtitle', 'imageLayout', 'answerExplanation', 'showCue', 'interimBackdrop', 'interimResults', 'finalReveal',
 ]);
 const presentationKeys = new Set(['backgroundOverlay', 'answerOverlay', 'sourceQuestionNumber']);
 const mediaKeys = new Set(['role', 'kind', 'source']);
@@ -143,6 +143,7 @@ export function parsePublicLiveState(value: unknown): PublicLiveState | undefine
     || !optionalString(data, 'roundTitle') || !optionalString(data, 'subtitle') || !optionalString(data, 'imageLayout') || !optionalString(data, 'answerExplanation')
     || !optionalNumber(data, 'backgroundOverlay') || !optionalNumber(data, 'clipStartSeconds')
     || !optionalNumber(data, 'clipEndSeconds')
+    || (Object.hasOwn(data, 'roundNumber') && (!Number.isSafeInteger(data.roundNumber) || (data.roundNumber as number) <= 0))
     || (Object.hasOwn(data, 'questionNumber') && !nonNegativeInteger(data.questionNumber))
     || (Object.hasOwn(data, 'questionCount') && !nonNegativeInteger(data.questionCount))
     || (Object.hasOwn(data, 'recapQuestionPosition') && !nonNegativeInteger(data.recapQuestionPosition))) return undefined;
@@ -186,6 +187,7 @@ export function parsePublicLiveState(value: unknown): PublicLiveState | undefine
     ...additions,
     ...(data.upcomingImages === undefined ? {} : { upcomingImages: data.upcomingImages as string[] }),
     ...(data.mediaPlaybackMode === 'original' ? { mediaPlaybackMode: 'original' as const } : {}),
+    ...(data.roundNumber === undefined ? {} : { roundNumber: data.roundNumber as number }),
     ...(data.roundTitle === undefined ? {} : { roundTitle: data.roundTitle as string }),
     ...(data.subtitle === undefined ? {} : { subtitle: data.subtitle as string }),
     ...(data.imageLayout === undefined ? {} : { imageLayout: data.imageLayout as string }),
@@ -227,6 +229,7 @@ export function sanitizedChannelState(state: PublicLiveState): PublicLiveState {
     ...(state.upcomingImages === undefined ? {} : { upcomingImages: state.upcomingImages }),
     ...(state.mediaPlaybackMode === undefined ? {} : { mediaPlaybackMode: state.mediaPlaybackMode }),
     ...(state.design === undefined ? {} : { design: state.design }),
+    ...(state.roundNumber === undefined ? {} : { roundNumber: state.roundNumber }),
     ...(state.roundTitle === undefined ? {} : { roundTitle: state.roundTitle }),
     ...(state.subtitle === undefined ? {} : { subtitle: state.subtitle }),
     ...(state.imageLayout === undefined ? {} : { imageLayout: state.imageLayout }),
