@@ -324,7 +324,7 @@ async function gateway(query: Record<string, unknown>, headers: Record<string, s
   const response = { on: () => response, setHeader: (key: string, value: string) => { sent[key] = value; }, getHeader: (key: string) => sent[key],
     set: (key: string, value: string) => { sent[key] = value; return response; }, status: (status: number) => { code = status; return response; },
     send: (value: Buffer) => { body = value; return response; }, end: () => response };
-  const request = { method: 'GET', headers, query, get: (key: string) => headers[key] };
+  const request = { method: 'GET', originalUrl: '/readQuizMedia?' + new URLSearchParams(query as Record<string, string>).toString(), headers, query, get: (key: string) => headers[key] };
   await readQuizMedia(request as unknown as Parameters<typeof readQuizMedia>[0], response as unknown as Parameters<typeof readQuizMedia>[1]);
   return { code, body, headers: sent };
 }
@@ -378,4 +378,25 @@ test('private gateway repeats existing authorization after Drive IO and ordinary
   state.records[assetPath] = { ...asset, drive: undefined, generation: '123' };
   const old = await gateway({ reference, sessionId: 'session1' }); expect(old.code).toBe(200);
   expect(old.body).toEqual(Buffer.from('old storage bytes')); expect(state.storageReads).toBe(1); expect(read).toHaveBeenCalledTimes(1);
+});
+
+
+test('only exact pinned images have immutable caching, while discovery, stale pins and revocation remain no-store', async () => {
+  vi.spyOn(mediaRead, 'readDriveAsset').mockResolvedValue(bytes);
+  const cacheScope = '1'.repeat(32), query = { reference, sessionId: 'session1', cacheScope };
+  const discovery = await gateway(query);
+  expect(discovery.code).toBe(307); expect(discovery.headers['Cache-Control']).toBe('no-store');
+  const pin = new URL(discovery.headers.Location!, 'http://localhost').searchParams.get('pin')!;
+  expect(pin).toMatch(/^[a-f0-9]{64}$/u);
+  const pinned = await gateway({ ...query, pin });
+  expect(pinned.code).toBe(200);
+  expect(pinned.headers['Cache-Control']).toBe('private,max-age=31536000,immutable');
+  expect(pinned.headers.Vary).toBe('Authorization, Origin');
+  vi.spyOn(mediaRead, 'verifyDriveAsset').mockResolvedValue();
+  expect((await gateway({ ...query, pin }, { 'if-none-match': pinned.headers.ETag! })).code).toBe(304);
+  const wrong = await gateway({ ...query, pin: '0'.repeat(64) });
+  expect(wrong.code).toBe(404); expect(wrong.headers['Cache-Control']).toBe('no-store');
+  state.records['publicSessions/session1']!.status = 'ended';
+  const revoked = await gateway({ ...query, pin });
+  expect(revoked.code).toBe(404); expect(revoked.headers['Cache-Control']).toBe('no-store');
 });

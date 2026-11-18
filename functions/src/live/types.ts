@@ -91,6 +91,7 @@ export interface PublicPresentation {
 }
 
 export interface PublicLiveSession {
+  readonly upcomingImages?: readonly string[];
   readonly design?: import('@filmovy-kviz/quiz-domain').SlideDesign;
   readonly roundTitle?: string;
   readonly subtitle?: string;

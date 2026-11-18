@@ -1,0 +1,89 @@
+{
+  "functions": {
+    "source": "functions",
+    "predeploy": [
+      "pnpm --dir functions build"
+    ]
+  },
+  "hosting": {
+    "public": "apps/web/dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "headers": [
+      {
+        "source": "/{offline.html,offline-sw.js,offline.webmanifest}",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, max-age=0, must-revalidate"
+          },
+          {
+            "key": "X-Content-Type-Options",
+            "value": "nosniff"
+          }
+        ]
+      }
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  },
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "emulators": {
+    "auth": {
+      "host": "127.0.0.1",
+      "port": 9299
+    },
+    "functions": {
+      "host": "127.0.0.1",
+      "port": 5201
+    },
+    "firestore": {
+      "host": "127.0.0.1",
+      "port": 8280,
+      "websocketPort": 9350
+    },
+    "storage": {
+      "host": "127.0.0.1",
+      "port": 9399
+    },
+    "hosting": {
+      "host": "127.0.0.1",
+      "port": 5200
+    },
+    "ui": {
+      "enabled": false,
+      "host": "127.0.0.1",
+      "port": 4200
+    },
+    "hub": {
+      "host": "127.0.0.1",
+      "port": 4600
+    },
+    "logging": {
+      "host": "127.0.0.1",
+      "port": 4700
+    },
+    "eventarc": {
+      "host": "127.0.0.1",
+      "port": 9499
+    },
+    "singleProjectMode": true,
+    "tasks": {
+      "host": "127.0.0.1",
+      "port": 9699
+    }
+  }
+}

@@ -317,3 +317,13 @@ optional fields remain compatible. See [EVENT_PUBLICATION.md](archive/EVENT_PUBL
 See [EVENT_MANAGEMENT.md](archive/EVENT_MANAGEMENT.md) for the independent disposition overlay, scoped permission mapping, shared transactional guards, capability revocation and exact server-side deletion ownership/allowlist. No content backfill or Storage cleanup is introduced. Cloud team email remains disabled.
 
 Manual completion uses existing events roots and eventOperations/eventAudit receipts. The optional private completion object contains trusted at/by/reason; capabilityVersion and revision advance together. Ending one sessions document does not mutate its event root. Existing scores/history and confirmed result versions remain intact after either presentation END or event completion.
+
+
+Online publicSessions may include optional upcomingImages: at most nine owned
+image references for the next three visible prompt slides. This server-derived
+allowlist contains no source documents, answers, external URLs or clips, and
+excludes every reference also used in answer media/design anywhere in the source.
+Reveal/recap, result pages, waiting and ended publications omit it. It grants only
+exact image reads through the current-publication gateway, not private quiz access.
+No persistent asset identifier or collection path changes. HTTP image cache URLs
+add an access namespace and a representation hash, without changing stored media.

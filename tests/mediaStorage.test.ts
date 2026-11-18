@@ -1,4 +1,6 @@
-import { describe, expect, test } from 'vitest';
+import { loadUpcomingImages } from '../functions/src/live/upcoming-images';
+import { upcomingPromptImages } from '../functions/src/live/publication';
+import { describe, expect, test, vi } from 'vitest';
 import { parseQuizAsset, quizAssetReference, validOwnedMedia } from '../packages/quiz-domain/src/media-assets';
 import { assertQuizAssets, mediaByteRange, mediaSignature, publicMediaAllowed } from '../functions/src/media/model';
 import { mediaBucketName } from '../functions/src/media/environment';
@@ -59,4 +61,61 @@ describe('owned media contract', () => {
     expect(()=>mediaBucketName('cloud-project',undefined,{})).toThrow();
     expect(mediaBucketName('cloud-project','explicit-bucket',{})).toBe('explicit-bucket');
   });
+});
+
+
+test('public lookahead selects only the next three visible prompt slides and excludes globally shared answer images', () => {
+  const image = (letter: string) => 'quiz-asset:quiz-1/' + letter.repeat(64);
+  const slides = [
+    { id: 'current', data: { position: 1, kind: 'image', questionImage: image('a') } },
+    { id: 'next', data: { position: 2, kind: 'image', questionImage: image('b'), answerImage: image('f'), correctAnswer: 'secret' } },
+    { id: 'hidden', data: { position: 3, kind: 'info', hidden: true, backgroundImage: image('c') } },
+    { id: 'third', data: { position: 4, kind: 'image', questionImage: image('c') } },
+    { id: 'fourth', data: { position: 5, kind: 'image', questionImage: image('d') } },
+    { id: 'outside', data: { position: 6, kind: 'image', questionImage: image('e'), answerDesign: { backgroundImage: image('b') } } },
+  ];
+  expect(upcomingPromptImages('quiz-1', {}, slides, 1)).toEqual([image('c'), image('d')]);
+  const publication = { status: 'active', presentationMode: 'slide', upcomingImages: [image('c'), image('d')] };
+  expect(publicMediaAllowed(publication, image('c'), 'image')).toBe(true);
+  for (const reference of [image('b'), image('e'), image('f')]) expect(publicMediaAllowed(publication, reference, 'image')).toBe(false);
+  expect(publicMediaAllowed(publication, image('c'), 'audio')).toBe(false);
+  expect(publicMediaAllowed({ ...publication, status: 'ended' }, image('c'), 'image')).toBe(false);
+});
+
+
+test('legacy answer-role and explicit answer designs exclude shared prompt references across the whole source', () => {
+  const image = (letter: string) => 'quiz-asset:quiz-1/' + letter.repeat(64);
+  const sources = [
+    { id: 'current', data: { position: 1, kind: 'question' } },
+    { id: 'next', data: { position: 2, kind: 'image', media: [{ role: 'prompt', kind: 'image', value: image('a') }], design: { backgroundImage: image('b'), logoImage: image('c') } } },
+    { id: 'answer', data: { position: 10, kind: 'image', media: [{ role: 'answer', kind: 'image', value: image('a') }, { role: 'answer', kind: 'image', source: image('b') }], answerDesign: { logoImage: image('c') } } },
+  ];
+  expect(upcomingPromptImages('quiz-1', {}, sources, 1)).toEqual([]);
+});
+
+test('immutable snapshot lookahead reuses only a bounded derived plan, expires it, and never caches mutable quizzes', async () => {
+  vi.useFakeTimers();
+  try {
+    let reads = 0;
+    const image = 'quiz-asset:quiz-plan-cache/' + 'a'.repeat(64);
+    const slides = Array.from({ length: 400 }, (_, index) => ({ id: String(index), data: () => ({ position: index + 1, kind: 'image', questionImage: image }) }));
+    const query = { limit: () => query, slides: true };
+    const root = { collection: () => query };
+    const db = { collection: () => ({ doc: () => root }) } as unknown as Parameters<typeof loadUpcomingImages>[0];
+    const tx = { get: (ref: unknown) => { reads++; return Promise.resolve(ref === root
+      ? { data: () => ({ quizId: 'quiz-plan-cache', status: 'ready' }) } : { docs: slides }); } } as unknown as Parameters<typeof loadUpcomingImages>[1];
+    const session = { status: 'active', presentationMode: 'slide', quizId: 'quiz-plan-cache', snapshotId: 'immutable-plan', currentSlidePosition: 1 } as Parameters<typeof loadUpcomingImages>[2];
+    expect(await loadUpcomingImages(db, tx, session)).toEqual([image]); expect(reads).toBe(2);
+    await loadUpcomingImages(db, tx, { ...session, currentSlidePosition: 2 }); expect(reads).toBe(2);
+    for (const state of [{ status: 'ended' }, { status: 'waiting' }, { answerRevealed: true }, { interimResults: {} }, { finalReveal: { visible: true } }, { presentationMode: 'recap' }]) {
+      expect(await loadUpcomingImages(db, tx, { ...session, ...state } as typeof session)).toEqual([]);
+    }
+    expect(reads).toBe(2);
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    await loadUpcomingImages(db, tx, session); expect(reads).toBe(4);
+    await loadUpcomingImages(db, tx, { ...session, snapshotId: undefined });
+    await loadUpcomingImages(db, tx, { ...session, snapshotId: undefined }); expect(reads).toBe(8);
+    for (let index = 0; index < 9; index++) await loadUpcomingImages(db, tx, { ...session, snapshotId: 'bounded-' + index });
+    const before = reads; await loadUpcomingImages(db, tx, session); expect(reads).toBe(before + 2);
+  } finally { vi.useRealTimers(); }
 });

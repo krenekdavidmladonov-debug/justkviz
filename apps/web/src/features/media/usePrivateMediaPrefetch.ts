@@ -106,3 +106,28 @@ export function usePrivateMediaReferencesPrefetch(candidates: readonly string[],
     return () => { window.clearTimeout(timer); abort.abort(); };
   }, [accessKey, enabled, references, snapshotId]);
 }
+
+/** Inputs must come exclusively from the server's bounded public prompt allowlist. */
+export function usePublicMediaPrefetch(sessionId: string | undefined, references: readonly string[], enabled: boolean): void {
+  const candidates = [...new Set(references)].slice(0, 9).join('\n');
+  useEffect(() => {
+    if (!enabled || !sessionId || !candidates) return;
+    const abort = new AbortController();
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        await quizMediaBlobCache.waitForPendingReads();
+        for (const reference of candidates.split('\n')) {
+          if (abort.signal.aborted) return;
+          const request = new AbortController();
+          const cancel = () => request.abort();
+          abort.signal.addEventListener('abort', cancel, { once: true });
+          const timeout = window.setTimeout(cancel, 15000);
+          try { await readQuizMediaBlob(reference, request.signal, sessionId); }
+          catch { /* Current-publication gateway denial is never replaced with private reads. */ }
+          finally { window.clearTimeout(timeout); abort.signal.removeEventListener('abort', cancel); }
+        }
+      })();
+    }, 300);
+    return () => { window.clearTimeout(timer); abort.abort(); };
+  }, [sessionId, candidates, enabled]);
+}

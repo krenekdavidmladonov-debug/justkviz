@@ -4,7 +4,11 @@ Original image URLs are derived only from bound private import receipts. Answer
 image URLs retain explicit reveal and private editor permission checks; see
 [ORIGINAL_IMAGE_SOURCES.md](archive/ORIGINAL_IMAGE_SOURCES.md).
 
-Media conditional reads and bounded browser retention preserve fresh authorization;
+Media network reads preserve current authorization. Exact pinned image URLs may
+reuse previously delivered bytes from a private HTTP cache in the same access
+namespace; logout/membership invalidation rotates that namespace, but already
+downloaded bytes cannot be remotely erased. Public prompt lookahead excludes all
+answer-associated media across the source;
 see [MEDIA_PLAYBACK_REVALIDATION.md](archive/MEDIA_PLAYBACK_REVALIDATION.md).
 
 ## Private Drive media extension

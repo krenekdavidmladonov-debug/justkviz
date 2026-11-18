@@ -1,3 +1,4 @@
+import { usePublicMediaPrefetch } from '../../features/media/usePrivateMediaPrefetch';
 import { Brand } from '../../ui/Brand';
 import { ShowModeRenderer } from '../../features/show-mode/ShowModeRenderer';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -79,6 +80,7 @@ export function ProjectorPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const measure = latencyEnabled(useLocation().search);
   const [state, setState] = useState<PublicLiveState | null>(null);
+  usePublicMediaPrefetch(sessionId, state?.upcomingImages ?? [], state?.status === 'active');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [fullscreenNotice, setFullscreenNotice] = useState<string | null>(null);

@@ -76,6 +76,7 @@ export interface PublicMedia {
 }
 
 export interface PublicLiveState {
+  readonly upcomingImages?: readonly string[];
   readonly mediaPlaybackMode?: 'original';
   readonly showCue?: ShowCue;
   readonly interimBackdrop?: InterimBackdrop;

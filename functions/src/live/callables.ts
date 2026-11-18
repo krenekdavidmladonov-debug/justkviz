@@ -1,3 +1,4 @@
+import { loadUpcomingImages } from './upcoming-images.js';
 import { assertPlayableQuizSource } from '../quizzes/playable.js';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp, type DocumentSnapshot, type Transaction } from 'firebase-admin/firestore';
@@ -214,6 +215,8 @@ export async function loadSlide(transaction: Transaction, quizId: string, positi
     ...appearance };
 }
 
+
+
 function response(session: PrivateLiveSession): ControlResponse {
   return {
     sessionId: session.sessionId,
@@ -325,8 +328,9 @@ async function mutateSession(request: CallableRequest<unknown>, kind: MutationKi
       }
       const { interimResults, ...presentationSession } = session; void interimResults;
       const updated = applyLiveSessionAction(presentationSession, action, revision, actor.uid, Timestamp.now(), slide);
+      const upcomingImages = await loadUpcomingImages(db, transaction, updated);
       transaction.set(sessionRef, updated);
-      transaction.set(publicRef, buildPublicSessionState(updated, slide));
+      transaction.set(publicRef, { ...buildPublicSessionState(updated, slide), ...(upcomingImages.length ? { upcomingImages } : {}) });
       return response(updated);
     });
   } catch (error) { return mapError(error); }
@@ -358,8 +362,9 @@ export const reportMediaPlayback = securedOnCall('reportMediaPlayback', callable
       const now = Timestamp.now();
       const updated = applyMediaPlaybackReport(session, playbackState, generation, actor.uid, now);
       if (updated === session) return response(session);
+      const upcomingImages = await loadUpcomingImages(db, transaction, updated);
       transaction.set(sessionRef, updated);
-      transaction.set(publicRef, buildPublicSessionState(updated, slide));
+      transaction.set(publicRef, { ...buildPublicSessionState(updated, slide), ...(upcomingImages.length ? { upcomingImages } : {}) });
       return response(updated);
     });
   } catch (error) { return mapError(error); }

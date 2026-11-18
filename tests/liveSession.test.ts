@@ -582,3 +582,15 @@ test('explicit slide navigation hides a confirmed finale while retaining its pri
   expect(buildPublicSessionState(navigated, target)).not.toHaveProperty('finalReveal');
   expect(buildPublicSessionState(navigated, target)).not.toHaveProperty('revealedAnswer');
 });
+
+
+test('public lookahead mapping accepts bounded owned references and rejects malformed, waiting, ended and recap payloads', () => {
+  const reference = 'quiz-asset:quiz-1/' + 'a'.repeat(64);
+  const published = { ...buildPublicSessionState(session(), questionSlide()), upcomingImages: [reference] };
+  expect(mapPublicLiveState(published.sessionId, published).upcomingImages).toEqual([reference]);
+  expect(sanitizedChannelState(mapPublicLiveState(published.sessionId, published)).upcomingImages).toEqual([reference]);
+  for (const unsafe of [{ upcomingImages: ['https://example.test/private.png'] }, { upcomingImages: Array(10).fill(reference) },
+    { upcomingImages: 'private' }, { status: 'waiting' }, { status: 'ended' }, { presentationMode: 'recap' }]) {
+    expect(() => mapPublicLiveState(published.sessionId, { ...published, ...unsafe })).toThrow();
+  }
+});

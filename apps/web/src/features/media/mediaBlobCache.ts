@@ -7,6 +7,9 @@ export class MediaBlobCache {
   private readonly entries = new Map<string, CachedMedia>();
   private readonly pending = new Map<string, PendingMedia>();
   private bytes = 0;
+  private accessEpoch = 0;
+
+  get epoch(): number { return this.accessEpoch; }
 
   constructor(private readonly maxBytes = 64 * 1024 * 1024, private readonly maxEntries = 24, private readonly maxAgeMs = 5 * 60 * 1000) {}
 
@@ -15,6 +18,7 @@ export class MediaBlobCache {
   }
 
   clear(): void {
+    this.accessEpoch++;
     for (const request of this.pending.values()) request.controller.abort();
     this.pending.clear();
     this.entries.clear();

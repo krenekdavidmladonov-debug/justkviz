@@ -21,7 +21,8 @@ vi.mock('../apps/web/src/services/firebase/app', () => ({
     config: { useEmulators: true, options: { projectId: 'demo-media-video' } },
   }),
 }));
-vi.mock('../apps/web/src/services/firebase/auth', () => ({ getFirebaseAuth: () => ({ currentUser: { getIdToken: () => Promise.resolve('synthetic-firebase-token') } }) }));
+const mediaIdentity = vi.hoisted(() => ({ token: 'synthetic-firebase-token' }));
+vi.mock('../apps/web/src/services/firebase/auth', () => ({ getFirebaseAuth: () => ({ currentUser: { getIdToken: () => Promise.resolve(mediaIdentity.token) } }) }));
 vi.mock('../apps/web/src/services/firebase/client', () => ({ getFirebaseServices: vi.fn() }));
 vi.mock('../apps/web/src/features/access/api', () => ({ privateRead: vi.fn() }));
 const source = 'quiz-asset:quiz-1/' + 'a'.repeat(64), other = 'quiz-asset:quiz-1/' + 'b'.repeat(64);
@@ -360,4 +361,41 @@ it('bounds retained media by bytes, entry count and age and clears pending loads
   });
   const cancelled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
   await Promise.resolve(); cache.clear(); expect(pendingSignal?.aborted).toBe(true); complete(); await cancelled;
+});
+
+
+it('pins image cache URLs within one credential/session epoch and rotates the namespace on access invalidation', async () => {
+  const pin = 'a'.repeat(64);
+  http.mockImplementation(async () => new Response('synthetic', { headers: { 'Content-Type': 'image/png',
+    ETag: '"' + pin + '"', 'Cache-Control': 'private,max-age=31536000,immutable' } }));
+  const read = (session = 'pin-session') => readQuizMediaBlob(source, new AbortController().signal, session);
+  await read(); await read();
+  const url = (index: number) => { const input = http.mock.calls[index]![0]; return new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url); };
+  expect(url(0).searchParams.has('pin')).toBe(false);
+  expect(url(1).searchParams.get('pin')).toBe(pin);
+  expect(url(1).searchParams.get('cacheScope')).toBe(url(0).searchParams.get('cacheScope'));
+  expect(http.mock.calls[1]![1]?.headers).toEqual({});
+  expect(http.mock.calls[1]![1]?.cache).toBe('default');
+  await read('other-pin-session');
+  expect(url(2).searchParams.get('cacheScope')).not.toBe(url(0).searchParams.get('cacheScope'));
+  quizMediaBlobCache.clear(); await read();
+  expect(url(3).searchParams.get('cacheScope')).not.toBe(url(0).searchParams.get('cacheScope'));
+  expect(url(3).searchParams.has('pin')).toBe(false);
+});
+
+
+it('a new private credential cannot reuse an old account image namespace or pin', async () => {
+  const pin = 'b'.repeat(64);
+  http.mockImplementation(async () => new Response('synthetic', { headers: { 'Content-Type': 'image/png',
+    ETag: '"' + pin + '"', 'Cache-Control': 'private,max-age=31536000,immutable' } }));
+  const read = () => readQuizMediaBlob(source, new AbortController().signal);
+  try {
+    await read(); await read();
+    mediaIdentity.token = 'synthetic-other-account-token'; await read();
+    const requested = http.mock.calls.map(([input]) => new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url));
+    expect(requested[1]!.searchParams.get('pin')).toBe(pin);
+    expect(requested[2]!.searchParams.get('cacheScope')).not.toBe(requested[0]!.searchParams.get('cacheScope'));
+    expect(requested[2]!.searchParams.has('pin')).toBe(false);
+    expect(requested.every(url => !url.href.includes('synthetic-firebase-token') && !url.href.includes('synthetic-other-account-token'))).toBe(true);
+  } finally { mediaIdentity.token = 'synthetic-firebase-token'; }
 });
