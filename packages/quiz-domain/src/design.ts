@@ -3,6 +3,7 @@ import { isSafeHttpUrl } from './presentation.js';
 
 /** Sparse, bounded visual overrides. Unknown stored extensions never cross a public boundary. */
 export interface SlideDesign {
+  readonly projectorAnimations?: boolean;
   readonly backgroundColor?: string;
   readonly textColor?: string;
   readonly accentColor?: string;
@@ -39,7 +40,7 @@ export interface PrintTemplate {
   readonly showLogo?: boolean;
 }
 export const printTemplateKeys = ['title', 'instructions', 'footer', 'logoText', 'logoImage', 'accentColor', 'layout', 'showLogo'] as const;
-export const slideDesignKeys = ['backgroundColor', 'textColor', 'accentColor', 'backgroundImage', 'logoImage', 'backgroundOverlay', 'fontFamily', 'fontScale', 'textAlign', 'layout', 'textWidth', 'mediaFit', 'showLogo', 'showQuestionNumber', 'showRoundTitle'] as const;
+export const slideDesignKeys = ['backgroundColor', 'textColor', 'accentColor', 'backgroundImage', 'logoImage', 'backgroundOverlay', 'fontFamily', 'fontScale', 'textAlign', 'layout', 'textWidth', 'mediaFit', 'showLogo', 'showQuestionNumber', 'showRoundTitle', 'projectorAnimations'] as const;
 const record = (value: unknown): Record<string, unknown> | undefined => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 export function safeDesignImage(value: unknown): value is string {
   return typeof value === 'string' && value.length <= 4096 && (value === '' || parseQuizAsset(value) !== undefined || isSafeHttpUrl(value));
@@ -53,7 +54,7 @@ export function normalizeSlideDesign(value: unknown): SlideDesign {
     if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate >= minimum && candidate <= maximum) result[field] = candidate;
   }
   for (const [field, allowed] of Object.entries({ fontFamily: ['sans', 'serif', 'display'], textAlign: ['left', 'center', 'right'], layout: ['classic', 'centered', 'split', 'image-first'], mediaFit: ['contain', 'cover'] })) if (typeof data[field] === 'string' && allowed.includes(data[field])) result[field] = data[field];
-  for (const field of ['showLogo', 'showQuestionNumber', 'showRoundTitle']) if (typeof data[field] === 'boolean') result[field] = data[field];
+  for (const field of ['showLogo', 'showQuestionNumber', 'showRoundTitle', 'projectorAnimations']) if (typeof data[field] === 'boolean') result[field] = data[field];
   return result;
 }
 export function resolveSlideDesign(defaultDesign?: unknown, roundDesign?: unknown, slideDesign?: unknown, answerDesign?: unknown, answerRevealed = false): SlideDesign {

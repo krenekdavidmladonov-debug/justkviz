@@ -56,6 +56,7 @@ export interface PrivateSlide {
   readonly isQuestion: boolean;
   readonly roundId?: string;
   readonly roundTitle?: string;
+  readonly roundNumber?: number;
   readonly questionNumber?: number;
   readonly questionCount?: number;
   readonly title: string;
@@ -93,6 +94,7 @@ export interface PublicPresentation {
 export interface PublicLiveSession {
   readonly design?: import('@filmovy-kviz/quiz-domain').SlideDesign;
   readonly roundTitle?: string;
+  readonly roundNumber?: number;
   readonly subtitle?: string;
   readonly sessionId: string;
   readonly status: LiveSessionStatus;

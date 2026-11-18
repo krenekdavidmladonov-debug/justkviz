@@ -192,6 +192,7 @@ export function buildPublicSessionState(session: PrivateLiveSession, slide?: Pri
     slideKind: publicText(slide.kind) ?? 'legacy',
     title: publicText(slide.title) ?? '',
     text: publicText(slide.text) ?? '',
+    ...(Number.isSafeInteger(slide.roundNumber) && (slide.roundNumber ?? 0) > 0 ? { roundNumber: slide.roundNumber } : {}),
     ...(publicText(slide.roundTitle) === undefined ? {} : { roundTitle: publicText(slide.roundTitle) }),
     ...(Object.keys(resolveSlideDesign(slide.defaultDesign, slide.roundDesign, slide.design)).length ? { design: resolveSlideDesign(slide.defaultDesign, slide.roundDesign, slide.design) } : {}),
     options: sanitizeOptions(slide.options),

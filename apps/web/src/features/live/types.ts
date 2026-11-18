@@ -81,6 +81,7 @@ export interface PublicLiveState {
   readonly interimBackdrop?: InterimBackdrop;
   readonly design?: SlideDesign;
   readonly roundTitle?: string;
+  readonly roundNumber?: number;
   readonly subtitle?: string;
   readonly finalReveal?: FinalRevealPage;
   readonly interimResults?: ResultPage;

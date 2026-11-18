@@ -1,3 +1,5 @@
+import { ProjectorMotionContext, ProjectorWords } from '../show-mode/ProjectorMotion';
+import { useContext } from 'react';
 import { Brand } from '../../ui/Brand';
 import { parseQuizAsset } from '@filmovy-kviz/quiz-domain';
 import { AssetImage } from '../media/AssetImage';
@@ -81,8 +83,8 @@ function QuestionImage({ source, sessionId, fullSlide = false, mediaRole = 'ques
 function QuestionCopy({ title, text }: { readonly title: string; readonly text: string }) {
   return (
     <div className="slide-copy">
-      {title && <h1>{title}</h1>}
-      {text && <p>{text}</p>}
+      {title && <h1><ProjectorWords text={title} /></h1>}
+      {text && <p><ProjectorWords text={text} /></p>}
     </div>
   );
 }
@@ -126,6 +128,8 @@ export function SlideRenderer({
     message?: string,
   ) => void;
 }) {
+  const projectorContext = useContext(ProjectorMotionContext);
+  const projectorMotion = projectorContext && { ...projectorContext, animated: projectorContext.animated && !['audio', 'music', 'video', 'youtube'].includes(slide.kind.toLowerCase()) };
   const model = useMemo(() => buildSlideRenderModel(slide, mode), [mode, slide]);
   const questionImage = model.questionImage && (isSafeHttpUrl(model.questionImage) || parseQuizAsset(model.questionImage))
     ? model.questionImage : undefined;
@@ -298,7 +302,7 @@ export function SlideRenderer({
   } else if (model.contentKind === 'rules') {
     content = <div className="slide-centered slide-list"><p className="slide-kicker">PRAVIDLA</p><h1>{model.title || 'Hrajeme fér'}</h1>{model.text && <p>{model.text}</p>}<AgendaItems items={model.options.length > 0 ? model.options : defaultRules} /></div>;
   } else if (model.contentKind === 'intro' || model.contentKind === 'roundIntro') {
-    content = <div key={introGeneration} className={`slide-centered round-intro-content ${introGeneration > 0 ? 'intro-running' : ''}`}><p className="slide-kicker">{model.contentKind === 'intro' ? 'VÍTEJTE NA KVÍZU' : 'NOVÉ KOLO'}</p><h1>{model.title || quizTitle}</h1>{model.text && <p>{model.text}</p>}</div>;
+    content = <div key={introGeneration} className={`slide-centered round-intro-content ${introGeneration > 0 ? 'intro-running' : ''}`}><p className="slide-kicker">{model.contentKind === 'intro' ? 'VÍTEJTE NA KVÍZU' : projectorMotion && Number.isSafeInteger(slide.roundNumber) && (slide.roundNumber ?? 0) > 0 ? `${slide.roundNumber}. KOLO` : 'NOVÉ KOLO'}</p>{projectorMotion && <span className="pm-round-line" aria-hidden="true" />}<h1>{model.title || quizTitle}</h1>{model.text && <p>{model.text}</p>}</div>;
   } else if (model.contentKind === 'end') {
     content = <div className="slide-centered"><p className="slide-kicker">DĚKUJEME</p><h1>{model.title || 'To je pro dnešek vše'}</h1>{model.text && <p>{model.text}</p>}</div>;
   } else if (model.contentKind === 'thank-you') {
@@ -323,7 +327,7 @@ export function SlideRenderer({
   }
 
   return (
-    <article data-media-playback-mode={model.mediaPlaybackMode} style={slideDesignStyle(design)} className={`slide-renderer mode-${visibleMode} kind-${model.contentKind} layout-${layout} align-${design.textAlign ?? 'left'} density-${density}${design.backgroundColor ? ' has-custom-background' : ''} image-layout-${fixedQuestion ? 'split' : slide.imageLayout ?? 'split'}${photoQuestion ? ' fixed-photo-question' : ''}${compact ? ' is-compact' : ''}`}>
+    <article data-media-playback-mode={model.mediaPlaybackMode} style={slideDesignStyle(design)} className={`slide-renderer ${projectorMotion ? `pm-projector ${projectorMotion.animated ? 'pm-animate' : 'pm-static'}` : ''} mode-${visibleMode} kind-${model.contentKind} layout-${layout} align-${design.textAlign ?? 'left'} density-${density}${design.backgroundColor ? ' has-custom-background' : ''} image-layout-${fixedQuestion ? 'split' : slide.imageLayout ?? 'split'}${photoQuestion ? ' fixed-photo-question' : ''}${compact ? ' is-compact' : ''}`}>
       {!standalonePhoto && <>
         <div className="slide-background" aria-hidden="true">{model.backgroundImage && <AssetImage source={model.backgroundImage} alt="" sessionId={mediaSessionId} mediaRole="background-image" {...imageDiagnostic('background-image')} />}</div>
         <div className="slide-background-overlay" style={{ opacity: model.backgroundOverlay / 100 }} aria-hidden="true" />

@@ -117,3 +117,36 @@
 @keyframes sm-light-drift { from { transform:translateY(-3cqw) rotate(-23deg); opacity:0; } to { transform:rotate(-16deg); opacity:1; } }
 @keyframes sm-light-drift-lower { from { transform:translateY(3cqw) rotate(-15deg); opacity:0; } to { transform:rotate(-22deg); opacity:1; } }
 @media (prefers-reduced-motion: reduce) { .show-mode-canvas *, .show-mode-canvas *::before, .show-mode-canvas *::after { animation: none !important; transition: none !important; } }
+/* Projector entrances are opt-in; shared moderator/editor renderers keep their own presentation. */
+.pm-projector.pm-static *, .pm-projector.pm-static *::before, .pm-projector.pm-static *::after { animation: none !important; transition: none !important; }
+.pm-projector .round-intro-content.intro-running { animation: none; }
+.pm-projector .pm-round-line { display: block; width: 8cqi; height: .2cqi; margin: 1cqi auto; background: var(--slide-gold); transform-origin: left; }
+.pm-projector.pm-animate .round-intro-content > .slide-kicker { animation: pm-enter 350ms ease-out both; }
+.pm-projector.pm-animate .pm-round-line { animation: pm-fill 350ms 350ms ease-out both; }
+.pm-projector.pm-animate .round-intro-content > h1 { animation: pm-enter 500ms 700ms ease-out both; }
+.pm-projector.pm-animate .round-intro-content > p:last-child:not(.slide-kicker) { animation: pm-enter 400ms 800ms ease-out both; }
+.pm-word { display: inline-block; animation: pm-enter 120ms ease-out both; }
+.pm-projector.pm-animate .question-image-frame { animation: pm-image 400ms ease-out both; }
+/* Answer copy is immediately visible. Only its decorative fill enters. */
+.pm-projector .slide-answer { position: relative; isolation: isolate; animation: none; opacity: 1; }
+.pm-projector.pm-animate .slide-answer::before { content: ''; position: absolute; inset: 0; z-index: -1; background: color-mix(in srgb, var(--slide-gold) 9%, transparent); transform-origin: left; animation: pm-fill 450ms ease-out both; }
+.pm-results .sm-row { position: relative; isolation: isolate; }
+.pm-results.sm-animate .sm-row { animation: pm-enter 300ms var(--pm-row-delay, 0ms) ease-out both; }
+.pm-results .sm-row::before { content: ''; position: absolute; inset: 0; z-index: -1; background: color-mix(in srgb, var(--slide-gold) 10%, transparent); transform-origin: left; transform: scaleX(var(--pm-bar, 0)); }
+.pm-results.sm-animate .sm-row::before { animation: pm-score-bar 1000ms var(--pm-row-delay, 0ms) ease-out both; }
+.pm-results.sm-animate .sm-feature-teams, .pm-results.sm-animate .sm-winner-names, .pm-results.sm-animate .sm-intro { animation: pm-enter 600ms ease-out both; }
+@keyframes pm-enter { from { opacity: 0; transform: translateY(.5cqi); } to { opacity: 1; transform: translateY(0); } }
+@keyframes pm-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes pm-image { from { opacity: 0; transform: scale(.98); } to { opacity: 1; transform: scale(1); } }
+@keyframes pm-score-bar { from { transform: scaleX(0); } to { transform: scaleX(var(--pm-bar, 0)); } }
+@media (prefers-reduced-motion: reduce) { .pm-projector *, .pm-projector *::before, .pm-projector *::after, .pm-results *, .pm-results *::before, .pm-results *::after { animation: none !important; transition: none !important; } }
+.pm-classic-results.pm-static *, .pm-classic-results.pm-static *::before, .pm-classic-results.pm-static *::after { animation: none !important; transition: none !important; }
+.pm-classic-results.pm-animate .pm-table-row { animation: pm-enter 300ms var(--pm-row-delay, 0ms) ease-out both; }
+.pm-classic-results .pm-table-row > :last-child { position: relative; isolation: isolate; }
+.pm-classic-results .pm-table-row > :last-child::before { content: ''; position: absolute; inset: 0; z-index: -1; background: color-mix(in srgb, var(--slide-gold) 12%, transparent); transform-origin: left; transform: scaleX(var(--pm-bar, 0)); }
+.pm-classic-results.pm-animate .pm-table-row > :last-child::before { animation: pm-score-bar 1000ms var(--pm-row-delay, 0ms) ease-out both; }
+@media (prefers-reduced-motion: reduce) { .pm-classic-results *, .pm-classic-results *::before, .pm-classic-results *::after { animation: none !important; transition: none !important; } }
+.pm-projector, .pm-results, .pm-classic-results { transition: none !important; }
+.pm-results.sm-animate .sm-finale-light, .pm-results.sm-animate .sm-finale-light i { animation-duration: 1500ms; }
+.pm-projector .round-intro-content > .slide-kicker::before { display: none; }
+.pm-projector .pm-round-line { margin: 1cqi 0; }

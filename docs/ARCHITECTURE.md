@@ -95,6 +95,15 @@ tabs can still need the explicit refresh if an older lazy module was replaced.
 Hashed assets keep their existing cache behavior. The settings page contains
 account/access controls only; quiz appearance remains in the quiz editor.
 
+Quiz appearance stores the optional boolean `defaultDesign.projectorAnimations`
+(default on) through the existing validated design, immutable snapshot and public
+design allowlist. Motion is explicitly enabled only by the real online/offline
+projector and respects reduced motion; moderator/editor previews retain their
+previous behavior. The trusted live loader derives optional public `roundNumber`
+from the already-read round position; offline projection uses the frozen manifest
+round position. Invalid or absent legacy positions omit the number. No question
+time limit exists in the authoritative model, so this change adds no timer.
+
 Feature folders may be added when real behavior arrives. A generic repository/service abstraction is not required until repeated use proves it valuable.
 
 The first implemented feature is the read-only admin quiz library. `features/quizzes/quizRepository.ts` is a small query and runtime-mapping boundary. It reads only private `quizzes`, nested `rounds`, and nested `questions`; its UI view model deliberately omits correct answers. V1-migrated quizzes additionally keep a private, globally ordered `slides` source stream so intro, agenda, recap, end, and other presentation records are not forced into question documents. That stream is not a projector API; trusted Functions derive the deliberately sanitized `publicSessions` state from private source data.
