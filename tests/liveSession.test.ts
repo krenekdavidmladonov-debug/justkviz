@@ -44,6 +44,14 @@ describe('server-authoritative adjacent navigation', () => {
     return { reads, transaction, root };
   }
 
+  test('the first next command selects the visible quiz intro before any question', async () => {
+    const store = navigationStore([
+      { position: 1, kind: 'intro', isQuestion: false },
+      { position: 2, kind: 'question', isQuestion: true, roundId: 'round-1' },
+    ]);
+    expect(await adjacentVisibleSlidePosition(store.transaction, store.root, 0, 1)).toBe(1);
+  });
+
   test.each([1, -1] as const)('batches a long hidden run in direction %s and returns the nearest visible slide', async direction => {
     const slides = Array.from({ length: 100 }, (_, index) => ({ position: index + 1, kind: 'intro', isQuestion: false, hidden: true }));
     const target = direction === 1 ? 99 : 2;
@@ -362,7 +370,7 @@ describe('live-session state machine', () => {
       revision: 0,
       startedAt: null,
     });
-    const first = questionSlide(1);
+    const first = { ...questionSlide(1), kind: 'intro', isQuestion: false, roundId: undefined };
     const active = applyLiveSessionAction(
       waiting,
       { type: 'next-slide', slideId: first.id },
@@ -372,6 +380,7 @@ describe('live-session state machine', () => {
       first,
     );
     expect(active).toMatchObject({ status: 'active', currentSlidePosition: 1, revision: 1 });
+    expect(buildPublicSessionState(active, first)).toMatchObject({ slideKind: 'intro', answerRevealed: false });
 
     const second = questionSlide(2);
     const advanced = applyLiveSessionAction(active, { type: 'next-slide', slideId: second.id }, 1, 'moderator', now, second);

@@ -129,6 +129,8 @@ export function SlideRenderer({
   ) => void;
 }) {
   const projectorMotion = useContext(ProjectorMotionContext);
+  const roundLabel = Number.isSafeInteger(slide.roundNumber) && (slide.roundNumber ?? 0) > 0
+    ? `${slide.roundNumber}. KOLO` : undefined;
   const model = useMemo(() => buildSlideRenderModel(slide, mode), [mode, slide]);
   const questionImage = model.questionImage && (isSafeHttpUrl(model.questionImage) || parseQuizAsset(model.questionImage))
     ? model.questionImage : undefined;
@@ -317,7 +319,7 @@ export function SlideRenderer({
   } else if (model.contentKind === 'rules') {
     content = <div className="slide-centered slide-list"><p className="slide-kicker">PRAVIDLA</p><h1>{model.title || 'Hrajeme fér'}</h1>{model.text && <p>{model.text}</p>}<AgendaItems items={model.options.length > 0 ? model.options : defaultRules} /></div>;
   } else if (model.contentKind === 'intro' || model.contentKind === 'roundIntro') {
-    content = <div key={introGeneration} className={`slide-centered round-intro-content ${introGeneration > 0 ? 'intro-running' : ''}`}><p className="slide-kicker">{model.contentKind === 'intro' ? 'VÍTEJTE NA KVÍZU' : projectorMotion && Number.isSafeInteger(slide.roundNumber) && (slide.roundNumber ?? 0) > 0 ? `${slide.roundNumber}. KOLO` : 'NOVÉ KOLO'}</p>{projectorMotion && <span className="pm-round-line" aria-hidden="true" />}<h1>{model.title || quizTitle}</h1>{model.text && <p>{model.text}</p>}</div>;
+    content = <div key={introGeneration} className={`slide-centered round-intro-content ${introGeneration > 0 ? 'intro-running' : ''}`}><p className="slide-kicker">{model.contentKind === 'intro' ? 'VÍTEJTE NA KVÍZU' : roundLabel ?? 'NOVÉ KOLO'}</p>{projectorMotion && <span className="pm-round-line" aria-hidden="true" />}<h1>{model.title || quizTitle}</h1>{model.text && <p>{model.text}</p>}</div>;
   } else if (model.contentKind === 'end') {
     content = <div className="slide-centered"><p className="slide-kicker">DĚKUJEME</p><h1>{model.title || 'To je pro dnešek vše'}</h1>{model.text && <p>{model.text}</p>}</div>;
   } else if (model.contentKind === 'thank-you') {
@@ -350,7 +352,7 @@ export function SlideRenderer({
       <div className="slide-safe-area">
         {!standalonePhoto && <header className="slide-brand"><span>{quizTitle}</span>{design.showLogo !== false && (design.logoImage ? <span className="slide-custom-logo"><AssetImage source={design.logoImage} alt="Logo pořadatele" sessionId={mediaSessionId} mediaRole="logo-image" {...imageDiagnostic('logo-image')} /></span> : <Brand />)}</header>}
         {content}
-        {!standalonePhoto && design.showRoundTitle !== false && model.roundTitle && model.isQuestionLike && <footer className="slide-round-title">{model.roundTitle}</footer>}
+        {!standalonePhoto && design.showRoundTitle !== false && model.roundTitle && model.isQuestionLike && <footer className="slide-round-title">{roundLabel && !/^\s*\d+\.\s*KOLO\b/iu.test(model.roundTitle) ? `${roundLabel} · ${model.roundTitle}` : model.roundTitle}</footer>}
         {showMediaError && <p className="projector-media-error" role="status">Médium se nepodařilo přehrát. Moderátor může použít Pustit znovu nebo pokračovat otázkou.</p>}
       </div>
     </article>

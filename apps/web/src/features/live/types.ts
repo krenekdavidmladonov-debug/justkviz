@@ -49,6 +49,7 @@ export interface LiveControlSlide {
   readonly isQuestion: boolean;
   readonly roundId?: string;
   readonly roundTitle?: string;
+  readonly roundNumber?: number;
   readonly questionNumber?: number;
   readonly questionCount?: number;
   readonly title: string;

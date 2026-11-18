@@ -31,6 +31,7 @@ export default defineConfig({
       'tests/liveSession.test.ts', 'tests/liveLatency.test.ts',
       'tests/liveRepository.test.ts',
       'tests/projectorSessionIsolation.test.tsx',
+      'tests/projectorWelcome.test.tsx', 'tests/roundNumberPropagation.test.tsx',
       'tests/localEventMediaBackupFile.test.ts',
       'tests/localEventMediaManifestGuard.test.ts',
       'tests/localImageBackup*.test.ts',

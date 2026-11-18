@@ -10,7 +10,7 @@ import { getEditorQuiz } from '../apps/web/src/features/editor/editorRepository'
 import { lockEventQuiz, updateEvent } from '../apps/web/src/features/events/eventApi';
 import { setEventPublication } from '../apps/web/src/features/events/registrationApi';
 import { registrationSharingState } from '../apps/web/src/features/events/registrationSharing';
-import type { EditorQuiz } from '../apps/web/src/features/editor/types';
+import type { EditorQuiz, EditorSlide } from '../apps/web/src/features/editor/types';
 import type { EventRecord } from '../apps/web/src/features/events/types';
 import type { QuizSummary } from '../apps/web/src/features/quizzes/types';
 import { eventFormRecord } from './browser/events-form-ux.data';
@@ -190,16 +190,20 @@ it('ignores the optional library response after navigating to an immutable event
 });
 
 function readyQuiz(revision = 1): EditorQuiz {
-  return { id: 'quiz', title: 'Hotový kvíz', description: '', revision, slideCount: 1, roundCount: 1, questionCount: 1, slides: [{
-    id: 'question', position: 1, kind: 'free', storedKind: 'free', isQuestion: true, roundId: 'round', roundTitle: 'Kolo',
+  const question: EditorSlide = {
+    id: 'question', position: 2, kind: 'free', storedKind: 'free', isQuestion: true, roundId: 'round', roundTitle: 'Kolo',
     title: '', text: 'Kolik?', correctAnswer: 'Dvě', options: [], moderatorNote: '', media: [],
     presentation: { videoStart: null, videoEnd: null, audioTrigger: null, backgroundOverlay: null, answerOverlay: null, sourceQuestionNumber: null },
     backgroundImage: '', questionImage: '', answerImage: '', mediaSource: '', backgroundOverlay: null, clipStartSeconds: null, clipEndSeconds: null, hasLegacyData: false,
-  }] };
+  };
+  return { id: 'quiz', title: 'Hotový kvíz', description: '', revision, slideCount: 2, roundCount: 1, questionCount: 1, slides: [
+    { ...question, id: 'intro', position: 1, kind: 'intro', storedKind: 'intro', isQuestion: false,
+      roundId: undefined, roundTitle: undefined, title: 'Úvod kvízu', text: '', correctAnswer: '' }, question,
+  ] };
 }
 const prepareButton = () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Aktualizovat kvíz pro akci')!;
 it('prepares the latest saved revision despite a new editorial issue', async () => {
-  const latest = { ...readyQuiz(2), slides: [{ ...readyQuiz().slides[0]!, correctAnswer: '' }] };
+  const latest = { ...readyQuiz(2), slides: readyQuiz().slides.map(slide => slide.isQuestion ? { ...slide, correctAnswer: '' } : slide) };
   vi.mocked(getEditorQuiz).mockResolvedValueOnce(readyQuiz()).mockResolvedValue(latest);
   await render(); expect(prepareButton().disabled).toBe(false);
   await act(async () => prepareButton().click());
@@ -208,7 +212,7 @@ it('prepares the latest saved revision despite a new editorial issue', async () 
   expect(host.querySelector('a[href*="questionId=question"]')?.textContent).toBe('Opravit');
 });
 it('prepares a quiz with external-media recommendations without requiring acknowledgement', async () => {
-  vi.mocked(getEditorQuiz).mockResolvedValue({ ...readyQuiz(), slides: [{ ...readyQuiz().slides[0]!, kind: 'image', storedKind: 'image', questionImage: 'https://example.test/image.jpg' }] });
+  vi.mocked(getEditorQuiz).mockResolvedValue({ ...readyQuiz(), slides: readyQuiz().slides.map(slide => slide.isQuestion ? { ...slide, kind: 'image', storedKind: 'image', questionImage: 'https://example.test/image.jpg' } : slide) });
   await render(); expect(prepareButton().disabled).toBe(false);
   expect(host.querySelector('.warning-confirmation input')).toBeNull();
   await act(async () => prepareButton().click());

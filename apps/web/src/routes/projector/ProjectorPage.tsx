@@ -15,6 +15,7 @@ import { latencyEnabled, latencyNow, openLatencyChannel } from '../../features/l
 import { projectorFullscreenFailureMessage, requestProjectorFullscreen } from '../../features/live/projectorWindow';
 import type { PublicLiveState } from '../../features/live/types';
 import { SlideRenderer } from '../../features/presentation/SlideRenderer';
+import { ProjectorWelcome } from '../../features/presentation/ProjectorWelcome';
 import type { MediaDiagnosticSignal, MediaDiagnosticTarget } from '../../features/presentation/mediaDiagnostics';
 import type { LocalMediaTiming } from '../../features/presentation/mediaTiming';
 import { LocalProjectorMediaContext } from '../../features/media/LocalProjectorMediaContext';
@@ -36,7 +37,7 @@ function ProjectorState({ state, onMediaFinished, onMediaPlaybackState, onMediaD
   readonly onMediaDiagnostic: (target: MediaDiagnosticTarget, reason: MediaDiagnosticSignal) => void;
   readonly onMediaTiming?: ((target: MediaDiagnosticTarget, stage: LocalMediaTiming) => void) | undefined;
 }) {
-  if (state.status === 'waiting') return <ProjectorMessage quizTitle={state.quizTitle} title="Čekáme na první slide" text="Moderátor kvíz připravuje." />;
+  if (state.status === 'waiting') return <ProjectorWelcome quizTitle={state.quizTitle} />;
   if (state.status === 'ended') return <ProjectorMessage quizTitle={state.quizTitle} title="Kvíz skončil" text="Děkujeme za účast." />;
   return (
     <ShowModeRenderer state={state} projector>

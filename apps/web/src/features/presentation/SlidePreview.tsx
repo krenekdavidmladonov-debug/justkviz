@@ -8,6 +8,7 @@ export interface PreviewSlide {
   readonly design?: SlideDesign;
   readonly answerDesign?: SlideDesign;
   readonly roundTitle?: string;
+  readonly roundNumber?: number;
   readonly kind: string;
   readonly title: string;
   readonly text: string;
