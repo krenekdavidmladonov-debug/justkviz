@@ -83,8 +83,8 @@ test('reduced motion and quiz OFF remain fully static; moderator and media exclu
   await scene(page, 'interim');
   expect(await page.locator('.sm-static').count()).toBe(1);
   await page.evaluate(() => window.projectorFixture.enabled(true));
-  await scene(page, 'media');
-  expect(await page.locator('.pm-projector').getAttribute('class')).toContain('pm-static');
+  await scene(page, 'round'); await scene(page, 'media');
+  expect(await page.locator('.pm-projector').getAttribute('class')).toContain('pm-entry');
   await page.evaluate(() => window.projectorFixture.moderator(true));
   await scene(page, 'question');
   expect(await page.locator('.pm-projector,.pm-word').count()).toBe(0);
@@ -148,9 +148,35 @@ test('picture reveal preserves every frame of photo geometry and never replays p
   }
   await page.evaluate(() => window.projectorFixture.hide());
   expect(await page.locator('.question-image-frame').evaluate(node => getComputedStyle(node).animationName)).toBe('none');
+
+});
+
+test('AV prompt words enter while native media and cover frames stay static before and after play', async ({ page }) => {
+  const samples = 8000 * 4, wave = Buffer.alloc(44 + samples * 2);
+  wave.write('RIFF'); wave.writeUInt32LE(wave.length - 8, 4); wave.write('WAVEfmt ', 8); wave.writeUInt32LE(16, 16);
+  wave.writeUInt16LE(1, 20); wave.writeUInt16LE(1, 22); wave.writeUInt32LE(8000, 24); wave.writeUInt32LE(16000, 28); wave.writeUInt16LE(2, 32); wave.writeUInt16LE(16, 34); wave.write('data', 36); wave.writeUInt32LE(samples * 2, 40);
+  await open(page);
+  await page.route('**/synthetic-motion.wav', route => route.fulfill({ contentType: 'audio/wav', body: wave }));
+  const mediaStyles = async () => await page.locator('.shared-media-frame, .vinyl-visual, audio, video, iframe').evaluateAll(nodes => nodes.map(node => ({ name: getComputedStyle(node).animationName, transform: getComputedStyle(node).transform, opacity: getComputedStyle(node).opacity })));
   for (const kind of ['media', 'video']) {
-    await scene(page, 'question'); await scene(page, kind);
-    expect(await page.locator('.pm-projector').getAttribute('class')).toContain('pm-static');
-    expect(await page.locator('.slide-copy *').evaluateAll(nodes => nodes.every(node => getComputedStyle(node).animationName === 'none'))).toBe(true);
+    await scene(page, 'round'); await scene(page, kind);
+    await expect(page.locator('.pm-word').first()).toHaveCSS('animation-name', 'pm-enter');
+    expect(await mediaStyles()).not.toHaveLength(0);
+    for (const style of await mediaStyles()) expect(style).toEqual({ name: 'none', transform: 'none', opacity: '1' });
+    if (kind === 'media') {
+      // Ordinary audio stays on the moderator. Its native projector player exists only after explicit recap/reveal.
+      await expect(page.locator('audio')).toHaveCount(0);
+      await page.evaluate(() => window.projectorFixture.reveal());
+    }
+    await expect(page.locator(kind === 'media' ? 'audio' : 'video')).toHaveCount(1);
+    for (const style of await mediaStyles()) expect(style).toEqual({ name: 'none', transform: 'none', opacity: '1' });
+    await page.evaluate(() => window.projectorFixture.play());
+    await expect.poll(() => page.locator(kind === 'media' ? 'audio' : 'video').evaluate(media => media.currentTime > 0 && !media.paused)).toBe(true);
+    for (const style of await mediaStyles()) expect(style).toEqual({ name: 'none', transform: 'none', opacity: '1' });
   }
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await scene(page, 'round'); await scene(page, 'video');
+  expect(await page.locator('.pm-word').count()).toBe(0);
+  expect(await page.locator('.slide-copy *').evaluateAll(nodes => nodes.every(node => getComputedStyle(node).animationName === 'none'))).toBe(true);
+  for (const style of await mediaStyles()) expect(style).toEqual({ name: 'none', transform: 'none', opacity: '1' });
 });

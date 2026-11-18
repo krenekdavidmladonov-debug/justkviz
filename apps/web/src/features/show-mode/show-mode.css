@@ -150,3 +150,5 @@
 .pm-results.sm-animate .sm-finale-light, .pm-results.sm-animate .sm-finale-light i { animation-duration: 1500ms; }
 .pm-projector .round-intro-content > .slide-kicker::before { display: none; }
 .pm-projector .pm-round-line { margin: 1cqi 0; }
+/* AV prompt text enters normally; player elements and cover frames never inherit image entrances. */
+.pm-projector:is(.kind-audio, .kind-video) :is(.question-image-frame, .shared-media-frame, .vinyl-visual, audio, video, iframe) { animation: none !important; transition: none !important; }

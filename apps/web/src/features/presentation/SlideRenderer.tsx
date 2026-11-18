@@ -128,8 +128,7 @@ export function SlideRenderer({
     message?: string,
   ) => void;
 }) {
-  const projectorContext = useContext(ProjectorMotionContext);
-  const projectorMotion = projectorContext && { ...projectorContext, animated: projectorContext.animated && !['audio', 'music', 'video', 'youtube'].includes(slide.kind.toLowerCase()) };
+  const projectorMotion = useContext(ProjectorMotionContext);
   const model = useMemo(() => buildSlideRenderModel(slide, mode), [mode, slide]);
   const questionImage = model.questionImage && (isSafeHttpUrl(model.questionImage) || parseQuizAsset(model.questionImage))
     ? model.questionImage : undefined;
