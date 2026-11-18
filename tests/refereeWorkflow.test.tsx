@@ -174,3 +174,19 @@ describe('round-first referee workflow', () => {
     expect(points('Beta').value).toBe('0'); expect(host.textContent).toContain('2 / 3 týmů má uložené body');
   });
 });
+
+it('removes cancelled referee teams after polling while preserving remaining unsaved points', async () => {
+  await render();
+  await input('Beta', '1');
+  const next = fixture();
+  next.teams = next.teams.filter(team => team.id !== 'a');
+  next.scores = next.scores.filter(score => score.teamId !== 'a');
+  vi.mocked(readReferee).mockResolvedValue(next);
+  await poll();
+  expect(points('Alfa')).toBeNull();
+  expect(points('Beta').value).toBe('1');
+  expect(points('Beta').disabled).toBe(false);
+  vi.mocked(writeRefereeRound).mockResolvedValue({ scores: [{ teamId: 'b', revision: 3, halfPoints: 2 }] });
+  await click('Uložit body celého kola');
+  expect(writeRefereeRound).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({ scores: [{ teamId: 'b', expectedRevision: 2, halfPoints: 2, reason: '' }] }));
+});

@@ -58,8 +58,8 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
         const next = await readReferee(credential);
         if (!active || version !== writeVersion.current || pendingWrite.current) return;
         const previous = previousView.current;
-        if (previous && (previous.snapshotId !== next.snapshotId || previous.teams.some(team => !next.teams.some(current => current.id === team.id)))) {
-          setVerifiedAt(null); setError('Připravený kvíz nebo soupiska se změnily. Před obnovením stránky zkontrolujte rozepsané body.'); return;
+        if (previous && (previous.snapshotId !== next.snapshotId)) {
+          setVerifiedAt(null); setError('Připravený kvíz se změnil. Před obnovením stránky zkontrolujte rozepsané body.'); return;
         }
         previousView.current = next; setData(next); setRoundId(old => old || next.rounds[0]?.id || '');
         setVerifiedAt(new Date()); setError('');
