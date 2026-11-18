@@ -66,12 +66,6 @@ function transferFailure(error: unknown, signal: AbortSignal): unknown {
   return error instanceof TypeError ? new QuizMediaReadError('Médium není dostupné.', 'network-error') : error;
 }
 
-// Browser cache URLs belong to one in-memory access epoch and one concrete credential/session.
-// They are never persisted as application state or shared with another identity.
-let cacheEpoch = -1;
-const accessNamespaces = new Map<string, string>();
-const pinnedImages = new Map<string, string>();
-
 export async function readQuizMediaBlob(
   reference: string, signal: AbortSignal, sessionId?: string, snapshotId?: string,
   onTiming?: (stage: import('../presentation/mediaTiming').AssetTransferTiming) => void,
@@ -89,19 +83,10 @@ export async function readQuizMediaBlob(
     headers.Authorization = 'Bearer ' + token;
     accessScope = 'private:' + token;
   }
-  if (cacheEpoch !== quizMediaBlobCache.epoch) {
-    cacheEpoch = quizMediaBlobCache.epoch; accessNamespaces.clear(); pinnedImages.clear();
-  }
-  let namespace = accessNamespaces.get(accessScope);
-  if (!namespace) { namespace = crypto.randomUUID().replaceAll('-', ''); accessNamespaces.set(accessScope, namespace); }
-  url.searchParams.set('cacheScope', namespace);
-  const key = accessScope + ':' + url.href;
-  const pinned = pinnedImages.get(key);
-  if (pinned) url.searchParams.set('pin', pinned);
-  return quizMediaBlobCache.read(key, signal, async (cached, requestSignal) => {
-    const requestHeaders = { ...headers, ...(!pinned && cached?.etag ? { 'If-None-Match': cached.etag } : {}) };
+  return quizMediaBlobCache.read(accessScope + ':' + url.href, signal, async (cached, requestSignal) => {
+    const requestHeaders = { ...headers, ...(cached?.etag ? { 'If-None-Match': cached.etag } : {}) };
     onTiming?.('asset-request');
-    const response = await fetch(url, { headers: requestHeaders, signal: requestSignal, cache: 'default' })
+    const response = await fetch(url, { headers: requestHeaders, signal: requestSignal, cache: 'no-store' })
       .catch((error: unknown) => { throw transferFailure(error, requestSignal); });
     onTiming?.('asset-headers');
     if (response.status === 304) {
@@ -131,10 +116,6 @@ export async function readQuizMediaBlob(
     if (!validOwnedMedia(kind, contentType, size) || (declaredSize !== null && Number(declaredSize) !== size)) throw new QuizMediaReadError('Neplatná velikost média.', 'invalid-media');
     onTiming?.('asset-body');
     const etag = response.headers.get('ETag');
-    if (contentType.startsWith('image/') && etag && /^"[a-f0-9]{64}"$/u.test(etag)
-      && response.headers.get('Cache-Control') === 'private,max-age=31536000,immutable') {
-      pinnedImages.set(key, etag.slice(1, -1));
-    }
     return { blob: new Blob(chunks, { type: contentType }), ...(etag && etag.length <= 200 ? { etag } : {}) };
   });
 }

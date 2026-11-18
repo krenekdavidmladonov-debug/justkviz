@@ -13,6 +13,7 @@ export default defineConfig({
       'tests/publicEventResults*.test.*',
       'tests/adminEventRegistrationsPage.test.tsx', 'tests/adminEventCreatePage.test.tsx', 'tests/eventCreationRecovery.test.ts',
       'tests/editorPreviewMedia.test.tsx', 'tests/mediaUploadField.test.tsx',
+      'tests/editorApiCompatibility.test.ts',
       'tests/registrationInput.test.tsx',
       'tests/driveLocal*.test.ts', 'tests/driveCompanionUi*.test.*',
       'tests/driveFiles.test.ts', 'tests/driveImageByteCache.test.ts', 'tests/drivePicker.test.ts', 'tests/driveImportUi.test.tsx', 'tests/driveImages.test.ts', 'tests/driveImportCallables.test.ts',
