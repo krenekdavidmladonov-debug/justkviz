@@ -206,6 +206,7 @@ export const configureEventRegistration = securedOnCall('configureEventRegistrat
       updatedBy: uid,
     });
     transaction.set(publicRef, publicProjection(next, registrationStatus, now));
+    if (!published) transaction.delete(db.collection('publicEventResults').doc(eventId));
     return {
       eventId, revision, registrationStatus, registrationPublished: published, lifecycleStatus: current.lifecycleStatus,
       registrationOpensAt: next.opensAt?.toDate().toISOString() ?? null,

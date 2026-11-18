@@ -83,6 +83,7 @@ export async function authorizeOperation(name: string, request: CallableRequest,
     return member;
   };
   if (name === 'trashQuiz' || name === 'restoreQuiz') return authorize(request.auth, ['quiz.read', 'quiz.delete'], quiz(), tx);
+  if (name === 'configurePublicEventResults') return authorize(request.auth, ['event.manage'], event(), tx);
   if (name === 'deleteEvent') return authorize(request.auth, ['event.read', 'event.delete'], event(), tx);
   if (['completeEvent', 'cancelEvent', 'archiveEvent', 'trashEvent', 'restoreEvent'].includes(name)) {
     return authorize(request.auth, (name === 'cancelEvent' || name === 'completeEvent') && data?.endLive === true ? ['event.manage', 'event.live'] : ['event.manage'], event(), tx);

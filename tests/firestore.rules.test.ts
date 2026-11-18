@@ -515,3 +515,35 @@ for (const role of [null, 'user', 'moderator', 'admin']) {
     }
   });
 }
+
+describe('explicit completed-event public results', () => {
+  const path = 'publicEventResults/security-test-event';
+  async function publish(lifecycleStatus = 'completed', disposition = 'active') {
+    await testEnvironment.withSecurityRulesDisabled(async context => {
+      await updateDoc(doc(context.firestore(), privateEventPath), { lifecycleStatus, disposition });
+      await setDoc(doc(context.firestore(), path), { eventId:'security-test-event', lifecycleStatus:'completed', rows:[{ rank:1, teamName:'Syntetický tým', halfPoints:12 }] });
+    });
+  }
+  test('anonymous get only after explicit publication; private final sources remain inaccessible', async () => {
+    const db = testEnvironment.unauthenticatedContext().firestore();
+    await assertFails(getDoc(doc(db, path)));
+    await publish();
+    await assertSucceeds(getDoc(doc(db, path)));
+    await assertFails(getDocs(collection(db, 'publicEventResults')));
+    await assertFails(getDocs(query(collection(db, 'publicEventResults'), where('eventId', '==', 'security-test-event'))));
+    await assertFails(getDoc(doc(db, privateEventPath)));
+    await assertFails(getDoc(doc(db, 'sessions/security-test-session/finalVersions/' + 'a'.repeat(64))));
+  });
+  test('anonymous and fully privileged clients cannot write projections', async () => {
+    await publish();
+    for (const db of [testEnvironment.unauthenticatedContext().firestore(), testEnvironment.authenticatedContext('admin-user', { role:'admin', email_verified:true, auth_time:2000000000 }).firestore()]) {
+      await assertFails(setDoc(doc(db, path), { forged:true }));
+      await assertFails(updateDoc(doc(db, path), { rows:[] }));
+      await assertFails(deleteDoc(doc(db, path)));
+    }
+  });
+  test.each([['live', 'active'], ['cancelled', 'active'], ['completed', 'archived'], ['completed', 'trash'], ['completed', 'deleting']])('stale projection is inaccessible after %s/%s', async (status, disposition) => {
+    await publish(status, disposition);
+    await assertFails(getDoc(doc(testEnvironment.unauthenticatedContext().firestore(), path)));
+  });
+});

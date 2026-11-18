@@ -213,6 +213,26 @@ The server-only `events/{eventId}/registrationAbuse/{contactHash}` budget stores
 
 Implemented safe listing data: title, venue display/public location, start time/time zone, registration publication/status/window, team-size range, revision, and updated timestamp. Since the registration slice, `capacity.teams` and `capacity.people` each expose exact aggregate `accepted` and `maximum` counts; they do not identify individual teams or people. Quiz assignment/snapshot data, answers, organizer details, and contacts are excluded. Anonymous clients may read/query; all writes are server-only. The exact allowlist is covered by the public event projection test in `tests/events.test.ts`.
 
+### Explicit public completed-event results
+
+`publicEventResults/{eventId}` is a separate server-built, single-event allowlist.
+It contains only eventId, public title/date/time zone/venue/location, completed
+status and the whole confirmed final order of rank/teamName/halfPoints. Anonymous
+clients can get one explicitly published document; listing and every browser
+write are denied. It does not add historical events to the public event list.
+
+`configurePublicEventResults` requires fresh identity, current event.manage and
+scope on every transaction attempt, plus the current event revision. Publication
+is an explicit administrative action after completion, default absent for all
+existing events. It validates the ended canonical liveSessionId, event snapshot
+and immutable finalVersions document referenced by finalReveal.versionId. Mutable
+scores, draft previews, current reveal page, private IDs/contacts/answers and
+actor metadata never enter the projection. Dense shared places are preserved.
+Hide and lifecycle transitions remove the projection atomically; archival,
+trash/deletion and registration visibility hiding revoke it as well. Rules also
+reject a stale projection unless its authoritative event remains active and
+completed. No archive backfill or production activation is part of this source.
+
 ### `publicSessions/{sessionId}`
 
 Online publicSessions may include optional upcomingImages: at most nine owned
