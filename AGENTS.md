@@ -7,6 +7,13 @@
 - Testuj pouze lokálně s Firebase Emulator Suite, explicitním projektem `demo-*` a adresami emulátorů na loopbacku. Seed musí skončit před inicializací SDK, pokud tyto podmínky neplatí.
 - Nasazuj pouze z commitu na `main` se zeleným CI a až po výslovném souhlasu Davida s konkrétním nasazením v aktuální konverzaci. Přístup k produkčnímu Firebase, zápisy do cloudu a změny IAM vyžadují výslovný souhlas Davida.
 
+### Povinné ověření před testem
+
+- Před prvním testovacím zápisem nebo ovládáním aplikace ověř skutečný projekt `demo-*` a loopback adresy všech potřebných emulátorů. Název staging, doména, testovací název týmu ani přihlášení správce nejsou důkazem testovacího prostředí. Při nejasnosti test nespouštěj.
+- Vytvoření, změna i zrušení testovací registrace v produkci jsou produkční zápisy, také přes veřejný formulář nebo odkaz pro správu registrace. Mohou spustit skutečné e-maily. Platí pro ruční ovládání, browser automatizaci, Playwright, přímé SDK i HTTP volání.
+- Souhlas pouze se čtením produkce opravňuje k výslovně požadovanému čtení Firestore a Cloud Logging. Neopravňuje spouštět produkční Functions, ani pokud jejich název začíná `read`, `preview` nebo mají parametr `preflight`. Diagnózu reprodukuj na samostatných syntetických datech v demo emulátorech.
+- Nález testovacích dat v produkci není souhlas s jejich úklidem. Připrav přesný plán a vyžádej si schválení Davida pro konkrétní zápis; do té doby nic nemaž, neruš, neupravuj ani neposílej e-mail.
+
 ## Větve a předání
 
 - Jeden úkol = jedna krátká větev = jeden PR do `main`. Pracuj v hlavním checkoutu a chraň rozpracované změny.
