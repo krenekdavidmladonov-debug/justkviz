@@ -3,6 +3,27 @@ import { finalFixture } from './final-reveal-fixture.mjs';
 import { requireFullEmulatorEnvironment } from '../../tools/local-emulator-environment.mjs';
 
 requireFullEmulatorEnvironment(process.env, 'Moderator full event ending regression');
+// A live-only moderator may end the presentation without event management authority.
+const liveOnly = await finalFixture(4);
+try {
+  const before = await liveOnly.session();
+  const eventRef = liveOnly.db.doc('events/' + liveOnly.eventId);
+  const eventBefore = (await eventRef.get()).data();
+  const memberRef = liveOnly.db.doc('memberships/' + liveOnly.moderator.uid);
+  const member = (await memberRef.get()).data();
+  await memberRef.update({ permissions: ['event.live'], version: member.version + 1 });
+  const request = { sessionId: liveOnly.sessionId, expectedRevision: before.revision };
+  await assert.rejects(liveOnly.call('endLiveSession', { ...request, completeEvent: true }), error => error.code === 'functions/permission-denied');
+  assert.deepEqual((await eventRef.get()).data(), eventBefore);
+  assert.deepEqual(await liveOnly.session(), before);
+  const ended = await liveOnly.call('endLiveSession', request);
+  assert.equal(ended.status, 'ended');
+  assert.equal((await liveOnly.session()).status, 'ended');
+  assert.equal((await liveOnly.db.doc('publicSessions/' + liveOnly.sessionId).get()).get('status'), 'ended');
+  assert.deepEqual((await eventRef.get()).data(), eventBefore);
+  console.log('PASS: event.live-only moderator ends the quiz, cannot complete its event, and retains the event unchanged');
+} finally { await liveOnly.close(); }
+
 const f = await finalFixture(4);
 try {
   await f.startFinal(await f.previewFinal());

@@ -48,10 +48,7 @@ async function replace(f, suppliedPreview) {
   const preview = suppliedPreview ?? await f.previewFinal();
   return f.command('replace', { expectedRevision: preview.sessionRevision, versionId: preview.publishedVersionId, sourceFingerprint: preview.sourceFingerprint, presentationStyle: 'show' });
 }
-async function end(page, projector, fixture) {
-  // Full quiz completion requires the concrete event.manage permission as well as event.live.
-  const ref = fixture.db.doc('memberships/' + fixture.moderator.uid), member = (await ref.get()).data();
-  await ref.update({ permissions: [...new Set([...member.permissions, 'event.manage'])], version: member.version + 1 });
+async function end(page, projector) {
   await page.getByText('Další možnosti', { exact: true }).click(); page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: 'Ukončit kvíz', exact: true }).click(); await expect(projector.getByRole('heading', { name: 'Kvíz skončil', exact: true })).toBeVisible();
 }
@@ -104,7 +101,7 @@ test('three-round finale: current controls, referee correction, all public group
     await page.reload(); await expect(controls(page)).toBeVisible(); expect(await starts(page)).toBe(0);
     await step(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.mode).toBe('table');
     const seen = []; for (let p = 0; p < 3; p++) { if (p) await step(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.page).toBe(p); const raw = await f.rawPublic(); safeFinal(raw, preview.rows.slice(p * 6, (p + 1) * 6), 'table'); seen.push(...raw.finalReveal.rows); await expect(projector.locator('.sm-final-table .sm-row')).toHaveCount(raw.finalReveal.rows.length); }
-    expect(seen).toEqual(preview.rows); expect(await starts(page)).toBe(0); await end(page, projector, f); await projector.reload(); await expect(projector.getByRole('heading', { name: 'Kvíz skončil', exact: true })).toBeVisible(); expect((await f.rawPublic()).finalReveal).toBeUndefined();
+    expect(seen).toEqual(preview.rows); expect(await starts(page)).toBe(0); await end(page, projector); await projector.reload(); await expect(projector.getByRole('heading', { name: 'Kvíz skončil', exact: true })).toBeVisible(); expect((await f.rawPublic()).finalReveal).toBeUndefined();
   } finally { await refereeContext?.close(); await projection?.context.close(); await f.close(); }
 });
 
@@ -116,7 +113,7 @@ test('lost winner response: real backend retry acknowledges one receipt without 
     await step(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.rank).toBe(1); await expect(controls(page).getByRole('alert')).toBeVisible();
     const before = await f.rawPublic(), count = (await f.db.collection(`sessions/${f.sessionId}/finalOperations`).get()).size;
     await page.unroute('**/controlFinalReveal'); expect((await f.call('controlFinalReveal', command)).replayed).toBe(true);
-    expect(await f.rawPublic()).toEqual(before); expect((await f.db.collection(`sessions/${f.sessionId}/finalOperations`).get()).size).toBe(count); expect(await starts(page)).toBe(0); await end(page, projection.page, f);
+    expect(await f.rawPublic()).toEqual(before); expect((await f.db.collection(`sessions/${f.sessionId}/finalOperations`).get()).size).toBe(count); expect(await starts(page)).toBe(0); await end(page, projection.page);
   } finally { await projection?.context.close(); await f.close(); }
 });
 
@@ -168,7 +165,7 @@ test('current winner media fades, stops and restarts explicitly; table and END c
     await expect.poll(() => page.evaluate(() => window.__winnerPlayer.volumes.at(-1))).toBe(100); expect(await page.evaluate(() => window.__winnerPlayer.volumes[0])).toBe(0); expect(await page.evaluate(() => window.__winnerPlayer.startsAt[0])).toBe(30);
     expect(await starts(other)).toBe(0); expect(await starts(projection.page)).toBe(0); await page.getByRole('button', { name: 'Zastavit hudbu', exact: true }).click(); await expect.poll(() => page.evaluate(() => window.__winnerPlayer.stops)).toBe(1);
     await page.getByRole('button', { name: 'Spustit hudbu', exact: true }).click(); await expect.poll(() => starts(page)).toBe(2); await step(page).click(); await expect.poll(async () => (await f.rawPublic()).finalReveal.mode).toBe('table');
-    await end(page, projection.page, f); await expect.poll(() => page.evaluate(() => window.__winnerPlayer.active)).toBe(0); expect((await f.rawPublic()).finalReveal).toBeUndefined(); await page.reload(); expect(await starts(page)).toBe(0);
+    await end(page, projection.page); await expect.poll(() => page.evaluate(() => window.__winnerPlayer.active)).toBe(0); expect((await f.rawPublic()).finalReveal).toBeUndefined(); await page.reload(); expect(await starts(page)).toBe(0);
   } finally { await projection?.context.close(); await f.close(); }
 });
 

@@ -202,7 +202,7 @@ test('one authored event: quiz, immutable snapshot, public teams, scores, staged
     const confirmedVersion = (await publicState()).finalReveal.versionId;
     await page.getByText('Další možnosti', { exact: true }).click();
     page.once('dialog', dialog => dialog.accept());
-    await page.getByRole('button', { name: 'Ukončit kvíz', exact: true }).click();
+    await page.getByRole('button', { name: 'Dokončit akci a ukončit kvíz', exact: true }).click();
     await expect(publicPage.getByRole('heading', { name: 'Kvíz skončil', exact: true })).toBeVisible();
     await page.goto('/admin/events/' + eventId);
     await expect(page.getByRole('button', { name: 'Ukončit akci', exact: true })).toHaveCount(0);

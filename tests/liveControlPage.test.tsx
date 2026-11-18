@@ -9,6 +9,9 @@ import { LiveControlPage } from '../apps/web/src/routes/admin/LiveControlPage';
 import { subscribeLiveControl, subscribeLiveControlSlides } from '../apps/web/src/features/live/liveRepository';
 import type { LiveControlSlide, LiveControlState } from '../apps/web/src/features/live/types';
 
+const access = vi.hoisted(() => ({ manage: false }));
+vi.mock('../apps/web/src/auth/AuthProvider', () => ({ useAuth: () => ({ can: (permission: string) => permission === 'event.manage' && access.manage }) }));
+
 const invoke = vi.hoisted(() => vi.fn<(name: string, payload: Record<string, unknown>) => Promise<{ data: { revision: number } }>>());
 vi.mock('firebase/functions', () => ({ httpsCallable: (_functions: unknown, name: string) => (payload: Record<string, unknown>) => invoke(name, payload) }));
 vi.mock('../apps/web/src/services/firebase/client', () => ({ getFirebaseServices: () => ({ functions: {} }) }));
@@ -51,6 +54,7 @@ beforeEach(() => {
   host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
+  access.manage = false;
   records.set('A', session('A'));
   records.set('B', { ...session('B'), revision: 11 });
   vi.mocked(subscribeLiveControl).mockImplementation((id, value) => { value(records.get(id) ?? null); return () => {}; });
@@ -131,15 +135,36 @@ test('one click and one shortcut before React rerenders only dispatch one Next',
   expect(invoke).toHaveBeenCalledExactlyOnceWith('goToSlide', { sessionId: 'A', expectedRevision: 10, direction: 1 });
 });
 
-test('ending a bound quiz explicitly requests completion of its event', async () => {
+test('a standard moderator ends a bound quiz without completing its event', async () => {
   records.set('A', { ...session('A'), eventId: 'event-A', snapshotId: 'snapshot-A' });
   await mount();
   const end = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Ukončit kvíz')!;
   await act(async () => end.click());
-  expect(invoke).toHaveBeenCalledExactlyOnceWith('endLiveSession', { sessionId: 'A', expectedRevision: 10, completeEvent: true });
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('endLiveSession', { sessionId: 'A', expectedRevision: 10 });
+  expect(host.textContent).toContain('Akci dokončí správce');
+  expect(host.textContent).not.toContain('Dokončit akci a ukončit kvíz');
 });
 
 test('ending a standalone rehearsal keeps the existing presentation-only request', async () => {
+  await mount();
+  const end = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Ukončit kvíz')!;
+  await act(async () => end.click());
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('endLiveSession', { sessionId: 'A', expectedRevision: 10 });
+});
+
+test('event managers explicitly choose event completion separately from ending the quiz', async () => {
+  access.manage = true;
+  records.set('A', { ...session('A'), eventId: 'event-A', snapshotId: 'snapshot-A' });
+  await mount();
+  const complete = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Dokončit akci a ukončit kvíz')!;
+  expect(host.textContent).not.toContain('Akci dokončí správce');
+  await act(async () => complete.click());
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('endLiveSession', { sessionId: 'A', expectedRevision: 10, completeEvent: true });
+});
+
+test('event managers can still end only the quiz', async () => {
+  access.manage = true;
+  records.set('A', { ...session('A'), eventId: 'event-A', snapshotId: 'snapshot-A' });
   await mount();
   const end = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Ukončit kvíz')!;
   await act(async () => end.click());
