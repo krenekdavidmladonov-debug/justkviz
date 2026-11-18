@@ -7,8 +7,16 @@ import { expectedRevision, isObject, requiredId, requestedBoolean } from './vali
 const unavailable = () => new HttpsError('failed-precondition', 'Chybí potvrzené konečné výsledky dokončené akce.');
 const documentId = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 1500 && !value.includes('/');
 const hash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/u.test(value);
-function text(value: unknown, max: number): string {
-  if (typeof value !== 'string' || !value.trim() || value.length > max || /[\p{Cc}\p{Cf}]/u.test(value)) throw unavailable();
+function text(value: unknown, max: number, registrationName = false): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > max) throw unavailable();
+  // Match the authoritative writers without normalizing immutable confirmed text.
+  // Registrations additionally reject C1; event metadata permits U+0080..U+009F.
+  const unsafe = [...value].some(character => {
+    const point = character.codePointAt(0)!;
+    return point <= 0x1f || point === 0x7f || (registrationName && point >= 0x80 && point <= 0x9f)
+      || (point >= 0x202a && point <= 0x202e) || (point >= 0x2066 && point <= 0x2069);
+  });
+  if (unsafe) throw unavailable();
   return value;
 }
 
@@ -29,7 +37,7 @@ export function publicResultsProjection(eventId: string, event: Record<string, u
     if (halfPoints !== previousPoints) rank++;
     if (value.rank !== rank) throw unavailable();
     previousPoints = halfPoints;
-    return { rank, teamName: text(value.teamName, 80), halfPoints };
+    return { rank, teamName: text(value.teamName, 80, true), halfPoints };
   });
   if (!(event.startsAt instanceof Timestamp) || !isObject(event.venue)) throw unavailable();
   return {
