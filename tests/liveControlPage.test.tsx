@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
+vi.mock('../apps/web/src/features/events/eventWarmup', () => ({ warmEventFunctionsOnce: vi.fn(async () => ({ ready: [], failed: [] })) }));
 import { LiveControlPage } from '../apps/web/src/routes/admin/LiveControlPage';
 import { subscribeLiveControl, subscribeLiveControlSlides } from '../apps/web/src/features/live/liveRepository';
 import type { LiveControlSlide, LiveControlState } from '../apps/web/src/features/live/types';

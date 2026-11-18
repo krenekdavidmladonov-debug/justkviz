@@ -3,6 +3,7 @@ import { EmailAuthProvider, reauthenticateWithCredential } from 'firebase/auth';
 import { httpsCallable } from 'firebase/functions';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { warmEventFunctions } from './eventWarmup';
 import { useAuth } from '../../auth/AuthProvider';
 import { getFirebaseServices } from '../../services/firebase/client';
 import { privateRead } from '../access/api';
@@ -18,7 +19,7 @@ export const eventDate = (date: Date) => new Intl.DateTimeFormat('cs-CZ', { time
 export const lifecycleLabels = { draft: 'Koncept', scheduled: 'Naplánováno', ready: 'Připraveno', live: 'Probíhá', finalizing: 'Uzavírání', completed: 'Dokončeno', cancelled: 'Zrušeno', archived: 'Archivováno' };
 interface Inventory { counts: Record<string, number>; sessions: number; ownedSnapshots: number; storageObjects: number; progress: { state: string; deletedCount: number; phase: number; totalPhases: number; error: string | null; retainedSnapshots: number } | null }
 type Changed = (message: string, deleted?: boolean, updated?: EventRecord) => void | Promise<void>;
-export function EventActions({ event, onChanged }: { event: EventRecord; onChanged: Changed }) {
+export function EventActions({ event, onChanged, showWarmup = false }: { event: EventRecord; onChanged: Changed; showWarmup?: boolean }) {
   const { can } = useAuth();
   const [action, setAction] = useState<Action | null>(null);
   const disposition = eventDisposition(event);
@@ -28,6 +29,7 @@ export function EventActions({ event, onChanged }: { event: EventRecord; onChang
   const actions: Action[] = disposition === 'deleting' || disposition === 'trash' ? ['delete'] : disposition === 'archived' ? ['unarchive'] : [...(eventOperational(event) ? ['complete' as const] : []), event.lifecycleStatus === 'cancelled' ? 'prepare' : 'cancel', 'archive'];
   return <>
     <div className="event-quick-actions">
+    {showWarmup && disposition === 'active' && eventOperational(event) && can('event.live') && <EveningWarmup />}
     {disposition !== 'deleting' && <div className="event-quick-action"><button type="button" className={primary === 'trash' ? 'danger-button' : 'secondary-button'} disabled={Boolean(primaryReason)} aria-describedby={primaryReason ? reasonId : undefined} onClick={() => setAction(primary)}>{primary === 'trash' && <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg>}{primary === 'trash' ? 'Smazat' : 'Obnovit'}</button>{primaryReason && <small id={reasonId}>{primaryReason}</small>}</div>}
     <details className="event-actions"><summary aria-label={`Možnosti akce ${event.title}`}>Možnosti akce</summary><div className="event-action-menu">
       {disposition === 'active' && (can('event.manage') && eventOperational(event) ? <Link to={`/admin/events/${event.id}#event-edit`}>Upravit</Link> : <p>Úpravy nejsou dostupné: {can('event.manage') ? 'akce je uzavřená' : 'chybí právo správy'}.</p>)}
@@ -39,6 +41,27 @@ export function EventActions({ event, onChanged }: { event: EventRecord; onChang
     </div></details></div>
     {action && <ActionDialog key={action} event={event} action={action} onClose={() => setAction(null)} onChanged={onChanged} />}
   </>;
+}
+function EveningWarmup() {
+  const busy = useRef(false);
+  const [pending, setPending] = useState(false);
+  const [message, setMessage] = useState('');
+  const prepare = async () => {
+    if (busy.current) return;
+    busy.current = true; setPending(true); setMessage('');
+    try {
+      const result = await warmEventFunctions();
+      setMessage(result.failed.length === 0
+        ? 'Všech šest služeb večera odpovědělo. Můžete pokračovat.'
+        : `Odpovědělo ${result.ready.length} ze 6 služeb. Zkontrolujte připojení a zkuste přípravu znovu.`);
+    } catch {
+      setMessage('Příprava se nepodařila. Zkontrolujte připojení a zkuste to znovu.');
+    } finally { busy.current = false; setPending(false); }
+  };
+  return <div className="event-quick-action">
+    <button type="button" className="secondary-button" disabled={pending} aria-busy={pending} onClick={() => void prepare()}>{pending ? 'Připravuji večer…' : 'Připravit večer'}</button>
+    <small aria-live="polite">{pending ? 'Ověřuji spojení se službami večera…' : message || 'Krátká příprava spojení před moderováním.'}</small>
+  </div>;
 }
 function ActionDialog({ event: initial, action, onClose, onChanged }: { event: EventRecord; action: Action; onClose: () => void; onChanged: Changed }) {
   const { can, currentUser } = useAuth();

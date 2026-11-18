@@ -218,7 +218,7 @@ function EventDetail({ eventId }: { eventId: string | undefined }) {
       <header className="event-page-heading event-form-heading">
         <div><h1>{admin ? 'Upravit akci' : 'Detail akce'}</h1><p className="lead">{event.title} · {event.venue.name}</p></div>
         <span className={`quiz-status status-${event.lifecycleStatus}`}>{lifecycleLabels[event.lifecycleStatus]}</span>
-        <EventActions event={event} onChanged={async (message, deleted, updated) => {
+        <EventActions event={event} showWarmup onChanged={async (message, deleted, updated) => {
           if (!active.current) return;
           if (deleted) { await navigate('/admin/events'); return; }
           if (updated) { setEvent(updated); setValues(formValues(updated)); }
