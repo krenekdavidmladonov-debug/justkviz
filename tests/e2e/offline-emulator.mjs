@@ -56,7 +56,10 @@ try {
   assert.equal(preflightResponse.status, 200);
   assert.match(preflightResponse.headers.get('cache-control') ?? '', /no-store/u);
   const preflight = (await preflightResponse.json()).result;
-  assert.deepEqual(Object.keys(preflight).sort(), ['expiresAtMs', 'issues', 'mediaBytes', 'mediaCount', 'mediaCounts', 'snapshotId', 'teamCount']);
+  assert.deepEqual(Object.keys(preflight).sort(), ['expiresAtMs', 'issues', 'mediaBytes', 'mediaCount', 'mediaCounts', 'recommendations', 'snapshotId', 'teamCount']);
+  assert.deepEqual(preflight.recommendations.imageSources, []);
+  assert.deepEqual(preflight.recommendations.issues, []);
+  assert.equal(preflight.recommendations.media.offlineExcludedCount, 0);
   assert.equal(preflight.snapshotId, f.snapshotId);
   assert.equal(preflight.teamCount, 10);
   assert.equal(preflight.mediaCount, 0);

@@ -1,8 +1,12 @@
+import { useMemo, useSyncExternalStore } from 'react';
+import { collectPreflightMedia, runQuizPreflight, type EditorQuiz } from '@filmovy-kviz/quiz-domain';
+import { preflightImageWidths, subscribePreflightImageWidths } from './imageObservations';
+import { ImageResolutionCheck } from './ImageResolutionCheck';
 import { Link } from 'react-router-dom';
 
 import { questionTypeLabels } from '../editor/semanticModel';
 import type { PreflightFixTarget, PreflightIssue, PreflightResult } from './types';
-import { preflightFixUrl } from './validation';
+import { preflightVisibleQuiz, preflightFixUrl } from './validation';
 
 const categoryLabels = {
   STRUCTURE: 'Struktura',
@@ -31,15 +35,23 @@ function plural(count: number, one: string, few: string, many: string): string {
 
 export function QuizPreflightPanel({
   quizId,
-  result,
+  result: originalResult,
+  quiz: sourceQuiz,
+  answersReadable = false,
   onRecheck,
   onFix,
 }: {
   readonly quizId: string;
+  readonly quiz?: EditorQuiz;
+  readonly answersReadable?: boolean;
   readonly result: PreflightResult;
   readonly onRecheck?: () => void;
   readonly onFix?: (target: PreflightFixTarget) => void;
 }) {
+  const quiz = useMemo(() => sourceQuiz ? preflightVisibleQuiz(sourceQuiz, answersReadable) : undefined, [sourceQuiz, answersReadable]);
+  const widths = useSyncExternalStore(subscribePreflightImageWidths, preflightImageWidths);
+  const result = useMemo(() => quiz ? runQuizPreflight(quiz, { source: originalResult.source, hasUnsavedChanges: originalResult.issues.some(issue => issue.code === 'UNSAVED_CHANGES'), imageWidths: widths }) : originalResult, [quiz, originalResult, widths]);
+  const imageSources = useMemo(() => quiz ? collectPreflightMedia(quiz).filter(use => use.image).map(use => use.source) : [], [quiz]);
   // Unsaved work is distinct from the optional editorial recommendations.
   const hasUnsaved = result.issues.some(issue => issue.code === 'UNSAVED_CHANGES');
   const contentIssues = result.issues.filter(issue => issue.code !== 'UNSAVED_CHANGES');
@@ -99,6 +111,12 @@ export function QuizPreflightPanel({
         <div><dt>Doporučení</dt><dd>{result.warningCount}</dd></div>
       </dl>
 
+      {result.media && <div className="preflight-media-advisory">
+        <p>Rozpoznané odkazy mimo offline balíček: {result.media.offlineExcludedCount} médií: YouTube {result.media.youtubeCount}, Google Drive {result.media.driveCount}, ostatní externí odkazy {result.media.externalCount}. Počítáme různé zdroje, opakované použití jednou.</p>
+        <p>Obrázky pod 800 px na šířku: {result.media.smallImageCount}. Adresy obrázků s možnou nápovědou: {result.media.answerUrlCount}.</p>
+        <p>Vlastní média se ověří při offline přípravě; soubory uložené na Drive se neexportují. Kontrola žádné médium nenahrazuje a spuštění neblokuje.</p>
+        {quiz && <ImageResolutionCheck sources={imageSources} />}
+      </div>}
       {visibleCategories.length > 0 && (
         <ul className="preflight-category-list" aria-label="Souhrn oblastí">
           {visibleCategories.map(([category, count]) => (

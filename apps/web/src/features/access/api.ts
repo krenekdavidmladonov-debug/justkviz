@@ -1,3 +1,4 @@
+import { clearPreflightImageObservations } from '../preflight/imageObservations';
 import { Timestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { getFirebaseServices } from '../../services/firebase/client';
@@ -5,7 +6,7 @@ import { quizMediaBlobCache } from '../media/mediaBlobCache';
 
 let epoch = 0;
 const stops = new Set<() => void>();
-export function invalidatePrivateAccess() { epoch++; quizMediaBlobCache.clear(); stops.forEach(stop => stop()); stops.clear(); }
+export function invalidatePrivateAccess() { epoch++; quizMediaBlobCache.clear(); clearPreflightImageObservations(); stops.forEach(stop => stop()); stops.clear(); }
 function decode(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(decode);
   if (value && typeof value === 'object') {

@@ -1,4 +1,4 @@
-import type { EditorSlide } from './types.js';
+import type { PreflightMediaSummary, EditorSlide } from './types.js';
 import { canHideInfoSlide, type ResultTemplates } from './design.js';
 import { parseQuizAsset, validOwnedMedia } from './media-assets.js';
 export const offlineEventLimits = {
@@ -107,6 +107,13 @@ export interface OfflineIssue {
     readonly message: string;
 }
 export interface OfflineEventPreflight {
+    /** Advisory only; no grant, export or start eligibility is derived from this field. */
+    readonly recommendations?: {
+        readonly media: PreflightMediaSummary;
+        readonly issues: readonly OfflineIssue[];
+        /** Already-authorized presentation images for opt-in ordinary client loads. */
+        readonly imageSources: readonly string[];
+    };
     readonly snapshotId: string;
     readonly teamCount: number;
     readonly mediaCount: number;

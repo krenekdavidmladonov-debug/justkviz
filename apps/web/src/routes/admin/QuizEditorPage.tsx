@@ -903,6 +903,8 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
         <div className="editor-preflight-shell">
           {validationPending || preflightResult === null ? <p role="status">Aktualizuji připravenost podle rozepsaných změn…</p> : <QuizPreflightPanel
             quizId={quiz.id}
+            answersReadable={can('quiz.answers.read')}
+            quiz={checkedSnapshot?.quiz}
             result={preflightResult}
             onFix={openPreflightFix}
           />}

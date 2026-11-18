@@ -63,7 +63,8 @@ describe('guided preflight repair queue', () => {
     const result = runQuizPreflight(quiz);
     const queue = buildRepairQueue(quiz, result);
     expect(result.blockerCount).toBe(16);
-    expect(result.warningCount).toBe(3);
+    expect(result.warningCount).toBe(6);
+    expect(result.issues.filter(issue => issue.code === 'MEDIA_NOT_OFFLINE')).toHaveLength(3);
     expect(queue).toHaveLength(16);
     expect(queue.filter((item) => item.kind === 'choice-answer')).toHaveLength(15);
     expect(queue.filter((item) => item.kind === 'video-timing')).toHaveLength(1);
