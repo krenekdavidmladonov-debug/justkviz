@@ -176,6 +176,7 @@ export function mapPublicLiveState(id: string, data: DocumentData): PublicLiveSt
   if ((data.interimResults || data.finalReveal) && (data.status !== "active" || data.answerRevealed || data.mediaPlaybackState !== "idle" || data.revealedAnswer || data.recapQuestionPosition || data.mediaSource)) throw new Error("Unsafe result presentation.");
   if (data.finalReveal && data.interimResults) throw new Error("Conflicting result presentation.");
   const mapped: PublicLiveState = {
+    ...(data.upcomingImages === undefined ? {} : { upcomingImages: data.upcomingImages as string[] }),
     ...(data.mediaPlaybackMode === 'original' && data.answerRevealed === true && data.renderMode === 'recap' ? { mediaPlaybackMode: 'original' as const } : {}),
     ...(data.showCue === undefined ? {} : { showCue: parseShowCue(data.showCue) }),
     ...(data.interimBackdrop === undefined ? {} : { interimBackdrop: parseInterimBackdrop(data.interimBackdrop) }),
@@ -218,7 +219,7 @@ export function mapPublicLiveState(id: string, data: DocumentData): PublicLiveSt
   };
   // New result payloads are a strict public boundary; do not silently drop private
   // extras or normalize malformed server publications into apparently safe data.
-  if (data.mediaPlaybackMode !== undefined || data.interimResults !== undefined || data.finalReveal !== undefined || data.interimBackdrop !== undefined || data.showCue !== undefined) {
+  if (data.upcomingImages !== undefined || data.mediaPlaybackMode !== undefined || data.interimResults !== undefined || data.finalReveal !== undefined || data.interimBackdrop !== undefined || data.showCue !== undefined) {
     const raw = { ...data }; delete raw.updatedAt;
     if (raw.sessionId !== undefined && raw.sessionId !== id) throw new Error('Invalid public session identity.');
     const parsed = parsePublicLiveState({ ...mapped, ...raw, sessionId: id });

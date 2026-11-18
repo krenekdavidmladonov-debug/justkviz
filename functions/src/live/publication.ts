@@ -1,5 +1,5 @@
 import { LiveSessionError } from './errors.js';
-import { originalYoutubeSource, resolveSlideDesign, normalizeResultTemplates, canHideInfoSlide, type ResultTemplate } from '@filmovy-kviz/quiz-domain';
+import { mapEditorSlide, parseQuizAsset, originalYoutubeSource, resolveLegacySlideAppearance, resolveSlideDesign, normalizeResultTemplates, canHideInfoSlide, type ResultTemplate } from '@filmovy-kviz/quiz-domain';
 import type {
   LiveRenderMode,
   PrivateLiveSession,
@@ -176,6 +176,9 @@ export function buildPublicSessionState(session: PrivateLiveSession, slide?: Pri
     throw new LiveSessionError('failed-precondition', 'Active session slide is unavailable.');
   }
   if (slide.hidden === true && canHideInfoSlide(slide)) throw new LiveSessionError('failed-precondition', 'Hidden information slide cannot be published.');
+  const upcomingImages = session.presentationMode === 'slide' && !session.answerRevealed && !session.interimResults && !session.finalReveal?.visible
+    && Array.isArray(slide.upcomingImages) && slide.upcomingImages.length > 0 && slide.upcomingImages.length <= 9
+    && slide.upcomingImages.every(reference => parseQuizAsset(reference)?.quizId === session.quizId) ? slide.upcomingImages : undefined;
   const allowAudioVideo = session.presentationMode === 'recap' || isVideoKind(slide.kind);
   const classified = normalizedMedia(slide);
   const presentation = isObject(slide.presentation) ? slide.presentation : {};
@@ -203,6 +206,7 @@ export function buildPublicSessionState(session: PrivateLiveSession, slide?: Pri
     ...(classified.questionImage === undefined ? {} : { questionImage: classified.questionImage }),
     ...(!allowAudioVideo || classified.mediaSource === undefined ? {} : { mediaSource: classified.mediaSource }),
     ...(backgroundOverlay === undefined ? {} : { backgroundOverlay: Math.min(100, backgroundOverlay) }),
+    ...(upcomingImages === undefined ? {} : { upcomingImages }),
     clipStartSeconds,
     ...(clipEndSeconds !== undefined && clipEndSeconds > clipStartSeconds ? { clipEndSeconds } : {}),
     ...(session.presentationMode === 'recap' && session.recapQuestionPosition !== undefined
@@ -224,4 +228,35 @@ export function buildPublicSessionState(session: PrivateLiveSession, slide?: Pri
     ...(publicText(slide.answerExplanation) === undefined ? {} : { answerExplanation: publicText(slide.answerExplanation) }),
     ...(classified.answerImage === undefined ? {} : { answerImage: classified.answerImage }),
   };
+}
+
+/** Public lookahead contains only owned prompt images, never answer-role/shared assets. */
+export function promptImagePlan(quizId: string, root: Record<string, unknown>, sources: readonly { id: string; data: Record<string, unknown> }[]): readonly { position: number; images: readonly string[] }[] {
+  if (sources.length > 400) return [];
+  const slides = sources.map(item => mapEditorSlide(item.id, item.data));
+  const answers = new Set<string>();
+  for (const slide of slides) {
+    for (const reference of [slide.answerImage, slide.answerDesign?.backgroundImage, slide.answerDesign?.logoImage,
+      ...slide.media.filter(media => media.role === 'answer').map(media => media.source)]) {
+      if (typeof reference === 'string') answers.add(reference);
+    }
+  }
+  const result: { position: number; images: readonly string[] }[] = [];
+  for (const slide of slides.filter(item => !(item.hidden && canHideInfoSlide(item))).sort((a, b) => a.position - b.position)) {
+    const images = new Set<string>();
+    const round = slides.find(item => item.roundId === slide.roundId && ['round', 'roundheader', 'round-header', 'section'].includes(item.kind))
+      ?? slides.find(item => item.roundId === slide.roundId && item.kind === 'intro' && !item.isQuestion);
+    const design = resolveSlideDesign(root.defaultDesign, round?.design, slide.design);
+    for (const reference of [isImageKind(slide.kind) ? slide.questionImage : undefined,
+      design.backgroundImage ?? resolveLegacySlideAppearance(root.defaultAppearance, slide).backgroundImage,
+      design.showLogo === false ? undefined : design.logoImage]) {
+      if (typeof reference === 'string' && parseQuizAsset(reference)?.quizId === quizId && !answers.has(reference)) images.add(reference);
+    }
+    result.push({ position: slide.position, images: [...images] });
+  }
+  return result;
+}
+
+export function upcomingPromptImages(quizId: string, root: Record<string, unknown>, sources: readonly { id: string; data: Record<string, unknown> }[], position: number): readonly string[] {
+  return [...new Set(promptImagePlan(quizId, root, sources).filter(slide => slide.position > position).slice(0, 3).flatMap(slide => slide.images))].slice(0, 9);
 }

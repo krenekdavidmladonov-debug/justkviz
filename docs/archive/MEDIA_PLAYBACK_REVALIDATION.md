@@ -12,9 +12,20 @@ Unmounting or changing the source releases the player, object URL and request.
 The browser keeps a bounded, memory-only blob cache (64 MiB, 24 entries, five
 minutes). Keys include the complete media URL and the private ID token or public
 session scope. Private access invalidation clears retained and pending entries.
-Every new read requires a successful server response; a retained blob is reused
-only after HTTP 304. Errors never fall back to cached bytes. No service worker,
-disk cache or public prefetch of future questions/answers is introduced.
+Owned images additionally use private browser HTTP caching for an exact representation
+hash (asset reference, immutable Storage/Drive generation, MIME and size). Discovery
+URLs are no-store and redirect to a pinned image URL. Only successfully authorized
+pinned image responses receive private,max-age=31536000,immutable; errors, clips,
+ranges and offline exports remain no-store. ETag/304 remains available on network
+revalidation. The URL also contains an unpredictable in-memory access namespace,
+separate for each private ID token or public session. Identity/membership epoch
+invalidation aborts pending memory reads and rotates namespaces on the next read.
+Authorization and Origin vary the HTTP cache representation. No credential enters
+URLs. Previously downloaded browser-cache bytes cannot be remotely erased; logout
+prevents this application from reusing the old namespace but is not a promise to
+recall bytes already delivered. Every request that reaches the server still passes
+current authorization before and after media IO. Errors never fall back to retained
+memory bytes. No service worker is introduced.
 
 Private editor/rehearsal lookahead uses the same snapshot binding as visible
 reads and cancels when that binding changes. Live moderators also prefetch at
@@ -23,7 +34,17 @@ answer media and audio/video clips are excluded. Moderator previews retain the
 public session gate, avoiding private snapshot scans on their visible path.
 Original web URLs use the native browser image cache. For retained owned assets,
 lookahead can warm server bytes on the same instance; it cannot guarantee a
-shared instance. Projectors receive no future media.
+shared instance. Projectors now prefetch only a server-built allowlist for the next
+three visible prompt slides (at most nine owned image references). No answer field,
+private source document, external URL or clip is published for lookahead. Any image
+also used in answerImage, mapped legacy answer-role media or answerDesign anywhere
+in the source is excluded. Public gateway reads require exact current publication
+or this bounded prompt allowlist. Results, recap and ended/waiting sessions omit it.
+The first active navigation and return from results rebuild it. Immutable snapshot
+prompt plans are process-local, bounded to eight snapshots and five minutes; they
+contain positions/image references only, never authority. Later media lifecycle
+reports reuse the plan without rereading up to 400 slides. Mutable quiz plans are
+not cached. All session/event authorization remains fresh in their callers.
 
 `readQuizMedia` emits a content ETag derived from the asset reference, immutable
 generation, MIME and size. Conditional requests retain current reader/publication
@@ -31,8 +52,8 @@ authorization both before and after IO. Drive revalidation checks the live owner
 connection, account, folder and file permissions through the existing runtime;
 only the byte download is skipped. Storage revalidation checks the pinned object
 generation still exists. Range requests continue through the normal verified
-byte path. Responses remain `Cache-Control: no-store`; ETag is exposed through
-CORS only for the bounded application cache.
+byte path. Unpinned/clip/offline responses remain `Cache-Control: no-store`; pinned image
+responses use the private cache policy above. ETag is exposed through CORS.
 
 Drive checkpoints fetch current Auth state alongside one transactional batch of
 membership, source quiz and connection records. Current account and configured

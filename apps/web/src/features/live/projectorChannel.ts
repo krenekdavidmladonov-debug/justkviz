@@ -35,6 +35,7 @@ export interface ProjectorChannel {
 export type ProjectorPresentationAuthority = 'fast-path-safe' | 'authoritative-only';
 
 const stateKeys = new Set([
+  'upcomingImages',
   'sessionId', 'quizTitle', 'status', 'slidePosition', 'slideKind', 'title', 'text', 'options', 'media',
   'presentation', 'presentationMode', 'renderMode', 'mediaCommand', 'mediaPlaybackState', 'mediaGeneration',
   'introGeneration', 'questionNumber', 'questionCount', 'backgroundImage', 'questionImage', 'mediaSource',
@@ -107,6 +108,8 @@ function playbackSemantics(command: PublicLiveState['mediaCommand'], state: Medi
 export function parsePublicLiveState(value: unknown): PublicLiveState | undefined {
   const data = object(value);
   if (data === undefined || !hasOnlyKeys(data, stateKeys)) return undefined;
+  if (data.upcomingImages !== undefined && (data.status !== 'active' || data.presentationMode !== 'slide' || data.answerRevealed === true || data.interimResults !== undefined || data.finalReveal !== undefined || !Array.isArray(data.upcomingImages) || data.upcomingImages.length > 9
+    || !data.upcomingImages.every(reference => typeof reference === 'string' && /^quiz-asset:[A-Za-z0-9_-]{1,150}\/[a-f0-9]{64}$/u.test(reference)))) return undefined;
   let additions: Pick<PublicLiveState, 'design' | 'showCue' | 'interimBackdrop' | 'interimResults' | 'finalReveal'>;
   try {
     let design: SlideDesign | undefined;
@@ -181,6 +184,7 @@ export function parsePublicLiveState(value: unknown): PublicLiveState | undefine
 
   return {
     ...additions,
+    ...(data.upcomingImages === undefined ? {} : { upcomingImages: data.upcomingImages as string[] }),
     ...(data.mediaPlaybackMode === 'original' ? { mediaPlaybackMode: 'original' as const } : {}),
     ...(data.roundTitle === undefined ? {} : { roundTitle: data.roundTitle as string }),
     ...(data.subtitle === undefined ? {} : { subtitle: data.subtitle as string }),
@@ -220,6 +224,7 @@ export function parsePublicLiveState(value: unknown): PublicLiveState | undefine
 
 export function sanitizedChannelState(state: PublicLiveState): PublicLiveState {
   const candidate = {
+    ...(state.upcomingImages === undefined ? {} : { upcomingImages: state.upcomingImages }),
     ...(state.mediaPlaybackMode === undefined ? {} : { mediaPlaybackMode: state.mediaPlaybackMode }),
     ...(state.design === undefined ? {} : { design: state.design }),
     ...(state.roundTitle === undefined ? {} : { roundTitle: state.roundTitle }),

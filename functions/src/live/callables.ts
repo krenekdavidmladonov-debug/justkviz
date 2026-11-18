@@ -1,3 +1,4 @@
+import { loadSlidePromptImages } from './upcoming-images.js';
 import { assertPlayableQuizSource } from '../quizzes/playable.js';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp, type DocumentSnapshot, type Transaction } from 'firebase-admin/firestore';
@@ -343,6 +344,7 @@ async function mutateSession(request: CallableRequest<unknown>, kind: MutationKi
         slide = await loadSlide(transaction, session.quizId, position, session.snapshotId);
         action = kind === 'play-media' ? { type: kind, ...(mode === undefined ? {} : { mode }) } : { type: kind };
       }
+      if (slide) slide = { ...slide, upcomingImages: await loadSlidePromptImages(db, transaction, session, slide.position) };
       const { interimResults, ...presentationSession } = session; void interimResults;
       const now = Timestamp.now();
       const updated = applyLiveSessionAction(presentationSession, action, revision, actor.uid, now, slide);
@@ -381,7 +383,8 @@ export const reportMediaPlayback = securedOnCall('reportMediaPlayback', callable
       }
       const position = session.presentationMode === 'recap' ? session.recapQuestionPosition : session.currentSlidePosition;
       if (position === undefined || position < 1) throw new LiveSessionError('failed-precondition', 'There is no active presentation slide.');
-      const slide = await loadSlide(transaction, session.quizId, position, session.snapshotId);
+      const slide = { ...await loadSlide(transaction, session.quizId, position, session.snapshotId),
+        upcomingImages: await loadSlidePromptImages(db, transaction, session, position) };
       if (!['audio', 'music', 'video', 'youtube'].includes(slide.kind.toLowerCase())) {
         throw new LiveSessionError('failed-precondition', 'The active slide has no playable media.');
       }

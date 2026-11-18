@@ -6,7 +6,7 @@ import { MediaPlayer } from '../apps/web/src/features/presentation/MediaPlayer';
 import { AssetImage } from '../apps/web/src/features/media/AssetImage';
 import { readQuizMediaBlob } from '../apps/web/src/features/media/mediaApi';
 import { mapEditorQuiz, mapEditorSlide, type EditorQuiz } from '../packages/quiz-domain/src/index';
-import { nextPrivateLiveMediaReferences, nextPrivateMediaReferences, usePrivateMediaPrefetch } from '../apps/web/src/features/media/usePrivateMediaPrefetch';
+import { nextPrivateLiveMediaReferences, nextPrivateMediaReferences, usePrivateMediaPrefetch, usePublicMediaPrefetch } from '../apps/web/src/features/media/usePrivateMediaPrefetch';
 import { mapLiveControlSlide } from '../apps/web/src/features/live/liveMappers';
 import { quizMediaBlobCache } from '../apps/web/src/features/media/mediaBlobCache';
 import { SlideRenderer } from '../apps/web/src/features/presentation/SlideRenderer';
@@ -209,6 +209,31 @@ function Prefetch({ quiz, enabled = true }: { quiz: EditorQuiz; enabled?: boolea
   usePrivateMediaPrefetch(quiz, 'current', enabled, 'synthetic-member:1');
   return null;
 }
+function PublicPrefetch({ enabled }: { enabled: boolean }) {
+  usePublicMediaPrefetch('public-prefetch-session', [source, nextSource, 'quiz-asset:quiz-1/' + 'c'.repeat(64)], enabled);
+  return null;
+}
+
+test('projector lookahead requests only the public session gate, waits for visible reads and cancels on authority loss', async () => {
+  vi.useFakeTimers();
+  let visibleReady!: () => void;
+  vi.spyOn(quizMediaBlobCache, 'waitForPendingReads').mockImplementation(() => new Promise<void>(resolve => { visibleReady = resolve; }));
+  let finish!: (blob: Blob) => void;
+  vi.mocked(readQuizMediaBlob).mockImplementation(() => new Promise<Blob>(resolve => { finish = resolve; }));
+  await act(async () => root.render(<PublicPrefetch enabled />));
+  await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+  expect(readQuizMediaBlob).not.toHaveBeenCalled();
+  await act(async () => visibleReady());
+  expect(vi.mocked(readQuizMediaBlob).mock.calls[0]).toEqual([source, expect.any(AbortSignal), 'public-prefetch-session']);
+  await act(async () => finish(new Blob(['first'])));
+  expect(vi.mocked(readQuizMediaBlob).mock.calls[1]![0]).toBe(nextSource);
+  const signal = vi.mocked(readQuizMediaBlob).mock.calls[1]![1];
+  await act(async () => root.render(<PublicPrefetch enabled={false} />));
+  expect(signal.aborted).toBe(true);
+  await act(async () => finish(new Blob(['late'])));
+  expect(readQuizMediaBlob).toHaveBeenCalledTimes(2);
+});
+
 test('private lookahead selects at most two prompt assets, excludes answer/original/foreign sources and current background', () => {
   const quiz = prefetchQuiz();
   expect(nextPrivateMediaReferences(quiz, 'current')).toEqual([nextSource, 'quiz-asset:quiz-1/' + 'c'.repeat(64)]);

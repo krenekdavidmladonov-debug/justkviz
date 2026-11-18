@@ -156,6 +156,30 @@ function expectNoPrivateFields(value: unknown): void {
 }
 
 describe('live-session publication security', () => {
+  test('public lookahead mapping accepts bounded owned references and rejects malformed, waiting, ended and recap payloads', () => {
+    const reference = 'quiz-asset:quiz-1/' + 'a'.repeat(64);
+    const published = { ...buildPublicSessionState(session(), questionSlide()), upcomingImages: [reference] };
+    expect(mapPublicLiveState(published.sessionId, published).upcomingImages).toEqual([reference]);
+    expect(sanitizedChannelState(mapPublicLiveState(published.sessionId, published)).upcomingImages).toEqual([reference]);
+    for (const unsafe of [{ upcomingImages: ['https://example.test/private.png'] }, { upcomingImages: Array(10).fill(reference) },
+      { upcomingImages: 'private' }, { status: 'waiting' }, { status: 'ended' }, { presentationMode: 'recap' }]) {
+      expect(() => mapPublicLiveState(published.sessionId, { ...published, ...unsafe })).toThrow();
+    }
+  });
+
+  test('derived lookahead is published only for the resulting active ordinary unrevealed session', () => {
+    const reference = 'quiz-asset:' + session().quizId + '/' + 'a'.repeat(64);
+    const source = { ...questionSlide(), upcomingImages: [reference] };
+    expect(buildPublicSessionState(session(), source).upcomingImages).toEqual([reference]);
+    for (const current of [session({ status: 'waiting' }), session({ status: 'ended' }), session({ answerRevealed: true }),
+      session({ presentationMode: 'recap', recapQuestionPosition: 1 }), session({ interimResults: {} as NonNullable<PrivateLiveSession['interimResults']> }),
+      session({ finalReveal: { visible: true } as NonNullable<PrivateLiveSession['finalReveal']> })]) {
+      expect(buildPublicSessionState(current, source).upcomingImages).toBeUndefined();
+    }
+    expect(buildPublicSessionState(session(), { ...source, upcomingImages: Array(10).fill(reference) as string[] }).upcomingImages).toBeUndefined();
+    expect(buildPublicSessionState(session(), { ...source, upcomingImages: ['quiz-asset:foreign/' + 'a'.repeat(64)] }).upcomingImages).toBeUndefined();
+  });
+
   test('legacy video URL matches the editor without reviving explicitly detached media', () => {
     const url = 'https://example.test/archived-video.mp4';
     const slide = { ...questionSlide(), kind: 'video', media: [], mediaSource: { url, private: 'RAW_PRIVATE_SENTINEL' } };

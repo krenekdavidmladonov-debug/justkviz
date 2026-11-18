@@ -215,6 +215,15 @@ Implemented safe listing data: title, venue display/public location, start time/
 
 ### `publicSessions/{sessionId}`
 
+Online publicSessions may include optional upcomingImages: at most nine owned
+image references for the next three visible prompt slides. This server-derived
+allowlist contains no source documents, answers, external URLs or clips, and
+excludes every reference also used in answer media/design anywhere in the source.
+Reveal/recap, result pages, waiting and ended publications omit it. It grants only
+exact image reads through the current-publication gateway, not private quiz access.
+No persistent asset identifier or collection path changes. HTTP image cache URLs
+add an access namespace and a representation hash, without changing stored media.
+
 Show Mode adds optional `presentationStyle` and `pageSize` to confirmed result
 versions and their private pointers: show/6 or classic/8. Public show payloads
 carry explicit show/6; classic public payloads omit both fields to preserve old

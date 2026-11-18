@@ -1,3 +1,4 @@
+import { loadUpcomingImages } from '../live/upcoming-images.js';
 import { getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { securedOnCall, runAccessTransaction } from '../access/authorization.js';
@@ -89,12 +90,13 @@ export const controlFinalReveal = securedOnCall('controlFinalReveal', options, a
     const updated = { ...(reset ? applyLiveSessionAction(clean, { type: 'go-to-slide', position: session.currentSlidePosition, slideId: slide.id }, expected, uid, now, slide)
       : { ...clean, revision: expected + 1, updatedBy: uid, updatedAt: now }), finalReveal: state };
     const finalUpdated = { ...updated, ...(cue ? { showCue: cue } : {}) };
+    const upcomingImages = state.visible ? [] : await loadUpcomingImages(db, tx, updated);
     const publicState = state.visible ? {
       ...buildPublicSessionState({ ...updated, status: 'waiting', presentationMode: 'slide', answerRevealed: false }), status: 'active',
       ...publicResultTemplate((await tx.get(db.doc('quizSnapshots/' + session.snapshotId))).data() ?? {}, 'final'),
       finalReveal: publicFinalPage(state, rows),
       ...(cue ? { showCue: cue } : {}),
-    } : buildPublicSessionState(updated, slide);
+    } : { ...buildPublicSessionState(updated, slide), ...(upcomingImages.length ? { upcomingImages } : {}) };
     const response: FinalResponse = { sessionId, versionId: state.versionId, revision: updated.revision, winnerRevealed: action === 'reveal' && state.rank === 1, replayed: false, ...(cue ? { showCue: cue } : {}) };
     if (publication) tx.create(ref.collection('finalVersions').doc(operationId), publication);
     tx.set(ref, finalUpdated);

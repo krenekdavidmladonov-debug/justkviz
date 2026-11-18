@@ -75,6 +75,15 @@ Public browser ───── public reads / validated call> public events / Cl
 
 Sensitive state transitions—quiz editing, team registration, quiz publication, live-state changes, answer reveal, role management, and result finalization—belong in Functions. The implemented editor and live-session callables use Firestore transactions and explicit optimistic revisions. The server derives authoritative fields such as timestamps, counters, ordering, revisions, derived round/question records, and public projection payloads.
 
+Owned image reads discover a representation hash through the authorized gateway,
+then use a private immutable HTTP cache URL scoped to one in-memory access epoch.
+Projector lookahead receives only up to nine owned prompt image references from
+the next three visible slides; globally answer-associated images are excluded.
+The gateway authorizes the exact current publication/lookahead before and after
+network IO. Previously delivered HTTP cache bytes cannot be remotely recalled.
+Derived immutable snapshot prompt plans have a bounded process cache; access
+permissions and current session authority are never cached there.
+
 ## Frontend modules
 
 An explicitly entered offline event runtime is separate from the online Firebase-authoritative routes. It uses one scoped, time-bounded signed snapshot export, encrypted local persistence and an independently saved file. A pinned local projector receives only the current public allowlist. Reconnection uses a fresh authorized, baseline-checked atomic journal import rather than Firestore persistence. The candidate protocol and acceptance status are in [OFFLINE_MODE.md](archive/OFFLINE_MODE.md).
