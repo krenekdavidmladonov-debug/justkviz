@@ -55,3 +55,18 @@ describe('local emulator command environment', () => {
     expect(production.stderr).toContain('requires a demo-* project ID');
   });
 });
+
+import { emulatorEndpoint } from '../apps/web/src/services/firebase/emulatorEndpoint';
+
+test('browser emulator endpoints preserve custom ports and fail closed for non-demo or non-loopback targets', () => {
+  expect(emulatorEndpoint('demo-isolation', 'FUNCTIONS', {})).toEqual({ host: '127.0.0.1', port: 5001, origin: 'http://127.0.0.1:5001' });
+  expect(emulatorEndpoint('demo-isolation', 'AUTH', { VITE_FIREBASE_EMULATOR_HOST: 'localhost', VITE_FIREBASE_AUTH_EMULATOR_PORT: '9299' }))
+    .toEqual({ host: 'localhost', port: 9299, origin: 'http://localhost:9299' });
+  for (const project of [undefined, 'filmovy-kviz-v2-staging']) expect(() => emulatorEndpoint(project, 'STORAGE', {})).toThrow();
+  for (const host of ['example.test', '127.0.0.1.example.test', 'http://localhost', '0.0.0.0', 'localhost/path']) {
+    expect(() => emulatorEndpoint('demo-isolation', 'STORAGE', { VITE_FIREBASE_EMULATOR_HOST: host })).toThrow();
+  }
+  for (const port of ['', '0', '-1', '65536', '1.5', '5e3', ' 5001', '5001/path']) {
+    expect(() => emulatorEndpoint('demo-isolation', 'FUNCTIONS', { VITE_FIREBASE_FUNCTIONS_EMULATOR_PORT: port })).toThrow();
+  }
+});

@@ -1,3 +1,4 @@
+import { emulatorEndpoint } from './emulatorEndpoint';
 import { connectAuthEmulator, getAuth, type Auth } from 'firebase/auth';
 
 import { getFirebaseAppContext } from './app';
@@ -13,7 +14,7 @@ export function getFirebaseAuth(): Auth {
   const auth = getAuth(app);
 
   if (config.useEmulators) {
-    connectAuthEmulator(auth, 'http://127.0.0.1:9099', { disableWarnings: true });
+    connectAuthEmulator(auth, emulatorEndpoint(config.options.projectId, 'AUTH').origin, { disableWarnings: true });
   }
 
   authService = auth;
