@@ -9,6 +9,11 @@ const maximumSnapshots = 8, maximumAgeMs = 5 * 60 * 1000;
 /** Caches derived immutable prompt structure only. Callers still authorize the current session/event. */
 export async function loadUpcomingImages(db: Firestore, transaction: Transaction, session: PrivateLiveSession): Promise<readonly string[]> {
   if (session.status !== 'active' || session.presentationMode !== 'slide' || session.answerRevealed || session.interimResults || session.finalReveal?.visible) return [];
+  return loadSlidePromptImages(db, transaction, session, session.currentSlidePosition);
+}
+
+/** Derived bytes-free prompt references for a candidate slide; publication still checks the resulting authoritative session. */
+export async function loadSlidePromptImages(db: Firestore, transaction: Transaction, session: Pick<PrivateLiveSession, 'quizId' | 'snapshotId'>, position: number): Promise<readonly string[]> {
   const now = Date.now();
   for (const [key, item] of snapshots) if (now - item.storedAt >= maximumAgeMs) snapshots.delete(key);
   const key = session.snapshotId ? session.quizId + ':' + session.snapshotId : undefined;
@@ -24,5 +29,5 @@ export async function loadUpcomingImages(db: Firestore, transaction: Transaction
       while (snapshots.size > maximumSnapshots) snapshots.delete(snapshots.keys().next().value!);
     }
   }
-  return [...new Set(plan.filter(slide => slide.position > session.currentSlidePosition).slice(0, 3).flatMap(slide => slide.images))].slice(0, 9);
+  return [...new Set(plan.filter(slide => slide.position > position).slice(0, 3).flatMap(slide => slide.images))].slice(0, 9);
 }

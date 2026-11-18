@@ -176,6 +176,9 @@ export function buildPublicSessionState(session: PrivateLiveSession, slide?: Pri
     throw new LiveSessionError('failed-precondition', 'Active session slide is unavailable.');
   }
   if (slide.hidden === true && canHideInfoSlide(slide)) throw new LiveSessionError('failed-precondition', 'Hidden information slide cannot be published.');
+  const upcomingImages = session.presentationMode === 'slide' && !session.answerRevealed && !session.interimResults && !session.finalReveal?.visible
+    && Array.isArray(slide.upcomingImages) && slide.upcomingImages.length > 0 && slide.upcomingImages.length <= 9
+    && slide.upcomingImages.every(reference => parseQuizAsset(reference)?.quizId === session.quizId) ? slide.upcomingImages : undefined;
   const allowAudioVideo = session.presentationMode === 'recap' || isVideoKind(slide.kind);
   const classified = normalizedMedia(slide);
   const presentation = isObject(slide.presentation) ? slide.presentation : {};
@@ -203,6 +206,7 @@ export function buildPublicSessionState(session: PrivateLiveSession, slide?: Pri
     ...(classified.questionImage === undefined ? {} : { questionImage: classified.questionImage }),
     ...(!allowAudioVideo || classified.mediaSource === undefined ? {} : { mediaSource: classified.mediaSource }),
     ...(backgroundOverlay === undefined ? {} : { backgroundOverlay: Math.min(100, backgroundOverlay) }),
+    ...(upcomingImages === undefined ? {} : { upcomingImages }),
     clipStartSeconds,
     ...(clipEndSeconds !== undefined && clipEndSeconds > clipStartSeconds ? { clipEndSeconds } : {}),
     ...(session.presentationMode === 'recap' && session.recapQuestionPosition !== undefined
