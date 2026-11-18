@@ -383,5 +383,64 @@
 .slide-renderer.fixed-photo-question .fixed-photo-copy .slide-answer img,
 .slide-renderer.layout-photo-only .full-slide-photo .question-image-frame img { object-fit: contain; }
 
+/* Recap with a revealed answer picture: the answer (text + picture) is the main thing on the slide,
+   the original question stays smaller on the left for context. */
+.slide-renderer.answer-focus { --photo-fit: 1; }
+.slide-renderer.answer-focus .answer-focus-grid {
+  grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 1.1cqi 3cqi;
+  align-content: stretch;
+  justify-items: stretch;
+}
+.slide-renderer.answer-focus .answer-focus-grid:not(:has(> .slide-question-label)) { grid-template-rows: minmax(0, 1fr); }
+.slide-renderer.answer-focus .answer-focus-grid > .slide-question-label { grid-area: 1 / 1; justify-content: start; }
+.slide-renderer.answer-focus .answer-focus-copy {
+  grid-area: -2 / 1 / -1 / 2;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: safe center;
+  gap: calc(1.6cqi * var(--photo-fit));
+  overflow: hidden;
+  text-align: left;
+}
+.slide-renderer.answer-focus .answer-focus-copy > * { flex: 0 0 auto; }
+.slide-renderer.answer-focus .answer-focus-copy .slide-copy { max-width: none; width: 100%; gap: calc(.6cqi * var(--photo-fit)); opacity: .82; }
+.slide-renderer.answer-focus .answer-focus-copy .slide-copy h1 { font-size: calc(2.2cqi * var(--slide-scale) * var(--photo-fit)); line-height: 1.18; text-wrap: pretty; }
+.slide-renderer.answer-focus .answer-focus-copy .slide-copy p { font-size: calc(1.6cqi * var(--slide-scale) * var(--photo-fit)); line-height: 1.3; text-wrap: pretty; }
+.slide-renderer.answer-focus .answer-focus-copy .slide-answer { gap: calc(.9cqi * var(--photo-fit)); padding-block: calc(.6cqi * var(--photo-fit)); align-content: start; }
+.slide-renderer.answer-focus .answer-focus-copy .slide-answer > span { font-size: calc(1.2cqi * var(--slide-scale)); }
+.slide-renderer.answer-focus .answer-focus-copy .slide-answer-value > strong { font-size: calc(3.8cqi * var(--slide-scale) * var(--photo-fit)); line-height: 1.1; text-wrap: balance; }
+.slide-renderer.answer-focus .answer-focus-copy .slide-answer-letter { font-size: calc(2.6cqi * var(--slide-scale) * var(--photo-fit)); }
+.slide-renderer.answer-focus .answer-focus-copy .slide-answer > p { font-size: calc(1.7cqi * var(--slide-scale) * var(--photo-fit)); line-height: 1.32; }
+.slide-renderer.answer-focus .answer-focus-copy > .question-image-frame {
+  display: block;
+  align-self: start;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: none;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  opacity: .85;
+}
+.slide-renderer.answer-focus .answer-focus-copy > .question-image-frame img { display: block; width: auto; height: auto; max-width: 100%; max-height: calc(11cqi * var(--photo-fit)); object-fit: contain; background: transparent; border-radius: .4cqi; }
+.slide-renderer.answer-focus .answer-focus-grid > .answer-focus-image {
+  grid-area: 1 / 2 / -1 / 3;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  animation: slide-reveal .3s ease-out both;
+}
+.slide-renderer.answer-focus .answer-focus-image img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; background: transparent; border-radius: 0; }
+
 @keyframes slide-reveal { from { opacity: .35; transform: translateY(.65cqi); } to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) { .slide-renderer .vinyl-disc, .slide-renderer .slide-answer, .slide-renderer .round-intro-content.intro-running { animation: none; } .slide-renderer .question-image-overlay { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .slide-renderer .vinyl-disc, .slide-renderer .slide-answer, .slide-renderer .answer-focus-image, .slide-renderer .round-intro-content.intro-running { animation: none; } .slide-renderer .question-image-overlay { transition: none; } }
