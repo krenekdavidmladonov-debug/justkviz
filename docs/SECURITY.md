@@ -47,6 +47,8 @@ The local demo image backup reauthorizes the exact currently published image in 
 6. Firestore and Storage start deny-by-default; access is added narrowly and tested in emulators.
 7. Production access and deployment require explicit user approval.
 
+The six evening endpoints `createEventLiveSession`, `previewInterimResults`, `generatePrintArtifact`, `readRefereeEvent`, `revealAnswer` and `saveEventScore` also accept a public health ping containing exactly the plain JSON object `{ "warmup": true }` (inside callable `data`, or the print endpoint's POST JSON body). Only that singleton receives the constant `{ "warmup": true }` response before identity checks, event reads, referee throttling or business IO; it carries no event identifier, answer, capability or private data and performs no database, receipt, rate-limit, PDF or media operation. Every other payload retains the existing validation and authorization path. The moderator page sends these bounded pings once per page lifetime; the event detail permits an explicit retry. No `minInstances` is configured, and a successful ping does not guarantee that a cloud instance stays warm. Emulator first/repeated invocation measurements are local evidence only.
+
 ## Preventing answer leakage
 
 Visual metadata follows the same boundary: `answerDesign` is private answer content and is merged into the public design only on explicit reveal. Public design/result copy uses bounded allowlists; unknown private extensions and private print templates are never published. Owned design images require current publication and existing quiz/media permissions. The full contract is in [WHOLE_EVENING_DESIGN.md](archive/WHOLE_EVENING_DESIGN.md).

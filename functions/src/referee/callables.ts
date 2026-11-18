@@ -1,3 +1,4 @@
+import { isWarmupPing, warmupResponse } from '../warmup/ping.js';
 import { assertCapability, assertEventOperational } from '../events/guards.js';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
@@ -94,6 +95,7 @@ async function accessIn(transaction: Transaction, c: RefereeCredential) {
   return { grant, event };
 }
 export const readRefereeEvent = onCall(options, async request => {
+  if (isWarmupPing(request.data)) return warmupResponse();
   const c = credential(request.data); await throttle(request);
   if (request.auth) await freshIdentity(request.auth);
   return db().runTransaction(async transaction => {

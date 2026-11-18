@@ -1,3 +1,4 @@
+import { isCallableWarmup, warmupResponse } from '../warmup/ping.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore, type Transaction } from 'firebase-admin/firestore';
@@ -137,6 +138,8 @@ export async function authorizeOperation(name: string, request: CallableRequest,
 }
 export function securedOnCall<T>(name: string, options: CallableOptions, handler: (request: CallableRequest) => T | Promise<T>) {
   return onCall(options, async request => {
+    // The singleton ping has a separate transport response; ordinary calls retain their handler contract.
+    if (isCallableWarmup(name, request.data)) return warmupResponse() as T;
     await freshIdentity(request.auth);
     const member = await authorizeOperation(name, request);
     return context.run({ name, request, member }, async () => {

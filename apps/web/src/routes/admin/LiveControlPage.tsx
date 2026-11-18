@@ -1,3 +1,4 @@
+import { warmEventFunctionsOnce } from '../../features/events/eventWarmup';
 import { EventNightControls, type EventNightNavigation } from '../../features/live/EventNightControls';
 import { visibleSlidePosition } from '@filmovy-kviz/quiz-domain';
 import { FirebaseError } from 'firebase/app';
@@ -91,6 +92,7 @@ function loadingError(area: 'session' | 'slides'): HumanErrorValue {
 }
 
 export function LiveControlPage() {
+  useEffect(() => { void warmEventFunctionsOnce().catch(() => undefined); }, []);
   const { sessionId } = useParams<{ sessionId: string }>();
   const routeSearch = useLocation().search;
   return <LiveSessionControl key={sessionId} sessionId={sessionId} routeSearch={routeSearch} />;
