@@ -84,16 +84,15 @@ export async function readOfflineSource(tx: Transaction, eventId: string, auth: 
   const snapshotRef = db.doc('quizSnapshots/' + snapshotId), snapshot = (await tx.get(snapshotRef)).data();
   if (!snapshot || snapshot.status !== 'ready' || snapshot.eventId !== eventId || snapshot.quizId !== quizId || snapshot.quizRevision !== assignment.quizRevision)
     throw new HttpsError('failed-precondition', 'Uzamčená verze kvízu není připravená.', { offlineCheck: 'snapshot' });
-  const [slides, rounds, roster, scores, sessions] = await Promise.all([
+  const [slides, rounds, roster, sessions] = await Promise.all([
     tx.get(snapshotRef.collection('slides').orderBy('position').limit(limits.slides + 1)),
     tx.get(snapshotRef.collection('rounds').orderBy('position').limit(limits.rounds + 1)),
     tx.get(eventRef.collection('registrations').where('status', '==', 'accepted').limit(limits.teams + 1)),
-    tx.get(eventRef.collection('scores').limit(limits.scoreCells + 1)),
     tx.get(db.collection('sessions').where('eventId', '==', eventId).limit(201)),
   ]);
   if (roster.empty) throw new HttpsError('resource-exhausted', 'Přidejte alespoň jeden potvrzený tým.', { offlineCheck: 'teams' });
   if (slides.size === 0 || slides.size > limits.slides || slides.size !== snapshot.slideCount || rounds.size === 0 || rounds.size > limits.rounds
-    || rounds.size !== snapshot.roundCount || roster.size > limits.teams || scores.size > limits.scoreCells || sessions.size > 200
+    || rounds.size !== snapshot.roundCount || roster.size > limits.teams || sessions.size > 200
     || rounds.size * roster.size > limits.scoreCells) throw new HttpsError('resource-exhausted', 'Offline kvíz překračuje limit snímků, kol, týmů nebo 200 bodovacích buněk.');
   const normalizedRounds: OfflineRound[] = rounds.docs.map(row => {
     const data = row.data();
@@ -109,10 +108,22 @@ export async function readOfflineSource(tx: Transaction, eventId: string, auth: 
     return { id: row.id, name: data.teamName, revision };
   }).sort((a, b) => a.id.localeCompare(b.id, 'en'));
   const knownTeams = new Set(teams.map(team => team.id)), knownRounds = new Set(normalizedRounds.map(round => round.id));
+  // Historical cancelled teams are not part of the current score budget or baseline.
+  // Probe canonical destinations too: a malformed teamId must not hide a cell that sync would overwrite.
+  const scoreCollection = eventRef.collection('scores');
+  const teamGroups = Array.from({ length: Math.ceil(teams.length / 30) }, (_, index) => teams.slice(index * 30, index * 30 + 30).map(team => team.id));
+  const targets = teams.flatMap(team => normalizedRounds.map(round => scoreCollection.doc(storedDigest([team.id, round.id]))));
+  const [queries, canonical] = await Promise.all([
+    Promise.all(teamGroups.map(ids => tx.get(scoreCollection.where('teamId', 'in', ids).limit(limits.scoreCells + 1)))),
+    tx.getAll(...targets),
+  ]);
+  if (queries.reduce((count, query) => count + query.size, 0) > limits.scoreCells)
+    throw new HttpsError('resource-exhausted', 'Body potvrzených týmů překračují limit 200 bodovacích buněk.');
+  const scores = new Map([...queries.flatMap(query => query.docs), ...canonical.filter(row => row.exists)].map(row => [row.id, row] as const));
   const existing = new Map<string, OfflineScore>();
-  for (const row of scores.docs) {
+  for (const row of scores.values()) {
     const data = row.data();
-    if (typeof data.teamId !== 'string' || typeof data.roundId !== 'string' || !knownTeams.has(data.teamId) || !knownRounds.has(data.roundId) || data.snapshotId !== snapshotId
+    if (!data || typeof data.teamId !== 'string' || typeof data.roundId !== 'string' || !knownTeams.has(data.teamId) || !knownRounds.has(data.roundId) || data.snapshotId !== snapshotId
       || !Number.isSafeInteger(data.revision) || data.revision < 1 || (data.halfPoints !== null && (!Number.isSafeInteger(data.halfPoints) || data.halfPoints < 0))
       || row.id !== storedDigest([data.teamId, data.roundId])) throw offlineUnavailable();
     existing.set(JSON.stringify([data.teamId, data.roundId]), { teamId: data.teamId, roundId: data.roundId,
