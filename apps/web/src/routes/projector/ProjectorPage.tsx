@@ -1,3 +1,4 @@
+import { usePublicMediaPrefetch } from '../../features/media/usePrivateMediaPrefetch';
 import { Brand } from '../../ui/Brand';
 import { ShowModeRenderer } from '../../features/show-mode/ShowModeRenderer';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -38,7 +39,7 @@ function ProjectorState({ state, onMediaFinished, onMediaPlaybackState, onMediaD
   if (state.status === 'waiting') return <ProjectorMessage quizTitle={state.quizTitle} title="Čekáme na první slide" text="Moderátor kvíz připravuje." />;
   if (state.status === 'ended') return <ProjectorMessage quizTitle={state.quizTitle} title="Kvíz skončil" text="Děkujeme za účast." />;
   return (
-    <ShowModeRenderer state={state}>
+    <ShowModeRenderer state={state} projector>
     <SlideRenderer
       mediaSessionId={state.sessionId}
       quizTitle={state.quizTitle}
@@ -54,6 +55,7 @@ function ProjectorState({ state, onMediaFinished, onMediaPlaybackState, onMediaD
       slide={{
         ...(state.mediaPlaybackMode === undefined ? {} : { mediaPlaybackMode: state.mediaPlaybackMode }),
         ...(state.design === undefined ? {} : { design: state.design }),
+        ...(state.roundNumber === undefined ? {} : { roundNumber: state.roundNumber }),
         ...(state.roundTitle === undefined ? {} : { roundTitle: state.roundTitle }),
         kind: state.slideKind ?? 'legacy', title: state.title ?? '', text: state.text ?? '',
         options: state.options, media: state.media, presentation: state.presentation,
@@ -79,6 +81,7 @@ export function ProjectorPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const measure = latencyEnabled(useLocation().search);
   const [state, setState] = useState<PublicLiveState | null>(null);
+  usePublicMediaPrefetch(sessionId, state?.upcomingImages ?? [], state?.status === 'active');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [fullscreenNotice, setFullscreenNotice] = useState<string | null>(null);

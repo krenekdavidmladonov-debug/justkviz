@@ -76,6 +76,14 @@ service cloud.firestore {
       }
     }
     match /publicSessions/{sessionId} { allow get: if true; allow list, write: if false; }
+    // Single explicitly published completed event only; no archive listing.
+    match /publicEventResults/{eventId} {
+      allow get: if resource.data.lifecycleStatus == 'completed'
+        && get(/databases/$(database)/documents/events/$(eventId)).data.lifecycleStatus == 'completed'
+        && (!('disposition' in get(/databases/$(database)/documents/events/$(eventId)).data)
+          || get(/databases/$(database)/documents/events/$(eventId)).data.disposition == 'active');
+      allow list, write: if false;
+    }
     match /publicEvents/{eventId} { allow read: if resource.data.registrationPublished == true; allow write: if false; }
     match /{document=**} { allow read, write: if false; }
   }

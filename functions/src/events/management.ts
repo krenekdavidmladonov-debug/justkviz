@@ -57,6 +57,7 @@ async function transition(request: CallableRequest, action: EventManagementActio
     }
     Object.assign(patch, { registrationStatus: 'closed', registrationPublished: false });
     if (action === 'cancel' || action === 'complete' || action === 'trash') closeSessions(tx, sessions, actor.uid);
+    tx.delete(db.doc('publicEventResults/' + eventId));
     tx.update(ref, patch);
     if (action === 'cancel' && previousPublic) tx.set(publicRef, { ...previousPublic, pricing: publicEventPricing(current.pricing), lifecycleStatus: 'cancelled', registrationPublished: false, registrationStatus: 'closed', availability: 'closed', cancelled: true, cancellationMessage: publicMessage, revision, updatedAt: now });
     else if (action === 'archive' && previousPublic) tx.set(publicRef, { ...previousPublic, pricing: publicEventPricing(current.pricing), registrationPublished: false, registrationStatus: 'closed', availability: 'closed', revision, updatedAt: now });

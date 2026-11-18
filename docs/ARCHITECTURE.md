@@ -75,6 +75,15 @@ Public browser ───── public reads / validated call> public events / Cl
 
 Sensitive state transitions—quiz editing, team registration, quiz publication, live-state changes, answer reveal, role management, and result finalization—belong in Functions. The implemented editor and live-session callables use Firestore transactions and explicit optimistic revisions. The server derives authoritative fields such as timestamps, counters, ordering, revisions, derived round/question records, and public projection payloads.
 
+Owned image reads discover a representation hash through the authorized gateway,
+then use a private immutable HTTP cache URL scoped to one in-memory access epoch.
+Projector lookahead receives only up to nine owned prompt image references from
+the next three visible slides; globally answer-associated images are excluded.
+The gateway authorizes the exact current publication/lookahead before and after
+network IO. Previously delivered HTTP cache bytes cannot be remotely recalled.
+Derived immutable snapshot prompt plans have a bounded process cache; access
+permissions and current session authority are never cached there.
+
 ## Frontend modules
 
 An explicitly entered offline event runtime is separate from the online Firebase-authoritative routes. It uses one scoped, time-bounded signed snapshot export, encrypted local persistence and an independently saved file. A pinned local projector receives only the current public allowlist. Reconnection uses a fresh authorized, baseline-checked atomic journal import rather than Firestore persistence. The candidate protocol and acceptance status are in [OFFLINE_MODE.md](archive/OFFLINE_MODE.md).
@@ -94,6 +103,15 @@ a new visit does not reuse a stale app entry point after a release. Already open
 tabs can still need the explicit refresh if an older lazy module was replaced.
 Hashed assets keep their existing cache behavior. The settings page contains
 account/access controls only; quiz appearance remains in the quiz editor.
+
+Quiz appearance stores the optional boolean `defaultDesign.projectorAnimations`
+(default on) through the existing validated design, immutable snapshot and public
+design allowlist. Motion is explicitly enabled only by the real online/offline
+projector and respects reduced motion; moderator/editor previews retain their
+previous behavior. The trusted live loader derives optional public `roundNumber`
+from the already-read round position; offline projection uses the frozen manifest
+round position. Invalid or absent legacy positions omit the number. No question
+time limit exists in the authoritative model, so this change adds no timer.
 
 Feature folders may be added when real behavior arrives. A generic repository/service abstraction is not required until repeated use proves it valuable.
 

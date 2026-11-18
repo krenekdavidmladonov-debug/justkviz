@@ -50,6 +50,7 @@ export interface SlideRenderInput {
   readonly mediaPlaybackMode?: 'original';
   readonly design?: SlideDesign;
   readonly roundTitle?: string;
+  readonly roundNumber?: number;
   readonly kind: string;
   readonly title: string;
   readonly text: string;

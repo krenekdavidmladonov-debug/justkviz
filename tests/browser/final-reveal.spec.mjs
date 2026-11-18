@@ -43,6 +43,8 @@ async function start(page, f) {
   await expect(page.locator('.live-control')).toHaveAttribute('data-current-position', '5');
   await page.getByRole('button', { name: 'Další →', exact: true }).click();
   await expect.poll(async () => (await f.rawPublic()).finalReveal?.mode).toBe('intro'); await expect(step(page)).toBeEnabled();
+  await expect(page.locator('.live-progress strong')).toHaveText('Finální vyhlášení');
+  await expect(page.locator('.live-title-context span')).toHaveText('Finále');
 }
 async function replace(f, suppliedPreview) {
   const preview = suppliedPreview ?? await f.previewFinal();

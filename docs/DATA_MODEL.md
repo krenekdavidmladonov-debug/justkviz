@@ -135,6 +135,8 @@ lost-response deduplication.
 
 Authoritative event record implemented by Events Foundation: `schemaVersion`, title/start/time zone, private venue configuration, team capacity, retained legacy people capacity, accepted team/people counters, per-event team-size bounds (up to four for new settings and new/edited registrations), registration window/publication/status, lifecycle status, nullable immutable quiz assignment, fixed-point scoring foundation (`unitScale: 2`, `rankingMode: dense`, server-owned `started`), monotonic revision, and trusted audit fields. Staff may read the root; every client write is denied and mutations use trusted Functions.
 
+Explicit event completion chosen by authorized staff in the moderator controls uses the existing completed lifecycle and completion/capability fields. The current bound session and all other event sessions end in the same transaction; registration publication closes and publicEvents is removed. The event, registrations, scores, snapshot and confirmed finalVersions remain available to authorized history/PDF reads. Bare presentation closure and standalone rehearsals retain their existing behavior.
+
 Event `pricing` is `{ mode: 'per-team' | 'per-event' | 'agreement', amountCzk, hidden? }`.
 Numeric modes require integer CZK from 0 to 1,000,000; agreement requires null.
 Absent historical pricing means 350 CZK per team. Creates persist that default;
@@ -211,7 +213,36 @@ The server-only `events/{eventId}/registrationAbuse/{contactHash}` budget stores
 
 Implemented safe listing data: title, venue display/public location, start time/time zone, registration publication/status/window, team-size range, revision, and updated timestamp. Since the registration slice, `capacity.teams` and `capacity.people` each expose exact aggregate `accepted` and `maximum` counts; they do not identify individual teams or people. Quiz assignment/snapshot data, answers, organizer details, and contacts are excluded. Anonymous clients may read/query; all writes are server-only. The exact allowlist is covered by the public event projection test in `tests/events.test.ts`.
 
+### Explicit public completed-event results
+
+`publicEventResults/{eventId}` is a separate server-built, single-event allowlist.
+It contains only eventId, public title/date/time zone/venue/location, completed
+status and the whole confirmed final order of rank/teamName/halfPoints. Anonymous
+clients can get one explicitly published document; listing and every browser
+write are denied. It does not add historical events to the public event list.
+
+`configurePublicEventResults` requires fresh identity, current event.manage and
+scope on every transaction attempt, plus the current event revision. Publication
+is an explicit administrative action after completion, default absent for all
+existing events. It validates the ended canonical liveSessionId, event snapshot
+and immutable finalVersions document referenced by finalReveal.versionId. Mutable
+scores, draft previews, current reveal page, private IDs/contacts/answers and
+actor metadata never enter the projection. Dense shared places are preserved.
+Hide and lifecycle transitions remove the projection atomically; archival,
+trash/deletion and registration visibility hiding revoke it as well. Rules also
+reject a stale projection unless its authoritative event remains active and
+completed. No archive backfill or production activation is part of this source.
+
 ### `publicSessions/{sessionId}`
+
+Online publicSessions may include optional upcomingImages: at most nine owned
+image references for the next three visible prompt slides. This server-derived
+allowlist contains no source documents, answers, external URLs or clips, and
+excludes every reference also used in answer media/design anywhere in the source.
+Reveal/recap, result pages, waiting and ended publications omit it. It grants only
+exact image reads through the current-publication gateway, not private quiz access.
+No persistent asset identifier or collection path changes. HTTP image cache URLs
+add an access namespace and a representation hash, without changing stored media.
 
 Show Mode adds optional `presentationStyle` and `pageSize` to confirmed result
 versions and their private pointers: show/6 or classic/8. Public show payloads
@@ -316,4 +347,4 @@ optional fields remain compatible. See [EVENT_PUBLICATION.md](archive/EVENT_PUBL
 
 See [EVENT_MANAGEMENT.md](archive/EVENT_MANAGEMENT.md) for the independent disposition overlay, scoped permission mapping, shared transactional guards, capability revocation and exact server-side deletion ownership/allowlist. No content backfill or Storage cleanup is introduced. Cloud team email remains disabled.
 
-Manual completion uses existing events roots and eventOperations/eventAudit receipts. The optional private completion object contains trusted at/by/reason; capabilityVersion and revision advance together. Ending one sessions document does not mutate its event root. Existing scores/history and confirmed result versions remain intact after either presentation END or event completion.
+Manual completion uses existing events roots and eventOperations/eventAudit receipts. The optional private completion object contains trusted at/by/reason; capabilityVersion and revision advance together. A presentation-only END without `completeEvent: true` does not mutate its event root; explicit privileged staff completion updates the bound event as described above. Existing scores/history and confirmed result versions remain intact after either presentation END or event completion.

@@ -11,7 +11,7 @@ export const rendererDefaults = {
   backgroundColor: '#101722', textColor: '#fbf8f0', accentColor: '#f3b33d',
   backgroundOverlay: 0, fontFamily: 'sans', fontScale: 1, textAlign: 'left',
   layout: 'classic', textWidth: 55, mediaFit: 'contain', showLogo: true,
-  showQuestionNumber: true, showRoundTitle: true,
+  showQuestionNumber: true, showRoundTitle: true, projectorAnimations: true,
 } as const satisfies SlideDesign;
 
 /** Native color inputs require six digits, while persisted designs also allow #rgb. */

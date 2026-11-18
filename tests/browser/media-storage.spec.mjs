@@ -38,8 +38,10 @@ async function stoppedAtFirstCrossing(page, endSeconds) {
 
 test('copies an owned image from the library and replaces it in the copy only @quiz-copy-media', async ({ page, context }) => {
   const f = await mediaFixture();
-  let copyId;
+  let copyId, sameTitle;
   try {
+    sameTitle = await mediaFixture();
+    expect((await sameTitle.quizRef.get()).get('title')).toBe((await f.quizRef.get()).get('title'));
     const image = await f.upload('image', syntheticImage(), 'image/png');
     await f.update('image', { questionImage: image.reference });
     await context.route('**/*', route => ['127.0.0.1', 'localhost'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
@@ -49,7 +51,7 @@ test('copies an owned image from the library and replaces it in the copy only @q
     await page.getByRole('button', { name: 'Přihlásit se' }).click();
     await expect(page).toHaveURL(/\/admin$/u);
     await page.goto('/admin/quizzes');
-    await page.getByRole('button', { name: 'Duplikovat kvíz Syntetická vlastní média' }).click();
+    await page.getByRole('row').filter({ has: page.locator('a.quiz-title-link[href="/admin/quizzes/' + f.quizId + '"]') }).getByRole('button', { name: 'Duplikovat kvíz Syntetická vlastní média', exact: true }).click();
     await page.getByRole('dialog').getByRole('button', { name: 'Vytvořit kopii' }).click();
     await expect(page).toHaveURL(/\/admin\/quizzes\/quiz_[a-f0-9]{64}\/edit$/u);
     copyId = new URL(page.url()).pathname.split('/')[3];
@@ -78,6 +80,7 @@ test('copies an owned image from the library and replaces it in the copy only @q
       await f.bucket.deleteFiles({ prefix: 'quiz-assets/' + copyId + '/' });
       await f.db.recursiveDelete(f.db.doc('quizzes/' + copyId));
     }
+    await sameTitle?.dispose();
     await f.dispose();
   }
 });

@@ -55,6 +55,7 @@ interface LiveModeratorViewProps {
   readonly onStop: () => void;
   readonly onReplay: () => void;
   readonly onEnd: () => void;
+  readonly onCompleteEvent?: () => void;
   readonly onMediaFinished: (generation: number) => void;
   readonly onMediaError: (generation: number, message: string) => void;
   readonly onMediaPlayback: (generation: number, state: 'ready' | 'playing') => void;
@@ -100,6 +101,7 @@ export function LiveModeratorView({
   onStop,
   onReplay,
   onEnd,
+  onCompleteEvent,
   onMediaFinished,
   onMediaError,
   onMediaPlayback,
@@ -117,7 +119,7 @@ export function LiveModeratorView({
     session.sessionId,
   );
   const source = session.interimResults || session.finalReveal?.visible ? undefined : liveMediaSource(presentedSlide);
-  const roundLabel = currentRoundLabel(currentSlide);
+  const roundLabel = finalActive ? 'Finále' : currentRoundLabel(currentSlide);
   const questionLabel = currentQuestionLabel(session, currentSlide, presentedSlide, slides);
   const recapTitle = currentSlide?.roundTitle?.trim() || 'Aktuální kolo';
   const navigationSourceAvailable = slides.length > 0 && (session.currentSlidePosition === 0
@@ -280,6 +282,10 @@ export function LiveModeratorView({
             <button className="danger-button" type="button" disabled={pendingAction !== null || ended} onClick={onEnd}>
               {pendingLabel(pendingAction, 'end', 'Ukončit kvíz')}
             </button>
+            {session.eventId && (onCompleteEvent ? (ended
+              ? <Link className="secondary-link" to={`/admin/events/${session.eventId}`}>Dokončit akci v detailu</Link>
+              : <button className="danger-button" type="button" disabled={pendingAction !== null} onClick={onCompleteEvent}>Dokončit akci a ukončit kvíz</button>
+            ) : <p>Akci dokončí správce</p>)}
           </details>
 
           <TechnicalDetails>

@@ -1,3 +1,11 @@
+
+import { mapEditorQuiz, mergeStoredDesign } from '../packages/quiz-domain/src';
+import { validateQuizMetadata } from '../functions/src/editor/validation';
+import { buildQuizSnapshotMetadata } from '../functions/src/events/snapshot-model';
+import { offlineSlides } from '../functions/src/offline/source';
+import { buildOfflineProjection } from '../apps/web/src/features/offline/offlineProjection';
+import { initialOfflineState, reduceOfflineCommand } from '../packages/quiz-domain/src/offline-event';
+import { offlineManifest } from './offline-fixture';
 import { describe, expect, test } from 'vitest';
 
 import { LiveSessionError } from '../functions/src/live/errors';
@@ -156,6 +164,30 @@ function expectNoPrivateFields(value: unknown): void {
 }
 
 describe('live-session publication security', () => {
+  test('public lookahead mapping accepts bounded owned references and rejects malformed, waiting, ended and recap payloads', () => {
+    const reference = 'quiz-asset:quiz-1/' + 'a'.repeat(64);
+    const published = { ...buildPublicSessionState(session(), questionSlide()), upcomingImages: [reference] };
+    expect(mapPublicLiveState(published.sessionId, published).upcomingImages).toEqual([reference]);
+    expect(sanitizedChannelState(mapPublicLiveState(published.sessionId, published)).upcomingImages).toEqual([reference]);
+    for (const unsafe of [{ upcomingImages: ['https://example.test/private.png'] }, { upcomingImages: Array(10).fill(reference) },
+      { upcomingImages: 'private' }, { status: 'waiting' }, { status: 'ended' }, { presentationMode: 'recap' }]) {
+      expect(() => mapPublicLiveState(published.sessionId, { ...published, ...unsafe })).toThrow();
+    }
+  });
+
+  test('derived lookahead is published only for the resulting active ordinary unrevealed session', () => {
+    const reference = 'quiz-asset:' + session().quizId + '/' + 'a'.repeat(64);
+    const source = { ...questionSlide(), upcomingImages: [reference] };
+    expect(buildPublicSessionState(session(), source).upcomingImages).toEqual([reference]);
+    for (const current of [session({ status: 'waiting' }), session({ status: 'ended' }), session({ answerRevealed: true }),
+      session({ presentationMode: 'recap', recapQuestionPosition: 1 }), session({ interimResults: {} as NonNullable<PrivateLiveSession['interimResults']> }),
+      session({ finalReveal: { visible: true } as NonNullable<PrivateLiveSession['finalReveal']> })]) {
+      expect(buildPublicSessionState(current, source).upcomingImages).toBeUndefined();
+    }
+    expect(buildPublicSessionState(session(), { ...source, upcomingImages: Array(10).fill(reference) as string[] }).upcomingImages).toBeUndefined();
+    expect(buildPublicSessionState(session(), { ...source, upcomingImages: ['quiz-asset:foreign/' + 'a'.repeat(64)] }).upcomingImages).toBeUndefined();
+  });
+
   test('legacy video URL matches the editor without reviving explicitly detached media', () => {
     const url = 'https://example.test/archived-video.mp4';
     const slide = { ...questionSlide(), kind: 'video', media: [], mediaSource: { url, private: 'RAW_PRIVATE_SENTINEL' } };
@@ -581,4 +613,39 @@ test('explicit slide navigation hides a confirmed finale while retaining its pri
   expect(navigated).toMatchObject({ answerRevealed: false, mediaCommand: 'idle', mediaPlaybackState: 'idle' });
   expect(buildPublicSessionState(navigated, target)).not.toHaveProperty('finalReveal');
   expect(buildPublicSessionState(navigated, target)).not.toHaveProperty('revealedAnswer');
+});
+
+
+test.each([true, false])('quiz projector setting survives validated save, frozen snapshot and online/offline publication: %s', projectorAnimations => {
+  const input = validateQuizMetadata({ title: 'Syntetický kvíz', description: '', defaultDesign: { projectorAnimations } });
+  const stored = { ...input, defaultDesign: mergeStoredDesign({ futurePrivate: 'preserved' }, input.defaultDesign!) };
+  const source = mapEditorQuiz('synthetic-quiz', { ...stored, revision: 7, slideCount: 1, roundCount: 0, questionCount: 1 }, [mapEditorSlide('slide-001', { ...questionSlide(), position: 1 })]);
+  const frozen = JSON.parse(JSON.stringify(buildQuizSnapshotMetadata(source, { blockerCount: 0, warningCount: 0 }, 'synthetic-admin', 'now'))) as Record<string, unknown>;
+  expect(frozen.defaultDesign).toEqual({ projectorAnimations });
+  const published = mapPublicLiveState('safe-session', buildPublicSessionState(session(), { ...questionSlide(), defaultDesign: frozen.defaultDesign }));
+  expect(published.design?.projectorAnimations).toBe(projectorAnimations);
+  expect(published).not.toHaveProperty('revealedAnswer');
+  expect(publicResultTemplate(frozen, 'final').design?.projectorAnimations).toBe(projectorAnimations);
+  expect(publicResultTemplate(frozen, 'interim').design?.projectorAnimations).toBe(projectorAnimations);
+  const exported = offlineSlides(frozen, [{ id: 'slide-001', data: { ...questionSlide(), position: 1 } }], []);
+  const manifest = offlineManifest({ slides: exported });
+  const active = reduceOfflineCommand(manifest, initialOfflineState(manifest), { type: 'start', payload: {} });
+  expect(buildOfflineProjection(manifest, active).design?.projectorAnimations).toBe(projectorAnimations);
+  expect(JSON.stringify(buildOfflineProjection(manifest, active))).not.toContain('SENTINEL-REVEALED-ANSWER');
+  expect(stored.defaultDesign).toHaveProperty('futurePrivate', 'preserved');
+});
+
+test('projector setting rejects malformed client values at the metadata save boundary', () => {
+  for (const projectorAnimations of ['false', 0, null, {}, []]) expect(() => validateQuizMetadata({ title: 'Quiz', description: '', defaultDesign: { projectorAnimations } })).toThrow();
+  expect(validateQuizMetadata({ title: 'Quiz', description: '', defaultDesign: {} }).defaultDesign).toEqual({});
+});
+
+test.each([undefined, 1, 3, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])('publishes only safe positive authoritative round numbers: %s', roundNumber => {
+  const published = buildPublicSessionState(session(), { ...questionSlide(), roundNumber });
+  const expected = Number.isSafeInteger(roundNumber) && (roundNumber ?? 0) > 0 ? roundNumber : undefined;
+  expect(published.roundNumber).toBe(expected);
+  expect(mapPublicLiveState('safe-session', published).roundNumber).toBe(expected);
+  const channel = sanitizedChannelState(mapPublicLiveState('safe-session', published));
+  expect(parsePublicLiveState(channel)?.roundNumber).toBe(expected);
+  if (expected === undefined && roundNumber !== undefined) expect(parsePublicLiveState({ ...channel, roundNumber })).toBeUndefined();
 });

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 
 import { useAuth } from '../../auth/AuthProvider';
 import { eventDisposition } from '@filmovy-kviz/quiz-domain';
+import { EventQuizWarning } from '../../features/events/EventQuizWarning';
 import { EventActions } from '../../features/events/EventActions';
 import { listEvents } from '../../features/events/eventRepository';
 import type { EventRecord } from '../../features/events/types';
@@ -20,6 +21,8 @@ function formatDate(value: Date): string {
 
 export function AdminEventsPage() {
   const { can } = useAuth();
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 15000); return () => window.clearInterval(timer); }, []);
   const [events, setEvents] = useState<readonly EventRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +61,7 @@ export function AdminEventsPage() {
           {visible.slice(page * 20, (page + 1) * 20).map((event) => (
             <article className="event-card" key={event.id}><Link className="event-card-main" to={`/admin/events/${event.id}`}>
               <div><span className={`quiz-status status-${event.lifecycleStatus}`}>{lifecycleLabels[event.lifecycleStatus]}</span><h2>{event.title}</h2><p>{event.venue.name}</p></div>
-              <div className="event-card-meta"><strong>{formatDate(event.startsAt)}</strong><span>{event.acceptedTeams} týmů · {event.quizAssignment?.quizTitle ?? 'Kvíz nepřiřazen'}</span>{eventDisposition(event) === 'deleting' && <strong>Mazání probíhá</strong>}</div>
+              <div className="event-card-meta"><strong>{formatDate(event.startsAt)}</strong><span>{event.acceptedTeams} týmů · {event.quizAssignment?.quizTitle ?? 'Kvíz nepřiřazen'}</span><EventQuizWarning event={event} now={now} />{eventDisposition(event) === 'deleting' && <strong>Mazání probíhá</strong>}</div>
             </Link><EventActions event={event} onChanged={(message, deleted, updated) => {
               setEvents(current => deleted ? current.filter(item => item.id !== event.id) : current.map(item => item.id === event.id && updated ? updated : item));
               setPage(0);

@@ -1,8 +1,9 @@
+import { isCallableWarmup, warmupResponse } from '../warmup/ping.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore, type Firestore, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError, onCall, type CallableOptions, type CallableRequest } from 'firebase-functions/v2/https';
-import { hasPermission, scopeAllows, type Membership, type Permission } from '@filmovy-kviz/quiz-domain';
+import { eventDisposition, hasPermission, scopeAllows, type Membership, type Permission } from '@filmovy-kviz/quiz-domain';
 import { assertEventOperational, assertEventReadable, isCompletedEventHide } from '../events/guards.js';
 import { assertQuizActive } from '../quizzes/guards.js';
 
@@ -82,6 +83,7 @@ export async function authorizeOperation(name: string, request: CallableRequest,
     return member;
   };
   if (name === 'trashQuiz' || name === 'restoreQuiz') return authorize(request.auth, ['quiz.read', 'quiz.delete'], quiz(), tx);
+  if (name === 'configurePublicEventResults') return authorize(request.auth, ['event.manage'], event(), tx);
   if (name === 'deleteEvent') return authorize(request.auth, ['event.read', 'event.delete'], event(), tx);
   if (['completeEvent', 'cancelEvent', 'archiveEvent', 'trashEvent', 'restoreEvent'].includes(name)) {
     return authorize(request.auth, (name === 'cancelEvent' || name === 'completeEvent') && data?.endLive === true ? ['event.manage', 'event.live'] : ['event.manage'], event(), tx);
@@ -127,9 +129,12 @@ export async function authorizeOperation(name: string, request: CallableRequest,
     const eventBound = typeof session.eventId === 'string';
     if (eventBound && tx) {
       const eventRef = getFirestore().doc(`events/${resourceId(session.eventId)}`);
-      assertEventOperational((tx ? await tx.get(eventRef) : await eventRef.get()).data());
+      const event = (await tx.get(eventRef)).data();
+      const replayedCompletion = name === 'endLiveSession' && data?.completeEvent === true && session.status === 'ended' && event?.lifecycleStatus === 'completed' && eventDisposition(event) === 'active';
+      if (!replayedCompletion) assertEventOperational(event);
     }
     const required: Permission[] = ['event.live'];
+    if (name === 'endLiveSession' && data?.completeEvent === true) required.push('event.manage');
     if ((name === 'revealAnswer' && data?.action !== 'hide') || name === 'selectRecapQuestion' || (name === 'playMedia' && data?.mode === 'original')) required.push(eventBound ? 'event.answers.read' : 'quiz.answers.read');
     return authorize(request.auth, required, eventBound ? { kind: 'event', id: resourceId(session.eventId) } : { kind: 'quiz', id: resourceId(session.quizId) }, tx);
   }
@@ -137,6 +142,8 @@ export async function authorizeOperation(name: string, request: CallableRequest,
 }
 export function securedOnCall<T>(name: string, options: CallableOptions, handler: (request: CallableRequest) => T | Promise<T>) {
   return onCall(options, async request => {
+    // The singleton ping has a separate transport response; ordinary calls retain their handler contract.
+    if (isCallableWarmup(name, request.data)) return warmupResponse() as T;
     await freshIdentity(request.auth);
     const member = await authorizeOperation(name, request);
     return context.run({ name, request, member }, async () => {

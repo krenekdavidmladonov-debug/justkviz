@@ -217,7 +217,7 @@ test('one complete evening: saved editor, registration, real materials, media, S
     await results.getByRole('button', { name: 'Zobrazit konečné pořadí', exact: true }).click(); await expect(projector.locator('.sm-final-table .sm-row')).toHaveCount(2);
     const confirmed = (await published()).finalReveal; expect(confirmed.rows.map(row => row.halfPoints)).toEqual([12, 4]);
     await page.getByText('Další možnosti', { exact: true }).click();
-    page.once('dialog', dialog => dialog.accept()); await page.getByRole('button', { name: 'Ukončit kvíz', exact: true }).click();
+    page.once('dialog', dialog => dialog.accept()); await page.getByRole('button', { name: 'Dokončit akci a ukončit kvíz', exact: true }).click();
     await expect(projector.getByRole('heading', { name: 'Kvíz skončil', exact: true })).toBeVisible();
     const ended = await session();
     expect(ended.status).toBe('ended');
@@ -225,9 +225,7 @@ test('one complete evening: saved editor, registration, real materials, media, S
     expect(ended.finalReveal.visible).toBe(false);
     expect((await published()).finalReveal).toBeUndefined();
     await page.goto('/admin/events/' + eventId);
-    await page.locator('.event-actions > summary').click();
-    await page.getByRole('button', { name: 'Ukončit akci', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Ukončit akci', exact: true }).getByRole('button', { name: 'Ukončit akci', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Ukončit akci', exact: true })).toHaveCount(0);
     await expect.poll(async () => (await event()).lifecycleStatus).toBe('completed');
     expect((await session()).finalReveal.versionId).toBe(confirmed.versionId);
     await page.goto('/admin/events/' + eventId + '/results'); await expect(page.getByRole('table', { name: 'Konečné pořadí', exact: true }).locator('tbody tr')).toHaveCount(2);

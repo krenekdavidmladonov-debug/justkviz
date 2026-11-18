@@ -1,3 +1,4 @@
+import { loadUpcomingImages } from '../live/upcoming-images.js';
 import { accessActor, securedOnCall, runAccessTransaction, currentMembership } from '../access/authorization.js';
 import { getFirestore, Timestamp, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
@@ -194,7 +195,8 @@ export const controlInterimResults = securedOnCall('controlInterimResults', opti
         const cue = action !== 'hide' && pageConfig?.presentationStyle === 'show' ? makeShowCue(operationId, 'interim', event.showPreferences, now.toMillis(), action === 'publish' || action === 'current' ? data.motion : 'static') : undefined;
         if (cue) updated = { ...updated, showCue: cue };
         const template = action === 'hide' ? {} : publicResultTemplate((await tx.get(db().doc('quizSnapshots/' + session.snapshotId))).data() ?? {}, 'interim');
-        const publicState = action === 'hide' ? buildPublicSessionState(updated, restoreSlide) : {
+        const upcomingImages = action === 'hide' ? await loadUpcomingImages(db(), tx, updated) : [];
+        const publicState = action === 'hide' ? { ...buildPublicSessionState(updated, restoreSlide), ...(upcomingImages.length ? { upcomingImages } : {}) } : {
             ...buildPublicSessionState({ ...updated, status: 'waiting', answerRevealed: false, presentationMode: 'slide' }), status: 'active',
             ...template,
             ...(backdrop ? { interimBackdrop: backdrop } : {}), ...(cue ? { showCue: cue } : {}),

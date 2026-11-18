@@ -1,3 +1,4 @@
+import { emulatorEndpoint } from '../../services/firebase/emulatorEndpoint';
 import { getFirebaseAppContext } from '../../services/firebase/app';
 import { getFirebaseAuth } from '../../services/firebase/auth';
 import type { PrintArtifactBlob, PrintOptions } from './types';
@@ -7,7 +8,7 @@ function endpointUrl(): string {
   const projectId = config.options.projectId;
   if (!projectId) throw new Error('Chybí Firebase project ID.');
   return config.useEmulators
-    ? `http://127.0.0.1:5001/${projectId}/europe-west1/generatePrintArtifact`
+    ? `${emulatorEndpoint(projectId, 'FUNCTIONS').origin}/${projectId}/europe-west1/generatePrintArtifact`
     : `https://europe-west1-${projectId}.cloudfunctions.net/generatePrintArtifact`;
 }
 

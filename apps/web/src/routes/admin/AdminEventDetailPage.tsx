@@ -16,6 +16,7 @@ import {
 import { EventForm } from '../../features/events/EventForm';
 import { defaultEventPricing, eventPriceLabel } from '../../features/events/eventPricing';
 import { ManualTeamDialog } from '../../features/events/ManualTeamDialog';
+import { PublicEventResultsPublication } from '../../features/events/PublicEventResultsPublication';
 import { EventPublicationButton } from '../../features/events/EventPublicationButton';
 import { LocalEventMediaPanel } from '../../features/events/LocalEventMediaPanel';
 import { localEventMediaAvailable } from '../../features/events/localEventMediaApi';
@@ -218,7 +219,7 @@ function EventDetail({ eventId }: { eventId: string | undefined }) {
       <header className="event-page-heading event-form-heading">
         <div><h1>{admin ? 'Upravit akci' : 'Detail akce'}</h1><p className="lead">{event.title} · {event.venue.name}</p></div>
         <span className={`quiz-status status-${event.lifecycleStatus}`}>{lifecycleLabels[event.lifecycleStatus]}</span>
-        <EventActions event={event} onChanged={async (message, deleted, updated) => {
+        <EventActions event={event} showWarmup onChanged={async (message, deleted, updated) => {
           if (!active.current) return;
           if (deleted) { await navigate('/admin/events'); return; }
           if (updated) { setEvent(updated); setValues(formValues(updated)); }
@@ -246,7 +247,7 @@ function EventDetail({ eventId }: { eventId: string | undefined }) {
         {admin && !hidden && !['archived', 'cancelled', 'completed'].includes(event.lifecycleStatus) && <a className="secondary-link" href="#event-referee">Přístup pro rozhodčího</a>}
       </section>
 
-      {!hidden && <section className="event-section"><h2>Veřejná viditelnost</h2><p>Zveřejnění umožní přihlašování týmů do začátku akce podle volné kapacity. Připravenost kvízu se nastavuje samostatně.</p><EventPublicationButton event={event} disabled={pending} onChanged={updated => { setEvent(updated); setNow(Date.now()); setNotice(updated.registrationPublished ? updated.registrationStatus === 'full' ? "Akce je zveřejněná. Kapacita je naplněná; další tým se může přihlásit až po jejím uvolnění." : "Akce je zveřejněná a registrace jsou otevřené do začátku akce." : "Akce byla skryta z veřejného webu."); }} /></section>}
+      {!hidden && (event.lifecycleStatus !== 'completed' || event.registrationPublished) && <section className="event-section"><h2>Veřejná viditelnost</h2><p>Zveřejnění umožní přihlašování týmů do začátku akce podle volné kapacity. Připravenost kvízu se nastavuje samostatně.</p><EventPublicationButton event={event} disabled={pending} onChanged={updated => { setEvent(updated); setNow(Date.now()); setNotice(updated.registrationPublished ? updated.registrationStatus === 'full' ? "Akce je zveřejněná. Kapacita je naplněná; další tým se může přihlásit až po jejím uvolnění." : "Akce je zveřejněná a registrace jsou otevřené do začátku akce." : "Akce byla skryta z veřejného webu."); }} /></section>}
 
       {!hidden && can('event.export') && <section className="event-section" aria-labelledby="event-materials-title">
         <div className="event-section-heading"><div><p className="eyebrow">Dokumenty na večer</p><h2 id="event-materials-title">Tisk a materiály</h2></div>{locked && <span>Kvíz připraven</span>}</div>
@@ -263,6 +264,7 @@ function EventDetail({ eventId }: { eventId: string | undefined }) {
       {!hidden && can('event.read') && event.lifecycleStatus === 'completed' && <section className="event-section">
         <div className="event-section-heading"><div><p className="eyebrow">Dokončená akce</p><h2>Konečné výsledky</h2></div></div>
         <p className="event-muted">Potvrzené konečné pořadí této akce, pouze pro čtení.</p>
+        <PublicEventResultsPublication event={event} onChanged={revision => setEvent(current => current ? { ...current, revision } : current)} />
         <Link className="secondary-link" to={`/admin/events/${event.id}/results`}>Otevřít konečné výsledky</Link>
       </section>}
 

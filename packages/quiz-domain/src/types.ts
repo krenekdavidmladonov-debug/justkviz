@@ -142,6 +142,9 @@ export type PreflightIssueCode = EditorValidationCode
   | 'AGENDA_OUT_OF_DATE'
   | 'MEDIA_ONLINE_UNVERIFIED'
   | 'IMAGE_ONLINE_UNVERIFIED'
+  | 'MEDIA_NOT_OFFLINE'
+  | 'IMAGE_WIDTH_SMALL'
+  | 'IMAGE_URL_ANSWER_HINT'
   | 'UNSAVED_CHANGES';
 
 export interface PreflightReference {
@@ -176,7 +179,18 @@ export interface PreflightCategoryCount {
   readonly warnings: number;
 }
 
+export interface PreflightMediaSummary {
+  readonly imageCount: number;
+  readonly smallImageCount: number;
+  readonly unknownImageCount: number;
+  readonly offlineExcludedCount: number;
+  readonly youtubeCount: number;
+  readonly driveCount: number;
+  readonly externalCount: number;
+  readonly answerUrlCount: number;
+}
 export interface PreflightResult {
+  readonly media?: PreflightMediaSummary;
   readonly status: PreflightStatus;
   readonly source: PreflightSource;
   readonly validationDurationMs: number;

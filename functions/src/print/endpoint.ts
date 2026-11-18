@@ -1,3 +1,4 @@
+import { isWarmupPing, warmupResponse } from '../warmup/ping.js';
 import { assertEventReadable } from '../events/guards.js';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
@@ -101,6 +102,11 @@ export const generatePrintArtifact = onRequest(
       }
       if (request.rawBody.byteLength > PRINT_LIMITS.requestBytes) {
         throw new PrintCenterError(413, 'request-limit', 'Požadavek je příliš velký.');
+      }
+
+      if (isWarmupPing(request.body)) {
+        response.set('Cache-Control', 'no-store').status(200).json(warmupResponse());
+        return;
       }
 
       const eventId = eventIdFromBody(request.body);
