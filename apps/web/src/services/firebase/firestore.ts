@@ -1,3 +1,4 @@
+import { emulatorEndpoint } from './emulatorEndpoint';
 import { connectFirestoreEmulator, getFirestore, type Firestore } from 'firebase/firestore';
 
 import { getFirebaseAppContext } from './app';
@@ -13,7 +14,8 @@ export function getFirebaseFirestore(): Firestore {
   const db = getFirestore(app);
 
   if (config.useEmulators) {
-    connectFirestoreEmulator(db, '127.0.0.1', 8080);
+    const endpoint = emulatorEndpoint(config.options.projectId, 'FIRESTORE');
+    connectFirestoreEmulator(db, endpoint.host, endpoint.port);
   }
 
   firestoreService = db;
