@@ -101,8 +101,11 @@ export async function readOfflineSource(tx: Transaction, eventId: string, auth: 
   });
   const teams: OfflineTeam[] = roster.docs.map(row => {
     const data = row.data();
-    if (data.eventId !== eventId || typeof data.teamName !== 'string' || !data.teamName.trim() || !Number.isSafeInteger(data.revision)) throw offlineUnavailable();
-    return { id: row.id, name: data.teamName, revision: data.revision as number };
+    // Public registrations may omit revision until their first edit.
+    // Match the registration mutation boundary: absence means zero, malformed values remain invalid.
+    const revision: unknown = data.revision === undefined ? 0 : data.revision;
+    if (data.eventId !== eventId || typeof data.teamName !== 'string' || !data.teamName.trim() || typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 0) throw offlineUnavailable();
+    return { id: row.id, name: data.teamName, revision };
   }).sort((a, b) => a.id.localeCompare(b.id, 'en'));
   const knownTeams = new Set(teams.map(team => team.id)), knownRounds = new Set(normalizedRounds.map(round => round.id));
   // Historical cancelled teams are not part of the current score budget or baseline.
