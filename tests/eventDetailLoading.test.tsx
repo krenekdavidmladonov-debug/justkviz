@@ -235,5 +235,5 @@ it('offers a local retry when the selected quiz cannot be loaded', async () => {
   vi.mocked(getEditorQuiz).mockRejectedValueOnce(new Error('offline')).mockResolvedValue(readyQuiz()); await render();
   expect(host.textContent).toContain('Kvíz se nepodařilo načíst'); expect(prepareButton().disabled).toBe(true);
   await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Zkusit znovu')!.click());
-  expect(host.querySelector('[data-preflight-status]')?.getAttribute('data-preflight-status')).toBe('READY'); expect(prepareButton().disabled).toBe(false);
+  expect(host.querySelector('[data-preflight-status]')?.getAttribute('data-preflight-status')).toBe('READY_WITH_WARNINGS'); expect(prepareButton().disabled).toBe(false);
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import { originalYoutubeSource, canHideInfoSlide, resolveSlideDesign, resolveLegacySlideAppearance, semanticQuestionType } from '@filmovy-kviz/quiz-domain';
+import { buildSemanticQuizModel, originalYoutubeSource, canHideInfoSlide, resolveSlideDesign, resolveLegacySlideAppearance, semanticQuestionType } from '@filmovy-kviz/quiz-domain';
 import type { EditorQuiz, EditorSlide } from './types';
 import { SlideRenderer } from '../presentation/SlideRenderer';
 import type { MediaPlaybackCommand } from '../presentation/types';
@@ -46,13 +46,15 @@ export function QuizPractice({ quiz, onClose }: { quiz: EditorQuiz; onClose: () 
   const type = semanticQuestionType(slide);
   const showAnswer = original.kind === 'recap' ? slide.isQuestion : answer;
   const originalSource = showAnswer && originalVideo ? originalYoutubeSource(slide) : undefined;
+  const roundNumber = useMemo(() => buildSemanticQuizModel(quiz).rounds.find(round => round.id === slide.roundId)?.position, [quiz, slide.roundId]);
   const renderedSlide = useMemo(() => ({
     ...slide,
+    ...(roundNumber === undefined ? {} : { roundNumber }),
     ...resolveLegacySlideAppearance(quiz.defaultAppearance, slide),
     design: resolveSlideDesign(quiz.defaultDesign, quiz.slides.find(item => item.roundId === slide.roundId && ['round', 'roundheader', 'round-header', 'section'].includes(item.kind))?.design ?? quiz.slides.find(item => item.roundId === slide.roundId && item.kind === 'intro' && !item.isQuestion)?.design, slide.design, slide.answerDesign, showAnswer),
     ...(showAnswer ? { revealedAnswer: slide.correctAnswer } : {}),
     ...(originalSource ? { mediaPlaybackMode: 'original' as const, mediaSource: originalSource, clipStartSeconds: 0, clipEndSeconds: null } : {}),
-  }), [quiz, slide, showAnswer, originalSource]);
+  }), [quiz, slide, roundNumber, showAnswer, originalSource]);
   const mediaFinished = useCallback(() => setCommand('finished'), []);
   const change = (next: number) => { setIndex(next); setAnswer(false); setRecapId(''); setOriginalVideo(false); setCommand('idle'); setGeneration(n => n + 1); };
   const run = (next: MediaPlaybackCommand) => { setCommand(next); setGeneration(n => n + 1); };

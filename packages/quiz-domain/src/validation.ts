@@ -169,6 +169,14 @@ export function runQuizPreflight(
       fixTarget: { kind: 'quiz', field: 'quizTitle' },
     });
   }
+  if (!quiz.slides.some(slide => slide.kind.toLowerCase() === 'intro'
+    && !slide.isQuestion && !slide.roundId && slide.hidden !== true)) {
+    issues.push({
+      severity: 'WARNING', code: 'QUIZ_INTRO_MISSING', category: 'STRUCTURE',
+      message: 'Kvíz nemá úvodní snímek. Přidejte úvod, aby moderování začínalo přivítáním.',
+      reference: quizReference, fixTarget: { kind: 'system', systemKey: 'opening' },
+    });
+  }
   if (model.rounds.every((round) => round.id === 'roundless')) {
     issues.push({
       severity: 'BLOCKER', code: 'QUIZ_HAS_NO_ROUNDS', category: 'STRUCTURE',

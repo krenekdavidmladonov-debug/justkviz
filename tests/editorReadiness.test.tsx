@@ -435,7 +435,7 @@ it('debounces edits, hides stale results and checks only the newest complete wor
   await render();
   const calls = vi.mocked(runQuizPreflight).mock.calls.length;
   await act(async () => host.querySelector<HTMLButtonElement>('.readiness-chip')!.click());
-  expect(host.querySelector('[data-preflight-status]')?.getAttribute('data-preflight-status')).toBe('READY');
+  expect(host.querySelector('[data-preflight-status]')?.getAttribute('data-preflight-status')).toBe('READY_WITH_WARNINGS');
   await setText('prompt', '');
   expect(host.querySelector('.readiness-chip')?.textContent).toBe('Zkontrolovat kvíz');
   expect(host.querySelector('[data-preflight-status]')).toBeNull();
@@ -449,7 +449,8 @@ it('debounces edits, hides stale results and checks only the newest complete wor
   expect(vi.mocked(runQuizPreflight).mock.lastCall?.[0].slides[0]?.text).toBe('Nejnovější zadání');
   expect(vi.mocked(runQuizPreflight).mock.lastCall?.[1]).toEqual({ source: 'LOCAL_DRAFT', hasUnsavedChanges: true });
   const result = vi.mocked(runQuizPreflight).mock.results.at(-1)?.value as ReturnType<typeof runQuizPreflight> | undefined;
-  expect(result?.issues.map(issue => issue.code)).toEqual(['UNSAVED_CHANGES']);
+  expect(result?.issues.filter(issue => issue.severity === 'BLOCKER').map(issue => issue.code)).toEqual(['UNSAVED_CHANGES']);
+  expect(result?.issues.some(issue => issue.code === 'QUIZ_INTRO_MISSING')).toBe(true);
   expect(host.querySelector('[data-content-blocker-count]')?.getAttribute('data-content-blocker-count')).toBe('0');
   expect(host.textContent).toContain('Před hraním uložte rozepsané změny');
   expect(host.textContent).not.toContain('Vyžaduje opravu');

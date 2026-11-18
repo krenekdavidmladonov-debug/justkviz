@@ -134,6 +134,7 @@ export type PreflightSource = 'SAVED_QUIZ' | 'LOCAL_DRAFT';
 export type PreflightCategory = EditorValidationCategory | 'PROJECTOR';
 export type PreflightIssueCode = EditorValidationCode
   | 'QUIZ_TITLE_MISSING'
+  | 'QUIZ_INTRO_MISSING'
   | 'QUIZ_HAS_NO_ROUNDS'
   | 'ROUND_TITLE_MISSING'
   | 'ROUND_HAS_NO_QUESTIONS'
@@ -161,7 +162,7 @@ export interface PreflightFixTarget {
   readonly kind: 'quiz' | 'round' | 'question' | 'system';
   readonly roundId?: string;
   readonly questionId?: string;
-  readonly systemKey?: 'agenda';
+  readonly systemKey?: 'agenda' | 'opening';
   readonly field?: string;
 }
 

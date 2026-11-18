@@ -150,6 +150,7 @@ export function mapLiveControlSlide(id: string, data: DocumentData): LiveControl
     isQuestion: data.isQuestion === true,
     ...(optionalString(data, 'roundId') === undefined ? {} : { roundId: optionalString(data, 'roundId') }),
     ...(optionalString(data, 'roundTitle') === undefined ? {} : { roundTitle: optionalString(data, 'roundTitle') }),
+    ...(Number.isSafeInteger(data.roundNumber) && (data.roundNumber as number) > 0 ? { roundNumber: data.roundNumber as number } : {}),
     ...(optionalNumber(data, 'questionNumber') === undefined ? {} : { questionNumber: optionalNumber(data, 'questionNumber') }),
     ...(optionalNumber(data, 'questionCount') === undefined ? {} : { questionCount: optionalNumber(data, 'questionCount') }),
     title: optionalString(data, 'title') ?? '',

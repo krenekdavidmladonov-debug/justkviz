@@ -26,16 +26,17 @@ function quiz(slides: readonly EditorSlide[] = [slide()]): EditorQuiz {
 const codes = (value: ReturnType<typeof runQuizPreflight>) => value.issues.map((issue) => issue.code);
 
 describe('whole-quiz preflight', () => {
-  test('valid free question is ready', () => {
+  test('valid free question without a quiz intro is usable with a warning', () => {
     const result = runQuizPreflight(quiz());
-    expect(result.status).toBe('READY');
+    expect(result.status).toBe('READY_WITH_WARNINGS');
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: 'QUIZ_INTRO_MISSING', severity: 'WARNING' }));
     expect(result.blockerCount).toBe(0);
     expect(result.validAnswerCount).toBe(1);
   });
 
   test('valid choice has one unambiguous correct option', () => {
     const question = slide({ kind: 'question', storedKind: 'question', options: ['První', 'Druhá'], correctAnswer: 'B' });
-    expect(runQuizPreflight(quiz([question])).status).toBe('READY');
+    expect(runQuizPreflight(quiz([question])).status).toBe('READY_WITH_WARNINGS');
   });
 
   test('choice without one valid correct option is blocked', () => {
@@ -108,7 +109,16 @@ describe('whole-quiz preflight', () => {
     const question = slide({ position: 2 });
     const roundHeader = slide({ id: 'round-header', position: 1, storedKind: 'round', kind: 'round', isQuestion: false, title: 'První kolo', correctAnswer: '' });
     const recap = slide({ id: 'recap', position: 3, storedKind: 'recap', kind: 'recap', isQuestion: false, title: 'Rekapitulace', correctAnswer: '' });
-    expect(runQuizPreflight(quiz([roundHeader, question, recap])).status).toBe('READY');
+    expect(runQuizPreflight(quiz([roundHeader, question, recap])).status).toBe('READY_WITH_WARNINGS');
+  });
+
+  test('a visible quiz intro clears the warning, while a hidden or round intro does not', () => {
+    const intro = slide({ id: 'intro', position: 0, kind: 'intro', storedKind: 'intro',
+      isQuestion: false, roundId: undefined, roundTitle: undefined, correctAnswer: '' });
+    expect(runQuizPreflight(quiz([intro, slide()])).status).toBe('READY');
+    for (const other of [{ ...intro, hidden: true }, { ...intro, roundId: 'round-1' }, { ...intro, isQuestion: true }]) {
+      expect(codes(runQuizPreflight(quiz([other, slide()])))).toContain('QUIZ_INTRO_MISSING');
+    }
   });
 
   test('online media uncertainty is a warning rather than a blocker', () => {
