@@ -3,7 +3,7 @@ import { getApps, initializeApp } from 'firebase-admin/app';
 import { getFirestore, Timestamp, type DocumentSnapshot, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
 import { accessActor, securedOnCall, runAccessTransaction } from '../access/authorization.js';
-import { canHideInfoSlide, resolveLegacySlideAppearance, normalizeResultPagination, parseShowCue } from '@filmovy-kviz/quiz-domain';
+import { canHideInfoSlide, eventDisposition, resolveLegacySlideAppearance, normalizeResultPagination, parseShowCue } from '@filmovy-kviz/quiz-domain';
 import { verifiedOriginalYoutubeSource } from '../media/original-source.js';
 import { resolveOriginalImages } from '../media/original-images.js';
 import { loadSnapshotClipAssets } from '../media/snapshot-clip-store.js';
@@ -14,6 +14,7 @@ import { buildPublicSessionState } from './publication.js';
 import { applyLiveSessionAction, applyMediaPlaybackReport } from './session-machine.js';
 import { parseInterimReturn } from './show-mode.js';
 import { adjacentVisibleSlidePosition, requestedNavigationDirection } from './navigation.js';
+import { closeSessions, eventSessions } from './event-lifecycle.js';
 import type {
   LiveMediaCommand,
   LiveMediaPlaybackState,
@@ -265,6 +266,9 @@ export const createLiveSession = securedOnCall('createLiveSession', callableOpti
 
 async function mutateSession(request: CallableRequest<unknown>, kind: MutationKind): Promise<ControlResponse> {
   try {
+    const completeEvent = isObject(request.data) && request.data.completeEvent === true;
+    if (isObject(request.data) && 'completeEvent' in request.data && (kind !== 'end-session' || !completeEvent))
+      throw new HttpsError('invalid-argument', 'Neplatný záměr ukončení akce.');
     if (kind === 'go-to-slide') {
       const direction = requestedNavigationDirection(request.data);
       if (direction !== undefined) kind = direction === 1 ? 'next-slide' : 'previous-slide';
@@ -283,7 +287,23 @@ async function mutateSession(request: CallableRequest<unknown>, kind: MutationKi
       const boundEvent = session.eventId ? (await transaction.get(db.doc('events/' + session.eventId))).data() : undefined;
       if (session.eventId) {
         const event = boundEvent;
-        if (!event || event.liveSessionId !== sessionId || !isObject(event.quizAssignment) || event.quizAssignment.snapshotId !== session.snapshotId || !['ready', 'live', 'finalizing'].includes(event.lifecycleStatus as string)) throw new HttpsError('failed-precondition', 'Akce není dostupná.');
+        const replayedCompletion = completeEvent && session.status === 'ended' && event?.lifecycleStatus === 'completed' && eventDisposition(event) === 'active';
+        if (!event || event.liveSessionId !== sessionId || !isObject(event.quizAssignment) || event.quizAssignment.snapshotId !== session.snapshotId || (!replayedCompletion && !['ready', 'live', 'finalizing'].includes(event.lifecycleStatus as string))) throw new HttpsError('failed-precondition', 'Akce není dostupná.');
+        if (replayedCompletion) {
+          if (revision !== session.revision && revision !== session.revision - 1) throw new LiveSessionError('aborted', 'Live session changed.');
+          return response(session);
+        }
+      }
+      let closing: Awaited<ReturnType<typeof eventSessions>> | undefined;
+      let eventRevision = 0, capabilityVersion = 0;
+      if (completeEvent) {
+        if (!session.eventId || !boundEvent) throw new HttpsError('failed-precondition', 'Relace není navázaná na akci.');
+        const revisionValue: unknown = boundEvent.revision, capabilityValue: unknown = boundEvent.capabilityVersion ?? 0;
+        if (typeof revisionValue !== 'number' || !Number.isSafeInteger(revisionValue) || revisionValue < 1 || revisionValue >= Number.MAX_SAFE_INTEGER
+          || typeof capabilityValue !== 'number' || !Number.isSafeInteger(capabilityValue) || capabilityValue < 0 || capabilityValue >= Number.MAX_SAFE_INTEGER)
+          throw new HttpsError('failed-precondition', 'Revize akce není platná.');
+        eventRevision = revisionValue + 1; capabilityVersion = capabilityValue + 1;
+        closing = await eventSessions(transaction, session.eventId);
       }
       if (finishGeneration !== undefined && finishGeneration !== session.mediaGeneration) {
         throw new LiveSessionError('aborted', 'A stale media callback was ignored.');
@@ -324,7 +344,17 @@ async function mutateSession(request: CallableRequest<unknown>, kind: MutationKi
         action = kind === 'play-media' ? { type: kind, ...(mode === undefined ? {} : { mode }) } : { type: kind };
       }
       const { interimResults, ...presentationSession } = session; void interimResults;
-      const updated = applyLiveSessionAction(presentationSession, action, revision, actor.uid, Timestamp.now(), slide);
+      const now = Timestamp.now();
+      const updated = applyLiveSessionAction(presentationSession, action, revision, actor.uid, now, slide);
+      if (closing && session.eventId) {
+        closeSessions(transaction, closing.filter(row => row.session.sessionId !== sessionId), actor.uid);
+        transaction.update(db.doc('events/' + session.eventId), { lifecycleStatus: 'completed', revision: eventRevision,
+          capabilityVersion, registrationStatus: 'closed', registrationPublished: false, updatedAt: now, updatedBy: actor.uid,
+          completion: { at: now, by: actor.uid, reason: 'Ukončení kvízu moderátorem' } });
+        transaction.delete(db.doc('publicEvents/' + session.eventId));
+        transaction.create(db.doc('eventAudit/live_end_' + sessionId + '_' + updated.revision),
+          { eventId: session.eventId, sessionId, actorUid: actor.uid, action: 'complete', revision: eventRevision, at: now });
+      }
       transaction.set(sessionRef, updated);
       transaction.set(publicRef, buildPublicSessionState(updated, slide));
       return response(updated);

@@ -202,12 +202,10 @@ test('one authored event: quiz, immutable snapshot, public teams, scores, staged
     const confirmedVersion = (await publicState()).finalReveal.versionId;
     await page.getByText('Další možnosti', { exact: true }).click();
     page.once('dialog', dialog => dialog.accept());
-    await page.getByRole('button', { name: 'Ukončit kvíz', exact: true }).click();
+    await page.getByRole('button', { name: 'Dokončit akci a ukončit kvíz', exact: true }).click();
     await expect(publicPage.getByRole('heading', { name: 'Kvíz skončil', exact: true })).toBeVisible();
     await page.goto('/admin/events/' + eventId);
-    await page.locator('.event-actions > summary').click();
-    await page.getByRole('button', { name: 'Ukončit akci', exact: true }).click();
-    await page.getByRole('dialog', { name: 'Ukončit akci', exact: true }).getByRole('button', { name: 'Ukončit akci', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Ukončit akci', exact: true })).toHaveCount(0);
     await expect.poll(async () => (await identity.db.doc('events/' + eventId).get()).get('lifecycleStatus')).toBe('completed');
     await page.getByRole('link', { name: 'Zobrazit výsledky', exact: true }).click();
     await expect(page).toHaveURL(new RegExp('/admin/events/' + eventId + '/results$'));

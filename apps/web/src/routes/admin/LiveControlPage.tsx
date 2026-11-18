@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { doc, runTransaction } from 'firebase/firestore';
 import { Link, useLocation, useParams } from 'react-router-dom';
 
+import { useAuth } from '../../auth/AuthProvider';
 import { SnapshotMediaContext } from '../../features/media/SnapshotMediaContext';
 import {
   endLiveSession,
@@ -97,6 +98,7 @@ export function LiveControlPage() {
 }
 
 function LiveSessionControl({ sessionId, routeSearch }: { readonly sessionId: string | undefined; readonly routeSearch: string }) {
+  const { can } = useAuth();
   const measure = latencyEnabled(routeSearch);
   const [latencyTrace, setLatencyTrace] = useState<LatencyTrace>();
   const latency = useMemo(() => new LiveLatencyCapture(setLatencyTrace), [sessionId]);
@@ -393,6 +395,10 @@ function LiveSessionControl({ sessionId, routeSearch }: { readonly sessionId: st
     }
   }
 
+  function endQuiz(id: string, revision: number) {
+    return endLiveSession(id, revision);
+  }
+
   async function reportPlayback(
     generation: number,
     playbackState: 'ready' | 'playing' | 'error' | 'finished',
@@ -433,7 +439,7 @@ function LiveSessionControl({ sessionId, routeSearch }: { readonly sessionId: st
     try {
       const handled = await eventNavigation.current?.navigate(direction);
       if (!handled && isCurrentSession(generation) && operationIdRef.current === operationId) {
-        if (direction === 1 && session?.eventId && visibleSlidePosition(slides, session.currentSlidePosition, 1) === undefined) await run(endLiveSession, 'end');
+        if (direction === 1 && session?.eventId && visibleSlidePosition(slides, session.currentSlidePosition, 1) === undefined) await run(endQuiz, 'end');
         else await run(direction === 1 ? nextSlide : previousSlide, direction === 1 ? 'next' : 'previous', acceptedAt);
       }
     } finally {
@@ -509,7 +515,8 @@ function LiveSessionControl({ sessionId, routeSearch }: { readonly sessionId: st
       onPlayOriginal={() => void run((id, revision) => playMedia(id, revision, 'original'), 'play')}
       onStop={() => void run(stopMedia, 'stop')}
       onReplay={() => void run(replayMedia, 'replay')}
-      onEnd={() => void run(endLiveSession, 'end')}
+      onEnd={() => void run(endQuiz, 'end')}
+      onCompleteEvent={session.eventId && can('event.manage') ? () => void run((id, revision) => endLiveSession(id, revision, true), 'end') : undefined}
       onMediaFinished={(generation) => void reportPlayback(generation, 'finished')}
       onMediaError={(generation) => {
         if (measure) latency.audio(generation, 'player-error');
