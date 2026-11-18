@@ -327,7 +327,7 @@ export function SlideRenderer({
   }
 
   return (
-    <article data-media-playback-mode={model.mediaPlaybackMode} style={slideDesignStyle(design)} className={`slide-renderer ${projectorMotion ? `pm-projector ${projectorMotion.animated ? 'pm-animate' : 'pm-static'}` : ''} mode-${visibleMode} kind-${model.contentKind} layout-${layout} align-${design.textAlign ?? 'left'} density-${density}${design.backgroundColor ? ' has-custom-background' : ''} image-layout-${fixedQuestion ? 'split' : slide.imageLayout ?? 'split'}${photoQuestion ? ' fixed-photo-question' : ''}${compact ? ' is-compact' : ''}`}>
+    <article data-media-playback-mode={model.mediaPlaybackMode} style={slideDesignStyle(design)} className={`slide-renderer ${projectorMotion ? `pm-projector ${projectorMotion.animated ? `pm-animate pm-${projectorMotion.phase}` : 'pm-static'}` : ''} mode-${visibleMode} kind-${model.contentKind} layout-${layout} align-${design.textAlign ?? 'left'} density-${density}${design.backgroundColor ? ' has-custom-background' : ''} image-layout-${fixedQuestion ? 'split' : slide.imageLayout ?? 'split'}${photoQuestion ? ' fixed-photo-question' : ''}${compact ? ' is-compact' : ''}`}>
       {!standalonePhoto && <>
         <div className="slide-background" aria-hidden="true">{model.backgroundImage && <AssetImage source={model.backgroundImage} alt="" sessionId={mediaSessionId} mediaRole="background-image" {...imageDiagnostic('background-image')} />}</div>
         <div className="slide-background-overlay" style={{ opacity: model.backgroundOverlay / 100 }} aria-hidden="true" />

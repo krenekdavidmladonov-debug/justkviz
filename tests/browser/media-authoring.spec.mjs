@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { mkdir, writeFile, readFile } from 'node:fs/promises';
 import { mediaFixture, syntheticImage, syntheticAudio } from '../e2e/media-fixture.mjs';
+import { requireFullEmulatorEnvironment } from '../../tools/local-emulator-environment.mjs';
 
 const imageFile = () => ({ name:'qa.png', mimeType:'image/png', buffer:syntheticImage() });
 const audioFile = () => ({ name:'qa.wav', mimeType:'audio/wav', buffer:syntheticAudio(5) });
@@ -21,7 +22,8 @@ test('new multimedia authoring, independent roles, replacement, library, failure
   test.setTimeout(300000); const f=await mediaFixture(); const calls=[]; let second;
   await mkdir('.local-data/media-authoring',{recursive:true});
   // Capture only endpoint names/status, never authorization, query strings or request payloads.
-  context.on('response',response=>{const url=new URL(response.url()); if(url.port==='5001')calls.push({endpoint:url.pathname.split('/').pop(),status:response.status()});});
+  const functionsPort = String(requireFullEmulatorEnvironment(process.env, 'Media authoring observer').functionsEndpoint.port);
+  context.on('response',response=>{const url=new URL(response.url()); if(url.port===functionsPort)calls.push({endpoint:url.pathname.split('/').pop(),status:response.status()});});
   await context.route('**/*',route=>['localhost','127.0.0.1'].includes(new URL(route.request().url()).hostname)?route.continue():route.abort());
   await context.route('**/qa-image.png',route=>route.fulfill({contentType:'image/png',body:syntheticImage()}));
   await context.route('**/qa-audio.wav',route=>route.fulfill({contentType:'audio/wav',body:syntheticAudio(5)}));

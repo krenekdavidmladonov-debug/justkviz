@@ -121,15 +121,15 @@
 .pm-projector.pm-static *, .pm-projector.pm-static *::before, .pm-projector.pm-static *::after { animation: none !important; transition: none !important; }
 .pm-projector .round-intro-content.intro-running { animation: none; }
 .pm-projector .pm-round-line { display: block; width: 8cqi; height: .2cqi; margin: 1cqi auto; background: var(--slide-gold); transform-origin: left; }
-.pm-projector.pm-animate .round-intro-content > .slide-kicker { animation: pm-enter 350ms ease-out both; }
-.pm-projector.pm-animate .pm-round-line { animation: pm-fill 350ms 350ms ease-out both; }
-.pm-projector.pm-animate .round-intro-content > h1 { animation: pm-enter 500ms 700ms ease-out both; }
-.pm-projector.pm-animate .round-intro-content > p:last-child:not(.slide-kicker) { animation: pm-enter 400ms 800ms ease-out both; }
+.pm-projector.pm-entry .round-intro-content > .slide-kicker { animation: pm-enter 350ms ease-out both; }
+.pm-projector.pm-entry .pm-round-line { animation: pm-fill 350ms 350ms ease-out both; }
+.pm-projector.pm-entry .round-intro-content > h1 { animation: pm-enter 500ms 700ms ease-out both; }
+.pm-projector.pm-entry .round-intro-content > p:last-child:not(.slide-kicker) { animation: pm-enter 400ms 800ms ease-out both; }
 .pm-word { display: inline-block; animation: pm-enter 120ms ease-out both; }
-.pm-projector.pm-animate .question-image-frame { animation: pm-image 400ms ease-out both; }
+.pm-projector.pm-entry .question-image-frame { animation: pm-image 400ms ease-out both; }
 /* Answer copy is immediately visible. Only its decorative fill enters. */
 .pm-projector .slide-answer { position: relative; isolation: isolate; animation: none; opacity: 1; }
-.pm-projector.pm-animate .slide-answer::before { content: ''; position: absolute; inset: 0; z-index: -1; background: color-mix(in srgb, var(--slide-gold) 9%, transparent); transform-origin: left; animation: pm-fill 450ms ease-out both; }
+.pm-projector.pm-answer .slide-answer::before { content: ''; position: absolute; inset: 0; z-index: -1; background: color-mix(in srgb, var(--slide-gold) 9%, transparent); transform-origin: left; animation: pm-fill 450ms ease-out both; }
 .pm-results .sm-row { position: relative; isolation: isolate; }
 .pm-results.sm-animate .sm-row { animation: pm-enter 300ms var(--pm-row-delay, 0ms) ease-out both; }
 .pm-results .sm-row::before { content: ''; position: absolute; inset: 0; z-index: -1; background: color-mix(in srgb, var(--slide-gold) 10%, transparent); transform-origin: left; transform: scaleX(var(--pm-bar, 0)); }

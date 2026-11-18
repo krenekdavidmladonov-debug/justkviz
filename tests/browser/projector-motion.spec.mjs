@@ -94,7 +94,7 @@ test('synthetic local motion recording for PR GIF', async ({ page }, testInfo) =
   await open(page);
   await scene(page, 'question'); await scene(page, 'round'); await page.waitForTimeout(1250);
   await scene(page, 'image'); await page.waitForTimeout(700);
-  await scene(page, 'answer'); await page.waitForTimeout(500);
+  await page.evaluate(() => window.projectorFixture.reveal()); await page.waitForTimeout(500);
   await scene(page, 'interim'); await page.waitForTimeout(1600);
   await page.screenshot({ path: testInfo.outputPath('synthetic.png') });
   await scene(page, 'question'); await scene(page, 'round'); await page.waitForTimeout(1300);
@@ -116,4 +116,41 @@ test('round sequence and image entrance use bounded transform/opacity only', asy
   expect(animatedProperties).toEqual([]);
   await page.waitForTimeout(650);
   expect(await page.locator('.question-image-frame').evaluate(node => Number(getComputedStyle(node).opacity))).toBe(1);
+});
+
+test('picture reveal preserves every frame of photo geometry and never replays prompt entrance', async ({ page }) => {
+  await open(page);
+  await scene(page, 'image');
+  await expect(page.locator('.question-image-frame')).toHaveCSS('animation-name', 'pm-image');
+  await page.waitForTimeout(650);
+  const observed = await page.evaluate(async () => {
+    const frame = document.querySelector('.question-image-frame');
+    const before = frame.getBoundingClientRect();
+    const baseline = { x: before.x, y: before.y, width: before.width, height: before.height };
+    const start = performance.now();
+    window.projectorFixture.reveal();
+    const samples = [];
+    while (performance.now() - start < 500) {
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      const current = document.querySelector('.question-image-frame');
+      const rect = current.getBoundingClientRect();
+      samples.push({ x: rect.x, y: rect.y, width: rect.width, height: rect.height,
+        imageAnimation: getComputedStyle(current).animationName,
+        promptAnimations: [...document.querySelectorAll('.slide-copy, .slide-copy *')].map(node => getComputedStyle(node).animationName) });
+    }
+    return { baseline, samples, fillAnimation: getComputedStyle(document.querySelector('.slide-answer'), '::before').animationName };
+  });
+  expect(observed.fillAnimation).toBe('pm-fill');
+  for (const sample of observed.samples) {
+    expect({ x: sample.x, y: sample.y, width: sample.width, height: sample.height }).toEqual(observed.baseline);
+    expect(sample.imageAnimation).toBe('none');
+    expect(sample.promptAnimations.every(name => name === 'none')).toBe(true);
+  }
+  await page.evaluate(() => window.projectorFixture.hide());
+  expect(await page.locator('.question-image-frame').evaluate(node => getComputedStyle(node).animationName)).toBe('none');
+  for (const kind of ['media', 'video']) {
+    await scene(page, 'question'); await scene(page, kind);
+    expect(await page.locator('.pm-projector').getAttribute('class')).toContain('pm-static');
+    expect(await page.locator('.slide-copy *').evaluateAll(nodes => nodes.every(node => getComputedStyle(node).animationName === 'none'))).toBe(true);
+  }
 });
