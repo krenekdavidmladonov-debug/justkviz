@@ -364,38 +364,79 @@ it('bounds retained media by bytes, entry count and age and clears pending loads
 });
 
 
-it('pins image cache URLs within one credential/session epoch and rotates the namespace on access invalidation', async () => {
-  const pin = 'a'.repeat(64);
-  http.mockImplementation(async () => new Response('synthetic', { headers: { 'Content-Type': 'image/png',
-    ETag: '"' + pin + '"', 'Cache-Control': 'private,max-age=31536000,immutable' } }));
-  const read = (session = 'pin-session') => readQuizMediaBlob(source, new AbortController().signal, session);
-  await read(); await read();
-  const url = (index: number) => { const input = http.mock.calls[index]![0]; return new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url); };
-  expect(url(0).searchParams.has('pin')).toBe(false);
-  expect(url(1).searchParams.get('pin')).toBe(pin);
-  expect(url(1).searchParams.get('cacheScope')).toBe(url(0).searchParams.get('cacheScope'));
-  expect(http.mock.calls[1]![1]?.headers).toEqual({});
-  expect(http.mock.calls[1]![1]?.cache).toBe('default');
-  await read('other-pin-session');
-  expect(url(2).searchParams.get('cacheScope')).not.toBe(url(0).searchParams.get('cacheScope'));
-  quizMediaBlobCache.clear(); await read();
-  expect(url(3).searchParams.get('cacheScope')).not.toBe(url(0).searchParams.get('cacheScope'));
-  expect(url(3).searchParams.has('pin')).toBe(false);
+const requestedMediaUrl = (input: RequestInfo | URL) => new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url);
+
+it.each(['image/png', 'image/jpeg', 'image/webp', 'audio/mpeg', 'audio/wav', 'video/mp4'].flatMap(mime =>
+  ['public-session', 'private-quiz', 'private-snapshot'].map(scope => [mime, scope] as const)))('uses legacy-compatible %s requests in %s and revalidates retained bytes', async (mime, scope) => {
+  const query = scope === 'public-session' ? { reference: source, sessionId: 'synthetic-session' }
+    : scope === 'private-snapshot' ? { reference: source, snapshotId: 'synthetic-snapshot' } : { reference: source };
+  const authorization = scope === 'public-session' ? {} : { Authorization: 'Bearer synthetic-firebase-token' };
+  const etag = '"' + 'a'.repeat(64) + '"';
+  http.mockImplementation(async (input, request) => {
+    const url = requestedMediaUrl(input);
+    // Model the deployed gateway's strict query allowlist, not the newer cache protocol.
+    if ([...url.searchParams.keys()].some(key => !['reference', 'sessionId', 'snapshotId', 'eventId'].includes(key))) {
+      return new Response(null, { status: 400 });
+    }
+    return new Headers(request?.headers).get('If-None-Match') === etag
+      ? new Response(null, { status: 304 })
+      : new Response('synthetic', { headers: { 'Content-Type': mime, ETag: etag, 'Cache-Control': 'private,max-age=31536000,immutable' } });
+  });
+  const read = () => readQuizMediaBlob(source, new AbortController().signal,
+    scope === 'public-session' ? 'synthetic-session' : undefined,
+    scope === 'private-snapshot' ? 'synthetic-snapshot' : undefined);
+  const original = await read();
+  expect(original.type).toBe(mime);
+  expect(await read()).toBe(original);
+  expect(http).toHaveBeenCalledTimes(2);
+  for (const [input, request] of http.mock.calls) {
+    const url = requestedMediaUrl(input);
+    expect(url.origin).toBe('http://127.0.0.1:5001');
+    expect(url.pathname).toBe('/demo-media-video/europe-west1/readQuizMedia');
+    expect(Object.fromEntries(url.searchParams)).toEqual(query);
+    expect(url.href).not.toContain(mediaIdentity.token);
+    expect(request?.cache).toBe('no-store');
+  }
+  expect(http.mock.calls[0]![1]?.headers).toEqual(authorization);
+  expect(http.mock.calls[1]![1]?.headers).toEqual({ ...authorization, 'If-None-Match': etag });
 });
 
-
-it('a new private credential cannot reuse an old account image namespace or pin', async () => {
-  const pin = 'b'.repeat(64);
-  http.mockImplementation(async () => new Response('synthetic', { headers: { 'Content-Type': 'image/png',
-    ETag: '"' + pin + '"', 'Cache-Control': 'private,max-age=31536000,immutable' } }));
+it('a new private credential cannot revalidate another account retained bytes', async () => {
+  const etag = '"private-image-version"';
+  http.mockImplementation(async () => new Response('synthetic', { headers: { 'Content-Type': 'image/png', ETag: etag } }));
   const read = () => readQuizMediaBlob(source, new AbortController().signal);
   try {
     await read(); await read();
     mediaIdentity.token = 'synthetic-other-account-token'; await read();
-    const requested = http.mock.calls.map(([input]) => new URL(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url));
-    expect(requested[1]!.searchParams.get('pin')).toBe(pin);
-    expect(requested[2]!.searchParams.get('cacheScope')).not.toBe(requested[0]!.searchParams.get('cacheScope'));
-    expect(requested[2]!.searchParams.has('pin')).toBe(false);
-    expect(requested.every(url => !url.href.includes('synthetic-firebase-token') && !url.href.includes('synthetic-other-account-token'))).toBe(true);
+    expect(http.mock.calls[1]![1]?.headers).toEqual({ Authorization: 'Bearer synthetic-firebase-token', 'If-None-Match': etag });
+    expect(http.mock.calls[2]![1]?.headers).toEqual({ Authorization: 'Bearer synthetic-other-account-token' });
+    for (const [input, request] of http.mock.calls) {
+      const url = requestedMediaUrl(input);
+      expect(Object.fromEntries(url.searchParams)).toEqual({ reference: source });
+      expect(url.href).not.toContain('synthetic-firebase-token');
+      expect(url.href).not.toContain('synthetic-other-account-token');
+      expect(request?.cache).toBe('no-store');
+    }
   } finally { mediaIdentity.token = 'synthetic-firebase-token'; }
+});
+
+it('isolates private quiz, snapshot and public session revalidation and invalidates retained bytes on access change', async () => {
+  const etag = '"isolated-image-version"';
+  http.mockImplementation(async () => new Response('synthetic', { headers: { 'Content-Type': 'image/png', ETag: etag } }));
+  const read = (sessionId?: string, snapshotId?: string) => readQuizMediaBlob(source, new AbortController().signal, sessionId, snapshotId);
+  await read(); await read();
+  await read(undefined, 'snapshot-one'); await read(undefined, 'snapshot-one');
+  await read(undefined, 'snapshot-two');
+  await read('session-one'); await read('session-one'); await read('session-two');
+  for (const index of [0, 2, 4]) expect(http.mock.calls[index]![1]?.headers).toEqual({ Authorization: 'Bearer synthetic-firebase-token' });
+  for (const index of [1, 3]) expect(http.mock.calls[index]![1]?.headers).toEqual({ Authorization: 'Bearer synthetic-firebase-token', 'If-None-Match': etag });
+  for (const index of [5, 7]) expect(http.mock.calls[index]![1]?.headers).toEqual({});
+  expect(http.mock.calls[6]![1]?.headers).toEqual({ 'If-None-Match': etag });
+  const epoch = quizMediaBlobCache.epoch;
+  quizMediaBlobCache.clear();
+  expect(quizMediaBlobCache.epoch).toBeGreaterThan(epoch);
+  await read('session-one'); await read(undefined, 'snapshot-one');
+  expect(http.mock.calls[8]![1]?.headers).toEqual({});
+  expect(http.mock.calls[9]![1]?.headers).toEqual({ Authorization: 'Bearer synthetic-firebase-token' });
+  expect(http.mock.calls.every(([, request]) => request?.cache === 'no-store')).toBe(true);
 });
