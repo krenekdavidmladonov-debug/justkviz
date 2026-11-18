@@ -1,3 +1,4 @@
+import { mediaReadiness } from './media-readiness.js';
 import { parseQuizAsset } from './media-assets.js';
 import { generatedAgendaOptions, isSafeHttpUrl, youtubeVideoId, directMediaKind } from './presentation.js';
 import { buildSemanticQuizModel, questionPrompt, semanticQuestionType } from './semantic.js';
@@ -153,7 +154,7 @@ function fixTarget(field: string, roundId: string, questionId: string): Prefligh
 
 export function runQuizPreflight(
   quiz: EditorQuiz,
-  options: { readonly source?: PreflightSource; readonly hasUnsavedChanges?: boolean } = {},
+  options: { readonly source?: PreflightSource; readonly hasUnsavedChanges?: boolean; readonly imageWidths?: ReadonlyMap<string, number>; readonly offlineExcludedReferences?: ReadonlySet<string> } = {},
 ): PreflightResult {
   const validationStartedAt = performance.now();
   const model = buildSemanticQuizModel(quiz);
@@ -268,6 +269,9 @@ export function runQuizPreflight(
     });
   }
 
+  const media = mediaReadiness(quiz, options);
+  issues.push(...media.issues);
+
   const countFor = (category: PreflightCategory) => ({
     blockers: issues.filter((item) => item.category === category && item.severity === 'BLOCKER').length,
     warnings: issues.filter((item) => item.category === category && item.severity === 'WARNING').length,
@@ -280,6 +284,7 @@ export function runQuizPreflight(
   return {
     status: blockerCount > 0 ? 'BLOCKED' : warningCount > 0 ? 'READY_WITH_WARNINGS' : 'READY',
     source,
+    media: media.summary,
     validationDurationMs: performance.now() - validationStartedAt,
     roundCount: model.rounds.length,
     questionCount: model.rounds.reduce((total, round) => total + round.questions.length, 0),

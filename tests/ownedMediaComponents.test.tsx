@@ -1,4 +1,7 @@
 // @vitest-environment happy-dom
+import { ImageResolutionCheck } from '../apps/web/src/features/preflight/ImageResolutionCheck';
+import { clearPreflightImageObservations, preflightImageWidths, preflightImageObservationEpoch, recordPreflightImageWidth } from '../apps/web/src/features/preflight/imageObservations';
+
 import React, { act, useEffect, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
@@ -20,6 +23,7 @@ const playback=vi.fn(),finished=vi.fn(),failed=vi.fn();
 const render=(command:'idle'|'play'|'replay'|'stop',generation=1,reference=source)=>act(async()=>root.render(<MediaPlayer source={reference} command={command} generation={generation} startSeconds={1} endSeconds={3} onPlaybackState={playback} onFinished={finished} onError={failed}/>));
 const event=async(player:HTMLMediaElement,name:string)=>act(async()=>{player.dispatchEvent(new Event(name));});
 beforeEach(()=>{
+  clearPreflightImageObservations();
   Object.assign(globalThis,{IS_REACT_ACT_ENVIRONMENT:true});window.__FILMOVY_KVIZ_MEDIA_DEBUG__=undefined;
   host=document.createElement('div');document.body.append(host);root=createRoot(host);
   vi.mocked(readQuizMediaBlob).mockResolvedValue(new Blob(['synthetic'],{type:'audio/wav'}));
@@ -369,4 +373,57 @@ test.each([['video', 'video/mp4'], ['audio', 'audio/wav']] as const)('keeps the 
   expect(host.querySelector(kind)).toBe(player); expect(player.currentTime).toBe(1);
   expect(readQuizMediaBlob).toHaveBeenCalledOnce();
   expect(window.__FILMOVY_KVIZ_MEDIA_DEBUG__).toMatchObject({ activePlayers: 1, createdPlayers: 1, destroyedPlayers: 0 });
+});
+
+
+test('resolution inspection is opt-in, deduplicated, bounded to three loads and cancellable', async () => {
+  const sources = Array.from({ length: 6 }, (_, index) => `https://example.test/${index}.png`);
+  await act(async () => root.render(<ImageResolutionCheck sources={[...sources, sources[0]!]} />));
+  expect(host.textContent).toContain('Neověřené obrázky: 6 z 6');
+  expect(host.querySelectorAll('img')).toHaveLength(0);
+  await act(async () => host.querySelector('button')!.click());
+  expect(host.querySelectorAll('img')).toHaveLength(3);
+  const image = host.querySelector('img')!;
+  Object.defineProperty(image, 'naturalWidth', { value: 799, configurable: true });
+  await act(async () => image.dispatchEvent(new Event('load')));
+  expect(preflightImageWidths().get(sources[0]!)).toBe(799);
+  expect(host.querySelectorAll('img')).toHaveLength(3);
+  expect(host.textContent).toContain('Neověřené obrázky: 5 z 6');
+  await act(async () => host.querySelector('button')!.click());
+  expect(host.querySelectorAll('img')).toHaveLength(0);
+});
+
+test('resolution timeout retains unknown dimensions and identity invalidation prevents late observations', async () => {
+  vi.useFakeTimers();
+  const sources = ['https://example.test/timeout.png'];
+  await act(async () => root.render(<ImageResolutionCheck sources={sources} />));
+  await act(async () => host.querySelector('button')!.click());
+  await act(async () => vi.advanceTimersByTime(12_001));
+  expect(host.querySelectorAll('img')).toHaveLength(0);
+  expect(host.textContent).toContain('Neověřené obrázky: 1 z 1');
+  await act(async () => host.querySelector('button')!.click());
+  const staleEpoch = preflightImageObservationEpoch();
+  await act(async () => clearPreflightImageObservations());
+  expect(host.querySelectorAll('img')).toHaveLength(0);
+  recordPreflightImageWidth(sources[0]!, 100, staleEpoch);
+  expect(preflightImageWidths().size).toBe(0);
+  expect(host.textContent).toContain('Neověřené obrázky: 1 z 1');
+});
+
+test('resolution observation cache stays bounded and is erased with private access', () => {
+  const epoch = preflightImageObservationEpoch();
+  for (let index = 0; index < 600; index++) recordPreflightImageWidth('synthetic-' + index, 800, epoch);
+  expect(preflightImageWidths().size).toBe(512);
+  clearPreflightImageObservations();
+  expect(preflightImageWidths().size).toBe(0);
+});
+
+test('resolution inspection drops queued sources removed by current permissions', async () => {
+  const sources = Array.from({ length: 5 }, (_, index) => `https://example.test/permission-${index}.png`);
+  await act(async () => root.render(<ImageResolutionCheck sources={sources} />));
+  await act(async () => host.querySelector('button')!.click());
+  expect(host.querySelectorAll('img')).toHaveLength(3);
+  await act(async () => root.render(<ImageResolutionCheck sources={[]} />));
+  expect(host.querySelectorAll('img')).toHaveLength(0);
+  expect(host.querySelector('button')!.disabled).toBe(true);
 });

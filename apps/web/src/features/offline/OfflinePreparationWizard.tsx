@@ -1,3 +1,7 @@
+import { useSyncExternalStore } from 'react';
+import { SnapshotMediaContext } from '../media/SnapshotMediaContext';
+import { ImageResolutionCheck } from '../preflight/ImageResolutionCheck';
+import { clearPreflightImageObservations, preflightImageWidths, subscribePreflightImageWidths } from '../preflight/imageObservations';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { offlineEventLimits, type OfflineEventPreflight, type OfflineIssue, type OfflineMediaCounts } from '@filmovy-kviz/quiz-domain';
 import { OfflineNotebookStep, offlineTransferHref, useOfflineInstallPrompt } from './OfflineNotebookStep';
@@ -5,6 +9,22 @@ import { OfflinePreparationBlocked, OfflinePreparationIssues, prepareOfflineEven
   savePreparedOfflineEvent, verifySavedOfflineEvent, type PreparedOfflineEvent } from './offlinePreparation';
 import { listOfflineSessions, type StoredOfflineSession } from './offlineStore';
 import './offlineWizard.css';
+
+function MediaRecommendations({ check }: { readonly check: OfflineEventPreflight }) {
+  const widths = useSyncExternalStore(subscribePreflightImageWidths, preflightImageWidths);
+  const recommendations = check.recommendations;
+  if (!recommendations) return null;
+  const { media, imageSources } = recommendations;
+  const small = imageSources.filter(source => { const width = widths.get(source); return width !== undefined && width < 800; }).length;
+  return <section aria-label="Doporučení před offline balíčkem">
+    <strong>Doporučení k médiím</strong>
+    <p>Do offline balíčku nevstupuje {media.offlineExcludedCount} médií: YouTube {media.youtubeCount}, Google Drive {media.driveCount}, ostatní externí odkazy {media.externalCount}. Opakované použití stejného zdroje počítáme jednou.</p>
+    <p>Obrázky pod 800 px na šířku: {small}. Adresy obrázků s možnou nápovědou: {media.answerUrlCount}.</p>
+    {recommendations.issues.length > 0 && <Issues issues={recommendations.issues} />}
+    <SnapshotMediaContext.Provider value={check.snapshotId}><ImageResolutionCheck sources={imageSources} /></SnapshotMediaContext.Provider>
+    <p>Doporučení sama neblokují spuštění ani nemění kvíz. Technické podmínky offline balíčku jsou uvedené samostatně.</p>
+  </section>;
+}
 
 const steps = [
   { title: 'Zkontrolovat kvíz', short: 'Kontrola' },
@@ -177,6 +197,7 @@ export function OfflinePreparationWizard({ eventId, transferTarget }: { eventId:
     void import('./offlineOnline').then(({ observeOfflineIdentity }) => {
       if (!active) return;
       unsubscribe = observeOfflineIdentity(() => {
+        clearPreflightImageObservations();
         ++epoch.current;
         building.current?.abort();
         request.current = null;
@@ -332,6 +353,7 @@ export function OfflinePreparationWizard({ eventId, transferTarget }: { eventId:
         {progress && <p className="offline-wizard-progress" role="status">{progress}{media && <> Hotovo {media.done} z {media.total} médií.</>}</p>}
         {showProblem}
         {issues.length > 0 && <div className="offline-wizard-problem" role="alert"><strong>Je potřeba něco opravit</strong><Issues issues={issues} /></div>}
+        {check && step < 3 && <MediaRecommendations check={check} />}
         {step === 1 && <>
           {!busy && check && !problem && issues.length === 0 && <div className="offline-wizard-success" role="status">
             <strong>Kvíz lze připravit</strong>

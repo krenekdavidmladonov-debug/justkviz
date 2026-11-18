@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { Timestamp, type Transaction } from '../functions/node_modules/firebase-admin/lib/firestore/index.js';
-import { readOfflineSource } from '../functions/src/offline/source';
+import { offlineMediaRecommendations } from '../functions/src/offline/readiness';
+import { requiredOfflineMedia, readOfflineSource } from '../functions/src/offline/source';
 
 const sdk = vi.hoisted(() => ({ firestore: vi.fn() }));
 vi.mock('../functions/node_modules/firebase-admin/lib/esm/firestore/index.js', async () => ({
@@ -46,4 +47,28 @@ it.each([0, 1, 8])('preserves an explicit valid registration revision %s', async
 it.each([null, '1', -1, 1.5, Number.MAX_SAFE_INTEGER + 1])('rejects an explicit malformed registration revision %s', async revision => {
   registrations[0]!.data.revision = revision;
   await expect(readOfflineSource(transaction, eventId, identity)).rejects.toMatchObject({ code: 'failed-precondition' });
+});
+
+
+it('read-only advice counts the actual deduplicated export exclusions including pinned Drive assets', async () => {
+  const source = await readOfflineSource(transaction, eventId, identity);
+  const external = 'https://example.test/zelva.png', driveUrl = 'https://drive.google.com/file/d/synthetic/view';
+  const ownedDrive = 'quiz-asset:synthetic-quiz/' + 'a'.repeat(64), ownedStorage = 'quiz-asset:synthetic-quiz/' + 'b'.repeat(64);
+  const prepared = { ...source, slides: [{ ...source.slides[0]!, kind: 'video' as const, mediaSource: 'abcdefghijk',
+    questionImage: external, backgroundImage: external, answerImage: driveUrl, correctAnswer: 'Želva',
+    media: [{ role: 'prompt' as const, kind: 'image' as const, source: ownedDrive }, { role: 'prompt' as const, kind: 'image' as const, source: ownedStorage }] }] };
+  const inventory = requiredOfflineMedia(prepared);
+  expect([...inventory.excluded.keys()]).toEqual([external, driveUrl, 'abcdefghijk']);
+  expect(inventory.required.size).toBe(2);
+  const before = JSON.stringify(prepared);
+  const recommendations = offlineMediaRecommendations(prepared, [
+    { reference: ownedDrive, position: 1, field: 'media', record: { storageBackend: 'drive' } },
+    { reference: ownedStorage, position: 1, field: 'media', record: { storageBackend: 'storage' } },
+  ]);
+  expect(recommendations.media).toMatchObject({ offlineExcludedCount: 4, youtubeCount: 1, driveCount: 2, externalCount: 1, answerUrlCount: 1, unknownImageCount: 4 });
+  expect(recommendations.imageSources).toEqual(expect.arrayContaining([external, driveUrl, ownedDrive, ownedStorage]));
+  expect(JSON.stringify(recommendations.issues)).not.toContain('Želva');
+  expect(JSON.stringify(recommendations.issues)).not.toContain(external);
+  expect(JSON.stringify(prepared)).toBe(before);
+  expect(requiredOfflineMedia(prepared).issues).toEqual(inventory.issues);
 });

@@ -159,6 +159,8 @@ export function manifestFromSource(source: OfflineSource, header: { exportId: st
 
 export function requiredOfflineMedia(source: OfflineSource) {
   const required = new Map<string, { kind: 'image' | 'audio' | 'video'; position: number; field: string }>(), issues: OfflineIssue[] = [];
+  // Read-only diagnostic inventory; never consumed by the export acceptance path.
+  const excluded = new Map<string, { position: number; field: string }>();
   const show = normalizeShowPreferences(source.event.showPreferences);
   if (show.audioEnabled) for (const cue of Object.keys(show.cues)) issues.push({ slidePosition: 0, field: 'showPreferences.' + cue,
     message: 'Samostatná hudba online vyhlášení není součástí offline přehrávání otázek. Vypněte tuto volitelnou hudbu před přípravou, nebo ji zařaďte jako vlastní zvukový snímek kvízu.' });
@@ -196,6 +198,7 @@ export function requiredOfflineMedia(source: OfflineSource) {
     if (value === '' || value === undefined || value === null) return;
     const parsed = parseQuizAsset(value);
     if (typeof value !== 'string' || !parsed || parsed.quizId !== source.quizId) {
+      if (typeof value === 'string') excluded.set(value, { position, field });
       if (typeof value === 'string' && kind !== 'image' && youtubeVideoId(value)) {
         const replacement = kind === 'audio' ? 'zvukový soubor' : 'soubor MP4';
         issues.push({ slidePosition: position, field, message: `Ukázku z YouTube nelze uložit offline. Nahrajte vlastní ${replacement}, k němuž máte práva.` });
@@ -234,5 +237,5 @@ export function requiredOfflineMedia(source: OfflineSource) {
     if (!visibility || visibility.has('unknown') || (visibility.has('public') && visibility.has('answer')))
       issues.push({ slidePosition: use.position, field: use.field, message: 'Médium má nejednoznačné soukromé použití nebo sdílí soubor otázky a odpovědi. Použijte oddělené vlastní soubory.' });
   }
-  return { required, issues };
+  return { required, issues, excluded };
 }

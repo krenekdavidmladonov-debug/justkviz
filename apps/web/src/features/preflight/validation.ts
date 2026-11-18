@@ -52,3 +52,12 @@ export function quizWithDraft(
     slides,
   };
 }
+/** Recheck current UI authority even if the editor still holds a previously loaded private model. */
+export function preflightVisibleQuiz(quiz: EditorQuiz, answersReadable: boolean): EditorQuiz {
+  if (answersReadable) return quiz;
+  return { ...quiz, slides: quiz.slides.map(slide => {
+    const { answerDesign, ...visible } = slide; void answerDesign;
+    return { ...visible, correctAnswer: '', answerImage: '', answerExplanation: '',
+      media: slide.media.filter(media => media.role === 'prompt' || media.role === 'background') };
+  }) };
+}

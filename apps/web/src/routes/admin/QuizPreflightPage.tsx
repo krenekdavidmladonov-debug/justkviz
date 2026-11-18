@@ -35,7 +35,7 @@ export function QuizPreflightPage() {
 
   return <article className="quiz-preflight-page">
     <Link className="back-link" to={`/admin/quizzes/${encodeURIComponent(quiz.id)}`}>← Detail kvízu</Link>
-    <QuizPreflightPanel quizId={quiz.id} result={result} onRecheck={() => void load()} />
+    <QuizPreflightPanel answersReadable quiz={quiz} quizId={quiz.id} result={result} onRecheck={() => void load()} />
     <section className="preflight-start-card" aria-label="Spuštění kvízu">
       <strong>Kontrola je dobrovolná.</strong>
       <p>Nalezené položky si můžete projít a opravit. Spuštění nevyžaduje dokončení kontroly ani potvrzení doporučení.</p>
