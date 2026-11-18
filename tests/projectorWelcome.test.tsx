@@ -26,14 +26,14 @@ async function mounted(element: React.ReactNode) {
 }
 
 for (const kind of ['intro', 'round']) {
-  test.each(['projector', 'moderator', 'editor', 'offline'])(`${kind} shows a round number in %s`, async surface => {
+  test.each(['projector', 'moderator', 'editor', 'offline'])(`${kind} uses its own kicker in %s even with a round number`, async surface => {
     const slide = <SlideRenderer quizTitle="Večerní kvíz" mediaEnabled={false}
       {...(surface === 'editor' ? { mode: 'editorPreview' as const } : {})}
-      slide={{ kind, roundNumber: 3, title: 'Český film', text: '', options: [], media: [] }} />;
+      slide={{ kind, roundNumber: kind === 'intro' ? 1 : 3, title: 'Český film', text: '', options: [], media: [] }} />;
     const view = await mounted(surface === 'projector'
       ? <ProjectorMotionContext.Provider value={{ animated: false, key: 'round', phase: 'none' }}>{slide}</ProjectorMotionContext.Provider>
       : slide);
-    try { expect(view.host.querySelector('.slide-kicker')?.textContent).toBe('3. KOLO'); }
+    try { expect(view.host.querySelector('.slide-kicker')?.textContent).toBe(kind === 'intro' ? 'VÍTEJTE NA KVÍZU' : '3. KOLO'); }
     finally { await view.close(); }
   });
 }

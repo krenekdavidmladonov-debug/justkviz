@@ -319,7 +319,7 @@ export function SlideRenderer({
   } else if (model.contentKind === 'rules') {
     content = <div className="slide-centered slide-list"><p className="slide-kicker">PRAVIDLA</p><h1>{model.title || 'Hrajeme fér'}</h1>{model.text && <p>{model.text}</p>}<AgendaItems items={model.options.length > 0 ? model.options : defaultRules} /></div>;
   } else if (model.contentKind === 'intro' || model.contentKind === 'roundIntro') {
-    content = <div key={introGeneration} className={`slide-centered round-intro-content ${introGeneration > 0 ? 'intro-running' : ''}`}><p className="slide-kicker">{roundLabel ?? (model.contentKind === 'intro' ? 'VÍTEJTE NA KVÍZU' : 'NOVÉ KOLO')}</p>{projectorMotion && <span className="pm-round-line" aria-hidden="true" />}<h1>{model.title || quizTitle}</h1>{model.text && <p>{model.text}</p>}</div>;
+    content = <div key={introGeneration} className={`slide-centered round-intro-content ${introGeneration > 0 ? 'intro-running' : ''}`}><p className="slide-kicker">{model.contentKind === 'intro' ? 'VÍTEJTE NA KVÍZU' : roundLabel ?? 'NOVÉ KOLO'}</p>{projectorMotion && <span className="pm-round-line" aria-hidden="true" />}<h1>{model.title || quizTitle}</h1>{model.text && <p>{model.text}</p>}</div>;
   } else if (model.contentKind === 'end') {
     content = <div className="slide-centered"><p className="slide-kicker">DĚKUJEME</p><h1>{model.title || 'To je pro dnešek vše'}</h1>{model.text && <p>{model.text}</p>}</div>;
   } else if (model.contentKind === 'thank-you') {

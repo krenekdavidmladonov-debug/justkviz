@@ -277,14 +277,18 @@ function writePreflightQuiz(batch: WriteBatch, quizId: string, state: 'ready' | 
     updatedAt: timestamp,
     createdBy: seedActor,
     updatedBy: seedActor,
-    slideCount: slides.length,
+    slideCount: slides.length + 1,
     roundCount: 1,
     questionCount: 1,
+  });
+  batch.set(quizRef.collection('slides').doc('quiz-intro'), {
+    kind: 'intro', isQuestion: false, position: 1, title: `Preflight ${state}`,
+    text: '', options: [], correctAnswer: '', media: [], presentation: {},
   });
   slides.forEach((slide, index) => {
     batch.set(quizRef.collection('slides').doc(`slide-${String(index + 1).padStart(3, '0')}`), {
       ...slide,
-      position: index + 1,
+      position: index + 2,
       roundId: 'preflight-round',
       roundTitle: 'Syntetické kolo',
       ...(slide.isQuestion ? { questionNumber: 1, questionCount: 1 } : {}),

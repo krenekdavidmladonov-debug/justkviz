@@ -67,7 +67,7 @@ test('private rehearsal derives each round number from its position, including l
     await act(async () => { next.click(); });
     expect(host.querySelector('.slide-round-title')?.textContent).toBe('1. KOLO · První téma');
     await act(async () => { next.click(); });
-    expect(host.querySelector('.slide-kicker')?.textContent).toBe('2. KOLO');
+    expect(host.querySelector('.slide-kicker')?.textContent).toBe('VÍTEJTE NA KVÍZU');
     expect(host.querySelector('.slide-renderer h1')?.textContent).toBe('Druhé téma');
   } finally {
     await act(async () => { root.unmount(); });
