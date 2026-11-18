@@ -14,11 +14,11 @@ async function openRounds(page) { await expect(page.locator('.outline-round').fi
 
 async function start(page,f) { await page.goto('/admin/login'); await page.getByLabel('E-mail').fill(f.loginEmail); await page.getByLabel('Heslo').fill(f.loginPassword); await page.getByRole('button',{name:'Přihlásit se'}).click(); await expect(page).toHaveURL(/\/admin$/); await page.goto('/admin/quizzes/'+f.quizId+'/edit'); await openRounds(page); }
 async function newQuestion(page,type,text) { const names={Obrázek:'Otázka s obrázkem',Audio:'Otázka se zvukem',Video:'Otázka s videem'}; await page.locator('.outline-round').first().getByRole('button',{name:/Další typy otázek pro kolo/}).click(); await page.getByRole('dialog',{name:/Typ otázky/}).getByRole('button',{name:names[type]??type,exact:true}).click(); await questionText(page).fill(text); await page.locator('[data-preflight-field="correctAnswer"] textarea').fill('Syntetická odpověď QA'); }
-async function reopen(page,text) { await page.getByRole('link',{name:'← Knihovna kvízů'}).click(); await page.getByRole('link',{name:'Syntetická vlastní média',exact:true}).click(); await page.getByRole('link',{name:'Otevřít editor'}).click(); await openRounds(page); await page.locator('.outline-question').filter({hasText:text}).click(); await expect(questionText(page)).toHaveValue(text); await page.reload(); await openRounds(page); await page.locator('.outline-question').filter({hasText:text}).click(); await expect(questionText(page)).toHaveValue(text); }
+async function reopen(page,f,text) { await page.getByRole('link',{name:'← Knihovna kvízů'}).click(); await page.locator('a.quiz-title-link[href="/admin/quizzes/'+f.quizId+'"]').click(); await page.getByRole('link',{name:'Otevřít editor'}).click(); await openRounds(page); await page.locator('.outline-question').filter({hasText:text}).click(); await expect(questionText(page)).toHaveValue(text); await page.reload(); await openRounds(page); await page.locator('.outline-question').filter({hasText:text}).click(); await expect(questionText(page)).toHaveValue(text); }
 async function link(page,label,url) { const field=picker(page,label); await field.getByRole('button',{name:'Vložit odkaz',exact:true}).click(); await field.getByRole('textbox').fill(url); await field.getByRole('button',{name:'Použít odkaz',exact:true}).click(); await expect(field.getByRole('textbox')).toHaveCount(0); }
 
 test('new multimedia authoring, independent roles, replacement, library, failures and conflict',async({page,context})=>{
-  test.setTimeout(300000); const f=await mediaFixture(); const calls=[]; let second;
+  test.setTimeout(300000); const f=await mediaFixture(); const calls=[]; let second, sameTitle;
   await mkdir('.local-data/media-authoring',{recursive:true});
   // Capture only endpoint names/status, never authorization, query strings or request payloads.
   context.on('response',response=>{const url=new URL(response.url()); if(url.port==='5001')calls.push({endpoint:url.pathname.split('/').pop(),status:response.status()});});
@@ -28,6 +28,8 @@ test('new multimedia authoring, independent roles, replacement, library, failure
   const videoBytes=await readFile('tests/fixtures/media/synthetic.webm');
   await context.route('**/qa-video.webm',route=>route.fulfill({contentType:'video/webm',body:videoBytes}));
   try {
+    sameTitle=await mediaFixture();
+    expect((await sameTitle.quizRef.get()).get('title')).toBe((await f.quizRef.get()).get('title'));
     await start(page,f);
     await newQuestion(page,'Obrázek','QA nová obrázková otázka');
     await page.getByLabel('Obrázek otázky — soubor',{exact:true}).setInputFiles(imageFile());
@@ -40,18 +42,18 @@ test('new multimedia authoring, independent roles, replacement, library, failure
     await expect(background(page).getByText('Ověřené médium tohoto kvízu',{exact:false})).toBeVisible();
     await expect(page.locator('.round-editor-preview .slide-answer')).toHaveCount(0);
     await expect.poll(()=>page.locator('.round-editor-preview .slide-background img').evaluate(img=>img.naturalWidth)).toBe(8);
-    await save(page); await reopen(page,'QA nová obrázková otázka');
+    await save(page); await reopen(page,f,'QA nová obrázková otázka');
 
-    await link(page,'Obrázek otázky','http://127.0.0.1:5198/qa-image.png'); await save(page); await reopen(page,'QA nová obrázková otázka');
+    await link(page,'Obrázek otázky','http://127.0.0.1:5198/qa-image.png'); await save(page); await reopen(page,f,'QA nová obrázková otázka');
     const imagePicker=picker(page,'Obrázek otázky'); await imagePicker.getByRole('button',{name:'Vybrat z médií tohoto kvízu',exact:true}).click(); await imagePicker.getByRole('button',{name:/Vybrat médium 1/}).click(); await save(page);
-    await extras(page); await background(page).getByRole('button',{name:'Odebrat',exact:true}).click(); await picker(page,'Obrázek odpovědi (soukromý)').getByRole('button',{name:'Odebrat',exact:true}).click(); await save(page); await reopen(page,'QA nová obrázková otázka');
+    await extras(page); await background(page).getByRole('button',{name:'Odebrat',exact:true}).click(); await picker(page,'Obrázek odpovědi (soukromý)').getByRole('button',{name:'Odebrat',exact:true}).click(); await save(page); await reopen(page,f,'QA nová obrázková otázka');
     await expect(page.locator('.round-editor-preview .slide-background img')).toHaveCount(0);
-    await newQuestion(page,'Audio','QA nové audio'); await page.getByLabel('Zdroj ukázky — soubor',{exact:true}).setInputFiles(audioFile()); await expect(picker(page,'Zdroj ukázky').getByText('Ověřené médium tohoto kvízu',{exact:false})).toBeVisible(); await timing(page); await save(page); await reopen(page,'QA nové audio');
+    await newQuestion(page,'Audio','QA nové audio'); await page.getByLabel('Zdroj ukázky — soubor',{exact:true}).setInputFiles(audioFile()); await expect(picker(page,'Zdroj ukázky').getByText('Ověřené médium tohoto kvízu',{exact:false})).toBeVisible(); await timing(page); await save(page); await reopen(page,f,'QA nové audio');
     await page.getByRole('button',{name:'Přehrát ukázku',exact:true}).click(); await expect(page.getByText('Ukázka dohrála.',{exact:true})).toBeVisible(); await expect.poll(()=>page.locator('audio').evaluate(a=>a.paused)).toBe(true);
-    await link(page,'Zdroj ukázky','http://127.0.0.1:5198/qa-audio.wav'); await timing(page); await save(page); await reopen(page,'QA nové audio');
-    await newQuestion(page,'Video','QA nové video'); await link(page,'Zdroj ukázky','https://youtu.be/abcdefghijk'); await timing(page); await save(page); await reopen(page,'QA nové video');
+    await link(page,'Zdroj ukázky','http://127.0.0.1:5198/qa-audio.wav'); await timing(page); await save(page); await reopen(page,f,'QA nové audio');
+    await newQuestion(page,'Video','QA nové video'); await link(page,'Zdroj ukázky','https://youtu.be/abcdefghijk'); await timing(page); await save(page); await reopen(page,f,'QA nové video');
     await link(page,'Zdroj ukázky','https://www.youtube.com/shorts/lmnopqrstuv'); await timing(page); await save(page);
-    await link(page,'Zdroj ukázky','http://127.0.0.1:5198/qa-video.webm'); await timing(page); await save(page); const videoSlide=(await f.quizRef.collection('slides').get()).docs.find(d=>d.data().text==='QA nové video'); expect(videoSlide.data().mediaSource).toBe('http://127.0.0.1:5198/qa-video.webm'); await reopen(page,'QA nové video');
+    await link(page,'Zdroj ukázky','http://127.0.0.1:5198/qa-video.webm'); await timing(page); await save(page); const videoSlide=(await f.quizRef.collection('slides').get()).docs.find(d=>d.data().text==='QA nové video'); expect(videoSlide.data().mediaSource).toBe('http://127.0.0.1:5198/qa-video.webm'); await reopen(page,f,'QA nové video');
     await page.getByRole('button',{name:'Přehrát ukázku',exact:true}).click(); await expect.poll(()=>page.locator('video').evaluate(v=>v.currentTime)).toBeGreaterThan(1); await page.locator('video').evaluate(v=>v.scrollIntoView({block:'center',behavior:'instant'}));  await expect(page.getByText('Ukázka dohrála.',{exact:true})).toBeVisible();
     await page.locator('.outline-question').filter({hasText:'QA nová obrázková otázka'}).click(); await expect(questionText(page)).toHaveValue('QA nová obrázková otázka');
     await questionText(page).fill('QA text zachovaný při chybě');
@@ -71,5 +73,5 @@ test('new multimedia authoring, independent roles, replacement, library, failure
     expect(calls.some(c=>c.endpoint==='createQuizSlide'&&c.status===200)).toBe(true);expect(calls.some(c=>c.endpoint==='readQuizMedia'&&c.status===200)).toBe(true);
     expect(calls.some(c=>/Email|TeamMessage/.test(c.endpoint))).toBe(false);
     await writeFile('.local-data/media-authoring/browser-network-sanitized.json',JSON.stringify(calls,null,2));
-  } catch(error) { console.error('Media authoring browser failed; only endpoint/status metadata is retained.'); throw error; } finally {await second?.close();await context.close();await f.dispose();}
+  } catch(error) { console.error('Media authoring browser failed; only endpoint/status metadata is retained.'); throw error; } finally {await second?.close();await context.close();await sameTitle?.dispose();await f.dispose();}
 });
