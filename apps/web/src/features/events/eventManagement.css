@@ -37,3 +37,7 @@
 .event-library .event-quick-action { min-width:0; max-width:100%; }
 .event-library .event-actions summary { white-space:normal; }
 @media(max-width:760px) { .event-actions, .event-action-menu { width:100%; } .admin-shell .section-heading { padding-left:12px; } }
+
+.event-library .event-card .event-quiz-warning { box-sizing:border-box; display:grid; gap:4px; max-width:100%; margin:8px 0 0; padding:12px; border:2px solid var(--color-warning-border); border-left:5px solid var(--color-warning); border-radius:10px; color:var(--color-warning); background:var(--color-warning-surface); text-align:left; overflow-wrap:anywhere; }
+.event-quiz-warning strong { font-size:1rem; }
+.event-quiz-warning span { color:inherit; line-height:1.5; }

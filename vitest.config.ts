@@ -48,7 +48,7 @@ export default defineConfig({
       'tests/quizPreflight.test.ts',
       'tests/quizRepair.test.ts',
       'tests/events.test.ts', 'tests/eventPricing.test.ts', 'tests/eventManagement.test.ts', 'tests/eventCapacityAdmin.test.tsx',
-      'tests/dashboardModel.test.ts', 'tests/eventPresentation.test.ts', 'tests/eventPublication.test.tsx', 'tests/publicEvents.test.tsx',
+      'tests/dashboardModel.test.ts', 'tests/eventPresentation.test.ts', 'tests/eventQuizWarning.test.ts', 'tests/eventPublication.test.tsx', 'tests/publicEvents.test.tsx',
       'tests/compactDashboard.test.ts',
       'tests/refereeAccessPanel.test.tsx', 'tests/refereeWorkflow.test.tsx',
       'tests/refereeScoreTable.test.tsx',
