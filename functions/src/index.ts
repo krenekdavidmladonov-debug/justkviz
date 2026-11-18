@@ -97,3 +97,5 @@ export { requestDriveMediaImport, readDriveMediaImport, processDriveMediaImport 
 export { configureDriveMediaCompanion, driveMediaCompanion } from './drive/local-companion.js';
 export { prepareOfflineEvent, readOfflineTrust, authorizeOfflineEvent } from './offline/prepare.js';
 export { previewOfflineSync, commitOfflineSync } from './offline/sync.js';
+
+export { configurePublicEventResults } from './events/public-results.js';

@@ -45,7 +45,7 @@ async function planIn(tx: Transaction, eventId: string, event: Record<string, un
     for (const name of snapshotCollections) targets.push({ path: `quizSnapshots/${id}/${name}`, kind: 'collection' });
     targets.push({ path: `quizSnapshots/${id}`, kind: 'document' });
   }
-  targets.push({ path: `publicEvents/${eventId}`, kind: 'document' });
+  targets.push({ path: `publicEvents/${eventId}`, kind: 'document' }, { path: `publicEventResults/${eventId}`, kind: 'document' });
   return { targets, sessionIds, snapshotIds, retainedSnapshotIds };
 }
 async function validateRoots(eventId: string, plan: Plan) {
@@ -142,6 +142,7 @@ export const deleteEvent = securedOnCall('deleteEvent', { region: 'europe-west1'
     tx.update(ref, { disposition: 'deleting', registrationPublished: false, registrationStatus: 'closed', revision: expected + 1, updatedAt: now, updatedBy: actor.uid });
     tx.create(jobRef, { ...plan, eventId, actorUid: actor.uid, state: 'running', phase: 0, deletedCount: 0, startedAt: now, updatedAt: now });
     tx.delete(db.doc(`publicEvents/${eventId}`));
+    tx.delete(db.doc(`publicEventResults/${eventId}`));
     tx.create(db.doc(`eventAudit/${operationHash([eventId, 'deletion-started'])}`), { eventId, action: 'deletion-started', actorUid: actor.uid, at: now });
   });
   try {

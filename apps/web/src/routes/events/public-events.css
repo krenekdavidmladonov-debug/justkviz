@@ -143,3 +143,14 @@
   .page-shell:has(> .public-events-page) { width: 100%; padding: 24px 16px 64px; }
   .public-events-page .public-event-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+.public-completed-event > .public-event-panel { margin-block:24px; }
+.public-event-winners ul { list-style:none; padding:0; display:grid; gap:16px; }
+.public-event-winners li { display:grid; gap:8px; overflow-wrap:anywhere; }
+.public-event-winners strong { color:var(--color-warning); font-size:clamp(1.4rem, 4vw, 2rem); }
+.public-event-standings { overflow-x:auto; }
+.public-event-standings table { width:100%; border-collapse:collapse; text-align:left; }
+.public-event-standings caption { text-align:left; font-size:1.4rem; font-weight:800; margin-bottom:20px; }
+.public-event-standings th, .public-event-standings td { padding:12px 8px; border-bottom:1px solid var(--color-border); }
+.public-event-standings th[scope=row] { overflow-wrap:anywhere; word-break:break-word; }
+.public-event-standings th:last-child, .public-event-standings td:last-child { text-align:right; white-space:nowrap; }

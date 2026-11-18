@@ -7,6 +7,8 @@ import { eventCountdown, eventDateLabel, registrationPresentation } from '../../
 import type { PublicEventRecord, RegistrationMutationResponse } from '../../features/events/types';
 import { RegistrationForm, type RegistrationDraftValues } from '../../features/registrations/RegistrationForm';
 import { EventCapacity, EventDateTile, EventPrice, registrationExplanation } from './PublicEventElements';
+import { getPublicEventResults, type PublicEventResults } from '../../features/events/publicEventResults';
+import { CompletedPublicEvent } from './CompletedPublicEvent';
 import './public-events.css';
 
 const EMPTY: RegistrationDraftValues = { teamName: '', memberCount: 2, contactEmail: '' };
@@ -18,6 +20,7 @@ export function PublicEventPage() {
 
 function PublicEventRegistration({ eventId }: { readonly eventId: string | undefined }) {
   const { hash } = useLocation();
+  const [completed, setCompleted] = useState<PublicEventResults | null>(null);
   const [event, setEvent] = useState<PublicEventRecord | null>(null);
   const [values, setValues] = useState(EMPTY);
   const [created, setCreated] = useState<RegistrationMutationResponse | null>(null);
@@ -31,10 +34,15 @@ function PublicEventRegistration({ eventId }: { readonly eventId: string | undef
   const load = useCallback(async () => {
     if (!eventId) return;
     const version = ++loadVersion.current;
-    setLoading(true); setEvent(null); setCreated(null); setError(null);
+    setLoading(true); setEvent(null); setCompleted(null); setCreated(null); setError(null);
     try {
       const nextEvent = await getPublicEvent(eventId);
       if (version !== loadVersion.current) return;
+      if (!nextEvent || nextEvent.lifecycleStatus === 'completed') {
+        const results = await getPublicEventResults(eventId);
+        if (version !== loadVersion.current) return;
+        setCompleted(results);
+      }
       setEvent(nextEvent);
       if (nextEvent) setValues((current) => ({ ...current, memberCount: nextEvent.teamSizeMin }));
     } catch { if (version === loadVersion.current) setError('Akci se nepodařilo načíst.'); }
@@ -58,6 +66,7 @@ function PublicEventRegistration({ eventId }: { readonly eventId: string | undef
   }, [hash, loading]);
 
   if (loading) return <section className="public-event-detail"><div className="event-public-state" role="status">Načítám akci…</div></section>;
+  if (completed) return <CompletedPublicEvent result={completed} />;
   if (!event) return <section className="public-event-detail"><div className="event-public-state"><h1>Akce není dostupná</h1>{error && <><p role="alert">{error}</p><button className="secondary-button" type="button" onClick={() => void load()}>Načíst znovu</button></>}<Link className="back-link" to="/">← Zpět na akce</Link></div></section>;
   const registration = registrationPresentation(event, now);
   const open = registration.canRegister;
