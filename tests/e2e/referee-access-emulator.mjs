@@ -29,6 +29,12 @@ try {
  const grant=await staff.call('issueRefereeAccess',issueData), c={eventId:a.eventId,accessId:grant.accessId,key:grant.key};
  assert.equal(typeof grant.key,'string');const storedGrant=(await db.doc(`events/${a.eventId}/refereeAccess/${c.accessId}`).get()).data();assert(!JSON.stringify(storedGrant).includes(grant.key));
  const retry=await staff.call('issueRefereeAccess',issueData);assert.equal(retry.accessId,grant.accessId);assert.equal(retry.key,null);assert.equal((await staff.call('listRefereeAccess',{eventId:a.eventId})).length,1);pass();
+ await assert.rejects(staff.call('issueRefereeAccess',{...issueData,requestId:randomUUID(),expiresAt:new Date(Date.now()+31*86400000).toISOString()}),error=>error.code==='functions/invalid-argument'&&error.message.startsWith('Platnost přístupu musí být v budoucnosti a nejvýše 30 dnů dopředu.'));pass();
+ // An orphan grant with an inactive issuer must report the missing event first.
+ const orphan={...c,eventId:'missing-event-'+randomUUID()};
+ await db.doc(`events/${orphan.eventId}/refereeAccess/${orphan.accessId}`).set({...storedGrant,issuedBy:'missing-issuer-'+randomUUID()});
+ await terminal(anon.call('readRefereeEvent',orphan),'event-closed');
+ await terminal(anon.call('readRefereeEvent',{...orphan,key:'x'.repeat(43)}),'not-found');pass();
  for(const x of await staff.call('listRefereeAccess',{eventId:a.eventId}))assert.deepEqual(Object.keys(x).sort(),['accessId','expiresAt','label','status','version']);
  const { FieldValue } = require('firebase-admin/firestore');
  const frozenRound = (await db.collection('quizSnapshots/' + a.snapshotId + '/rounds').get()).docs[0];

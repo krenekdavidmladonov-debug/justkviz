@@ -20,7 +20,7 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
   const [data, setData] = useState<RefereeEvent | null>(null);
   const [roundId, setRoundId] = useState('');
   const [blocked, setBlocked] = useState(!credential);
-  const [blockedReason, setBlockedReason] = useState(initialReason);
+  const [blockedReason, setBlockedReason] = useState<keyof typeof refereeAccessMessages | 'ended' | null>(initialReason);
   const [error, setError] = useState('');
   const [connected, setConnected] = useState(() => navigator.onLine);
   const [verifiedAt, setVerifiedAt] = useState<Date | null>(null);
@@ -40,7 +40,10 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
     const reason = refereeAccessReason(issue);
     if (reason) {
       forgetReferee(eventId, credential ?? undefined); setVerifiedAt(null); setBlocked(true); setBlockedReason(reason); setError('');
-    } else setError('Spojení se serverem se nepodařilo ověřit, zkouším znovu…');
+    } else {
+      const error = issue as { code?: string; message?: string } | null;
+      setError((error?.code === 'functions/failed-precondition' || error?.code === 'functions/invalid-argument') && typeof error.message === 'string' ? error.message : 'Spojení se serverem se nepodařilo ověřit, zkouším znovu…');
+    }
   }, [eventId, credential]);
   useEffect(() => {
     const offline = () => { setConnected(false); setVerifiedAt(null); };
@@ -93,7 +96,7 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
         setData(old => old && ({ ...old, scores: [...old.scores.filter(score => score.roundId !== request.roundId || !confirmed.scores.some(next => next.teamId === score.teamId)), ...confirmed.scores.map(score => ({ ...score, roundId: request.roundId }))] }));
         setVerifiedAt(new Date()); setError(''); return confirmed;
       } catch (issue) {
-        failure(issue);
+        if ((issue as { code?: string } | null)?.code !== 'functions/aborted') failure(issue);
         throw issue;
       }
     },
@@ -107,7 +110,7 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
   const editable = connected && !!verifiedAt && !blocked;
   return <main className="event-detail-page referee-page">
     <header className="referee-page-header"><Brand /><h1>Bodování</h1><p>{data?.title}</p></header>
-    {(blocked || !credential) && <p role="alert">{refereeAccessMessages[blockedReason ?? 'not-found']}</p>}
+    {(blocked || !credential) && <p role="alert">{blockedReason === 'ended' ? 'Přístup v tomto panelu byl ukončen. Pro pokračování znovu otevřete odkaz nebo QR od organizátora.' : refereeAccessMessages[blockedReason ?? 'not-found']}</p>}
     {error && !blocked && <p role="alert">{error}</p>}
     {!connected && !blocked && <p role="alert">Jste offline. Pro pokračování a ověření uložených bodů obnovte připojení.</p>}
     {!data && !blocked && credential && !error && <p>Ověřuji přístup…</p>}
@@ -126,6 +129,6 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
         <p>Správné odpovědi pro opravu archů vám předá organizátor samostatně. Průběžné výsledky zveřejňuje moderátor.</p>
       </details>
     </section>}
-    <button type="button" className="secondary-button referee-end-access" disabled={pending} onClick={() => { if (pendingWrite.current || (hasDirty && !window.confirm('Ukončit přístup a zahodit rozepsané změny?'))) return; forgetReferee(eventId, credential ?? undefined); setBlocked(true); setData(null); }}>Ukončit přístup v tomto panelu</button>
+    <button type="button" className="secondary-button referee-end-access" disabled={pending} onClick={() => { if (pendingWrite.current || (hasDirty && !window.confirm('Ukončit přístup a zahodit rozepsané změny?'))) return; forgetReferee(eventId, credential ?? undefined); setBlocked(true); setBlockedReason('ended'); setData(null); }}>Ukončit přístup v tomto panelu</button>
   </main>;
 }

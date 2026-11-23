@@ -26,7 +26,7 @@ const digest = (value: string) => createHash('sha256').update('referee-access-v1
 function record(value: unknown): Record<string, unknown> { if (!isObject(value)) throw new HttpsError('invalid-argument', 'Malformed request.'); return value; }
 function id(data: Record<string, unknown>, field: string): string { const value = data[field]; if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,150}$/u.test(value)) throw new HttpsError('invalid-argument', 'Invalid identifier.'); return value; }
 function revision(data: Record<string, unknown>): number { if (!Number.isSafeInteger(data.expectedVersion) || (data.expectedVersion as number) < 1) throw new HttpsError('invalid-argument', 'Invalid access version.'); return data.expectedVersion as number; }
-function expiry(data: Record<string, unknown>): Timestamp { const value = typeof data.expiresAt === 'string' ? Date.parse(data.expiresAt) : NaN; const now = Date.now(); if (!Number.isFinite(value) || value <= now || value > now + 30 * 86400000) throw new HttpsError('invalid-argument', 'Expiry must be within the next 30 days.'); return Timestamp.fromMillis(value); }
+function expiry(data: Record<string, unknown>): Timestamp { const value = typeof data.expiresAt === 'string' ? Date.parse(data.expiresAt) : NaN; const now = Date.now(); if (!Number.isFinite(value) || value <= now || value > now + 30 * 86400000) throw new HttpsError('invalid-argument', 'Platnost přístupu musí být v budoucnosti a nejvýše 30 dnů dopředu.'); return Timestamp.fromMillis(value); }
 function label(data: Record<string, unknown>): string { const value = data.label; if (typeof value !== 'string' || !value.trim() || value.trim().length > 80 || /[\p{Cc}\p{Cf}]/u.test(value)) throw new HttpsError('invalid-argument', 'Invalid access label.'); return value.trim(); }
 function organizer(request: CallableRequest) {
   return Promise.resolve(accessActor(request.auth).uid);
@@ -93,6 +93,7 @@ async function accessIn(transaction: Transaction, c: RefereeCredential) {
   if (!(grant.expiresAt instanceof Timestamp)) throw new HttpsError('failed-precondition', 'Platnost přístupu není správně nastavená. Požádejte organizátora o kontrolu.');
   if (grant.expiresAt.toMillis() <= Date.now()) throw deny('expired');
   const event = (await transaction.get(db().doc('events/' + c.eventId))).data();
+  if (!event) throw deny('event-closed');
   // Delegated bearer access cannot outlive the issuer's current ability to grant scoring.
   // Legacy grants retain their original issuer; rotation explicitly transfers issuance.
   const issuerUid: unknown = grant.issuedBy ?? grant.createdBy;
@@ -100,13 +101,13 @@ async function accessIn(transaction: Transaction, c: RefereeCredential) {
   const issuer = (await transaction.get(db().doc(`memberships/${issuerUid}`))).data() as Membership | undefined;
   if (!issuer || issuer.uid !== issuerUid || issuer.status !== 'active'
     || !Array.isArray(issuer.permissions) || !issuer.permissions.includes('event.manage') || !issuer.permissions.includes('event.score')
-    || !scopeAllows(issuer.events, c.eventId, issuerUid, event?.createdBy)) throw deny('issuer-inactive');
+    || !scopeAllows(issuer.events, c.eventId, issuerUid, event.createdBy)) throw deny('issuer-inactive');
   const identity = await getAuth().getUser(issuerUid).catch((error: unknown) => {
     if ((error as { code?: string }).code === 'auth/user-not-found') return null;
     throw error;
   });
   if (!identity || identity.disabled || !identity.emailVerified) throw deny('issuer-inactive');
-  if (!event || !eventOperational(event) || !['ready', 'live', 'finalizing'].includes(event.lifecycleStatus as string)
+  if (!eventOperational(event) || !['ready', 'live', 'finalizing'].includes(event.lifecycleStatus as string)
     || (event.capabilityVersion ?? 0) !== (grant.capabilityVersion ?? 0)) throw deny('event-closed');
   return { grant, event };
 }

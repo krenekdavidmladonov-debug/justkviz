@@ -17,7 +17,7 @@ export function defaultRefereeExpiry(startsAt?: Date, timeZone = 'Europe/Prague'
         const represented = Date.UTC(Number(local.year), Number(local.month) - 1, Number(local.day), Number(local.hour), Number(local.minute), Number(local.second));
         instant += target - represented;
       }
-      if (instant > now) return new Date(instant);
+      if (instant > now) return new Date(Math.min(instant, now + 30 * 86400000 - 3600000));
     } catch { /* Missing/invalid event time zone uses the same safe fallback as an undated event. */ }
   }
   return new Date(now + 86400000);
@@ -53,7 +53,11 @@ export function RefereeAccessPanel({ eventId, canIssue, startsAt, timeZone }: { 
         setNotice(action === 'revoke' ? 'Přístup byl odebrán.' : 'Přístup již existuje. Klíč nelze znovu přečíst; použijte výslovnou obnovu.');
       }
       await load().catch(() => setNotice('Seznam přístupů se nepodařilo obnovit. Vydaný soukromý odkaz zůstává dostupný; seznam obnovte znovu.'));
-    } catch { setNotice('Operaci se nepodařilo potvrdit. Obnovte seznam; vydání opakujte stejným tlačítkem. Nový klíč získáte výslovnou obnovou.'); await load().catch(() => undefined); }
+    } catch (issue) {
+      const error = issue as { code?: string; message?: string } | null;
+      setNotice(error?.code === 'functions/invalid-argument' && typeof error.message === 'string' ? error.message : 'Operaci se nepodařilo potvrdit. Obnovte seznam; vydání opakujte stejným tlačítkem. Nový klíč získáte výslovnou obnovou.');
+      await load().catch(() => undefined);
+    }
     finally { setPending(false); }
   }
   async function copyLink() {

@@ -159,13 +159,35 @@ it('migrates v1 once and reopens a new panel without a fragment or session stora
   expect(teamInput('a')?.disabled).toBe(false);
 });
 
-it('ignores and removes an expired local credential, showing the actual reason', async () => {
-  vi.useFakeTimers(); vi.setSystemTime(new Date('2031-01-01T00:00:00Z'));
+it('lets the server verify stored access even when the device clock is past expiry', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2031-01-02T00:00:00Z'));
   rememberReferee(credential('a'), '2031-01-01T00:00:00.000Z');
   await render();
+  expect(read).toHaveBeenLastCalledWith(credential('a'));
+  expect(host.querySelector('[role=alert]')).toBeNull();
+  expect(teamInput('a')?.disabled).toBe(false);
+  expect(localStorage.getItem('referee-access-v2:a')).not.toBeNull();
+});
+
+it('removes expired stored access only after the server confirms expiry', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2031-01-01T00:00:00Z'));
+  rememberReferee(credential('a'), '2031-01-01T00:00:00.000Z');
+  const response = deferred<RefereeEvent>(); read.mockReturnValueOnce(response.promise);
+  await render();
+  expect(read).toHaveBeenLastCalledWith(credential('a'));
+  expect(localStorage.getItem('referee-access-v2:a')).not.toBeNull();
+  await act(async () => response.reject({ code: 'functions/permission-denied', details: { refereeAccess: 'expired' } }));
   expect(host.querySelector('[role=alert]')?.textContent).toContain('Platnost odkazu vypršela.');
   expect(localStorage.getItem('referee-access-v2:a')).toBeNull();
   expect(sessionStorage.getItem(storageKey('a'))).toBeNull();
+  expect(read).toHaveBeenCalledTimes(1);
+});
+
+it('cleans up stored access older than seven days past expiry without an SDK call', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2031-01-08T00:00:00.001Z'));
+  rememberReferee(credential('a'), '2031-01-01T00:00:00.000Z');
+  await render();
+  expect(localStorage.getItem('referee-access-v2:a')).toBeNull();
   expect(read).not.toHaveBeenCalled();
 });
 

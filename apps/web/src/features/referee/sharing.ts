@@ -58,7 +58,9 @@ export function consumeRefereeAccess(eventId: string): { credential: Credential 
     if (validCredential(data, eventId)) {
       const expiresAt = (data as Credential & { expiresAt?: unknown }).expiresAt;
       if (typeof expiresAt === 'string' && Number.isFinite(Date.parse(expiresAt))) {
-        if (Date.parse(expiresAt) <= Date.now()) { forgetReferee(eventId); return { credential: null, reason: 'expired' }; }
+        // Device clocks can be ahead. Only the server decides expiry; retain a
+        // seven-day grace period before cleaning up an unused stored credential.
+        if (Date.parse(expiresAt) + 7 * 86400000 < Date.now()) { forgetReferee(eventId); return { credential: null, reason: 'expired' }; }
       } else if (expiresAt != null) { forgetReferee(eventId); return { credential: null, reason: 'not-found' }; }
       const credential = { eventId, accessId: data.accessId, key: data.key };
       if (!stored) rememberReferee(credential, null);

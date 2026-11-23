@@ -165,11 +165,39 @@ describe('round-first referee workflow', () => {
   });
   it('keeps access after nonaccepted-team history and write errors, including unclassified denial', async () => {
     await render(); await input('Beta', '2,5');
-    vi.mocked(historyReferee).mockRejectedValueOnce({ code: 'functions/failed-precondition' }); await click('Historie změn');
+    const message = 'Tým už není na soupisce přijatých týmů.';
+    vi.mocked(historyReferee).mockRejectedValueOnce({ code: 'functions/failed-precondition', message }); await click('Historie změn');
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(message);
     expect(forgetReferee).not.toHaveBeenCalled(); expect(points('Beta').disabled).toBe(false);
     vi.mocked(writeRefereeRound).mockRejectedValueOnce({ code: 'functions/permission-denied' }); await click('Uložit body celého kola');
     expect(forgetReferee).not.toHaveBeenCalled(); expect(points('Beta').value).toBe('2,5');
     await poll(); expect(points('Beta').disabled).toBe(false);
+  });
+  it('leaves revision conflicts to the form without showing a page banner', async () => {
+    await render(); await input('Beta', '2,5');
+    vi.mocked(writeRefereeRound).mockRejectedValueOnce({ code: 'functions/aborted' });
+    await click('Uložit body celého kola');
+    expect(host.querySelector('.referee-page > [role="alert"]')).toBeNull();
+    expect(host.textContent).not.toContain('Spojení se serverem se nepodařilo ověřit');
+    expect(points('Beta').value).toBe('2,5'); expect(points('Beta').disabled).toBe(false);
+    expect(forgetReferee).not.toHaveBeenCalled();
+    await poll(); expect(readReferee).toHaveBeenCalledTimes(2);
+  });
+  it('shows server validation errors without losing access or drafts', async () => {
+    await render(); await input('Beta', '2,5');
+    const message = 'Body patří k jiné akci než odkaz rozhodčího.';
+    vi.mocked(writeRefereeRound).mockRejectedValueOnce({ code: 'functions/invalid-argument', message });
+    await click('Uložit body celého kola');
+    expect(host.querySelector('.referee-page > [role="alert"]')?.textContent).toBe(message);
+    expect(points('Beta').value).toBe('2,5'); expect(points('Beta').disabled).toBe(false);
+    expect(forgetReferee).not.toHaveBeenCalled();
+  });
+  it('explains voluntary access termination and stops polling', async () => {
+    await render(); await click('Ukončit přístup v tomto panelu');
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe('Přístup v tomto panelu byl ukončen. Pro pokračování znovu otevřete odkaz nebo QR od organizátora.');
+    expect(forgetReferee).toHaveBeenCalledWith('event', expect.anything());
+    expect(host.querySelector('form')).toBeNull();
+    await poll(); expect(readReferee).toHaveBeenCalledTimes(1);
   });
   it('shows an empty roster without an empty scoring form', async () => {
     await render({ ...fixture(), teams: [], scores: [] }); expect(host.textContent).toContain('Na soupisce zatím nejsou žádné týmy'); expect(host.querySelector('form')).toBeNull();
