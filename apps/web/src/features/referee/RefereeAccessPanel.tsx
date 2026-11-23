@@ -2,9 +2,29 @@ import { useEffect, useRef, useState } from 'react';
 import { getFirebaseAppContext } from '../../services/firebase/app';
 import { refereeCall, type Access } from './api';
 import { refereeQr, refereeUrl } from './sharing';
-const localExpiry = () => { const date = new Date(Date.now() + 86400000); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0,16); };
-export function RefereeAccessPanel({ eventId, canIssue }: { eventId: string; canIssue: boolean }) {
-  const [accesses, setAccesses] = useState<Access[]>([]), [name, setName] = useState('Rozhodčí 1'), [expires, setExpires] = useState(localExpiry);
+export function defaultRefereeExpiry(startsAt?: Date, timeZone = 'Europe/Prague', now = Date.now()): Date {
+  if (startsAt && Number.isFinite(startsAt.getTime())) {
+    try {
+      const formatter = new Intl.DateTimeFormat('en-GB', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+      const parts = (date: Date) => Object.fromEntries(formatter.formatToParts(date).map(part => [part.type, part.value]));
+      const day = parts(startsAt);
+      const target = Date.UTC(Number(day.year), Number(day.month) - 1, Number(day.day) + 1, 6);
+      let instant = target;
+      // Convert 06:00 on the next calendar day in the event zone to an instant,
+      // using that day's offset (the event can cross a daylight-saving change).
+      for (let i = 0; i < 3; i++) {
+        const local = parts(new Date(instant));
+        const represented = Date.UTC(Number(local.year), Number(local.month) - 1, Number(local.day), Number(local.hour), Number(local.minute), Number(local.second));
+        instant += target - represented;
+      }
+      if (instant > now) return new Date(instant);
+    } catch { /* Missing/invalid event time zone uses the same safe fallback as an undated event. */ }
+  }
+  return new Date(now + 86400000);
+}
+const localExpiry = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0,16);
+export function RefereeAccessPanel({ eventId, canIssue, startsAt, timeZone }: { eventId: string; canIssue: boolean; startsAt?: Date | undefined; timeZone?: string | undefined }) {
+  const [accesses, setAccesses] = useState<Access[]>([]), [name, setName] = useState('Rozhodčí 1'), [expires, setExpires] = useState(() => localExpiry(defaultRefereeExpiry(startsAt, timeZone)));
   const [notice, setNotice] = useState(''), [pending, setPending] = useState(false), [issued, setIssued] = useState<{ url: string; png: string | null } | null>(null);
   const linkField = useRef<HTMLInputElement>(null);
   const issuance = useRef<{ requestId: string; label: string; expiresAt: string } | null>(null);

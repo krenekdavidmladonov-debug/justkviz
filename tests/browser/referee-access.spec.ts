@@ -11,8 +11,10 @@ const refereeQuizId = 'referee-browser-' + randomUUID();
 let cleanup: (() => Promise<void>) | undefined;
 test.beforeAll(async () => {
   const projectId = process.env.GCLOUD_PROJECT;
-  if (projectId !== 'demo-filmovy-kviz-v2' || !/^(127\.0\.0\.1|localhost):9099$/u.test(process.env.FIREBASE_AUTH_EMULATOR_HOST ?? '')) {
-    throw new Error('Scoring browser fixtures require the local demo Auth emulator.');
+  if (projectId !== 'demo-filmovy-kviz-v2' || !/^(127\.0\.0\.1|localhost):9099$/u.test(process.env.FIREBASE_AUTH_EMULATOR_HOST ?? '')
+    || !/^(127\.0\.0\.1|localhost):8080$/u.test(process.env.FIRESTORE_EMULATOR_HOST ?? '')
+    || !/^(127\.0\.0\.1|localhost):5001$/u.test(process.env.FUNCTIONS_EMULATOR_HOST ?? '')) {
+    throw new Error('Referee browser fixtures require local demo Auth, Firestore and Functions emulators.');
   }
   const require = createRequire(new URL('../../functions/package.json', import.meta.url));
   const sdk = require('firebase-admin/app') as { initializeApp(options: { projectId: string }, name: string): object; deleteApp(app: object): Promise<void> };
@@ -70,7 +72,8 @@ test('organizer issues private QR, referee scores, corrections survive and revoc
   await page.getByLabel('E-mail').fill(loginEmail); await page.getByLabel('Heslo').fill(loginPassword);
   await page.getByRole('button', { name: 'Přihlásit se' }).click(); await expect(page).toHaveURL(/\/admin$/u);
   await page.goto('/admin/events/new');
-  await page.getByLabel('Název akce').fill('Synthetic referee browser'); await page.getByLabel('Datum a čas').fill('2031-11-20T19:00');
+  const eventDay = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+  await page.getByLabel('Název akce').fill('Synthetic referee browser'); await page.getByLabel('Datum a čas').fill(eventDay + 'T19:00');
   await page.getByLabel('Místo', { exact: true }).fill('Synthetic'); await page.getByLabel('Veřejné upřesnění místa').fill('Synthetic');
   await page.getByRole('button', { name: 'Vytvořit akci' }).click(); await expect(page).toHaveURL(/\/admin\/events\/(?!new$)[^/]+$/u);
   const eventId = page.url().split('/').pop()!;
@@ -83,7 +86,10 @@ test('organizer issues private QR, referee scores, corrections survive and revoc
   await page.getByRole('combobox', { name: 'Kvíz', exact: true }).selectOption(refereeQuizId); await page.getByRole('button', { name: 'Připravit ke hraní', exact: true }).click(); await expect(page.getByText('Kvíz je připraven ke hraní.')).toBeVisible();
   const panel = page.getByRole('region', { name: 'Přístupy rozhodčích', exact: true });
   await panel.getByLabel('Označení rozhodčího').fill('Rozhodčí browser');
-  const expiry = new Date(await panel.getByLabel('Platnost přístupu do').inputValue()).getTime(); expect(Math.abs(expiry - Date.now() - 86400000) < 120000).toBe(true);
+  const expiry = new Date(await panel.getByLabel('Platnost přístupu do').inputValue());
+  const expiresInZone = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Prague', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(expiry);
+  expect(expiresInZone).toBe('06:00');
+  expect(expiry.getTime()).toBeGreaterThan(Date.now());
   await panel.getByRole('button', { name: 'Vydat přístup rozhodčího' }).click();
   const urlField = panel.getByLabel('Soukromý odkaz rozhodčího'); await expect(urlField).toBeVisible();
   const privateUrl = await urlField.inputValue(); const qr = await panel.getByAltText('Soukromý QR rozhodčího').getAttribute('src');
@@ -135,13 +141,13 @@ test('organizer issues private QR, referee scores, corrections survive and revoc
     referee.once('dialog', dialog => dialog.accept()); await rounds.selectOption('round-2'); await expect(points).toHaveValue('0');
     await rounds.selectOption('round-1'); await expect(points).toHaveValue('5'); await points.fill('6');
     expect(await referee.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-    // Exercise tab-local referee access in the same anonymous profile as the first referee.
-    const sibling = await refereeContext.newPage(); await openReferee(sibling, privateUrl);
+    // A new tab recovers the credential without the original secret fragment.
+    const sibling = await refereeContext.newPage(); await openReferee(sibling, privateUrl.split('#')[0]!);
     await sibling.getByRole('button', { name: 'Ukončit přístup v tomto panelu' }).click(); await sibling.close();
     await expect(rounds).toBeEnabled(); await expect(points).toHaveValue('6');
     await page.getByRole('link', { name: 'Zpět na detail akce' }).click(); await expect(panel).toBeVisible();
     page.once('dialog', dialog => dialog.accept()); await panel.getByRole('button', { name: 'Odebrat — Rozhodčí browser' }).click(); await expect(panel.getByRole('status')).toContainText('Přístup byl odebrán.');
-    await expect(referee.getByRole('alert').filter({ hasText: 'Přístup vypršel / byl odebrán' })).toBeVisible(); await expect(points).toBeDisabled(); await expect(points).toHaveValue('6');
+    await expect(referee.getByRole('alert').filter({ hasText: 'Organizátor tento přístup odebral.' })).toBeVisible({ timeout: 7000 }); await expect(points).toBeDisabled(); await expect(points).toHaveValue('6');
     const credential = { eventId, accessId: new URLSearchParams(new URL(privateUrl).hash.slice(1)).get('access'), key: new URLSearchParams(new URL(privateUrl).hash.slice(1)).get('key') };
     const endpoint = 'http://127.0.0.1:5001/demo-filmovy-kviz-v2/europe-west1/';
     const deniedRead = await refereeContext.request.post(endpoint + 'readRefereeEvent', { data: { data: credential } }); expect(deniedRead.status()).toBe(403);
