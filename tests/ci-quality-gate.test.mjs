@@ -5,8 +5,8 @@ const source=readFileSync(new URL('../.github/workflows/ci.yml',import.meta.url)
 const gate=source.split('  quality-gate:')[1]?.split('\n  show-mode-acceptance:')[0]??'';
 test('quality gate waits for every independently meaningful acceptance job',()=>{
   const needs=/needs: \[([^\]]+)\]/u.exec(gate)?.[1].split(',').map(x=>x.trim());
-  assert.deepEqual(needs,['quality-core','editor-media-acceptance','show-mode-acceptance','oauth-windows','restart-recovery-acceptance','dependency-security']);
-  for(const variable of ['CORE','EDITOR','SHOW','OAUTH','RECOVERY','SECURITY'])assert(gate.includes('test "$'+variable+'_RESULT" = success'));
+  assert.deepEqual(needs,['quality-core','editor-media-acceptance','show-mode-acceptance','oauth-windows','restart-recovery-acceptance','dependency-security','d2-lock']);
+  for(const variable of ['CORE','EDITOR','SHOW','OAUTH','RECOVERY','SECURITY','D2'])assert(gate.includes('test "$'+variable+'_RESULT" = success'));
   assert(gate.includes('always()'));
 });
 test('registry security audit is mandatory and preserves its actual exit',()=>{
