@@ -1,17 +1,22 @@
 import { assertPlayableQuizSource } from '../quizzes/playable.js';
-import { eventSessions } from '../live/event-lifecycle.js';
+import { closeSessions, eventSessions } from '../live/event-lifecycle.js';
+import { loadEventQuizState } from './quiz-state.js';
+import { applyScoreReset, scoreResetPlan } from '../scoring/reset.js';
+import { scoreHash } from '../scoring/core.js';
 import { assertQuizAssets } from '../media/model.js';
 import { assertEventOperational, assertEventReadable } from './guards.js';
 import { storedEventPricing } from './pricing.js';
 import { eventCreationIdentity } from './creation.js';
 export { cancelEvent, archiveEvent } from './management.js';
 import {
+  compatibleScoringRounds, eventQuizMutationProblem, scoringRoundsFromSlides,
   mapEditorQuiz,
   mapEditorSlide,
   runQuizPreflight,
 } from '@filmovy-kviz/quiz-domain';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import {
+  FieldValue,
   getFirestore,
   Timestamp,
   type DocumentSnapshot,
@@ -23,7 +28,6 @@ import { accessActor, authorize, securedOnCall, runAccessTransaction, grantCreat
 
 import {
   buildPublicEventProjection,
-  canLockQuiz,
   canMutateEvent,
   defaultScoringConfiguration,
   isEventLifecycleStatus,
@@ -102,10 +106,10 @@ function storedText(data: Record<string, unknown>, field: string, location: stri
   return value;
 }
 
-function storedEvent(snapshot: DocumentSnapshot): StoredEvent {
+function storedEvent(snapshot: DocumentSnapshot, operational = true): StoredEvent {
   if (!snapshot.exists) throw new HttpsError('not-found', 'Event was not found.');
   const data = snapshotData(snapshot, 'Event');
-  assertEventOperational(data);
+  if (operational) assertEventOperational(data);
   const venue = data.venue;
   const scoring = data.scoring;
   if (!isObject(venue) || !isObject(scoring)
@@ -263,7 +267,7 @@ export const updateEvent = securedOnCall('updateEvent', callableOptions, async (
   return runAccessTransaction(db, async (transaction) => {
     const current = storedEvent(await transaction.get(eventRef));
     assertExpectedRevision(current, requestedRevision);
-    if (!canMutateEvent(current.lifecycleStatus) && current.lifecycleStatus !== 'live') {
+    if (!canMutateEvent(current.lifecycleStatus) && current.lifecycleStatus !== 'live' && current.lifecycleStatus !== 'finalizing') {
       throw new HttpsError('failed-precondition', 'This event can no longer be edited.');
     }
     if (configuration.teamCapacity < current.acceptedTeams) {
@@ -303,22 +307,35 @@ export const lockEventQuiz = securedOnCall('lockEventQuiz', callableOptions, asy
   const quizId = requiredId(request.data, 'quizId');
   const requestedEventRevision = expectedRevision(request.data);
   const requestedQuizRevision = expectedRevision(request.data, 'expectedQuizRevision');
+  const data = request.data as Record<string, unknown>;
+  if (data.scoreAction !== undefined && data.scoreAction !== 'preserve' && data.scoreAction !== 'discard') throw new HttpsError('invalid-argument', 'Vyberte, zda body ponechat, nebo zahodit.');
+  if (data.closeUnplayedSession !== undefined && typeof data.closeUnplayedSession !== 'boolean') throw new HttpsError('invalid-argument', 'Neplatné potvrzení ukončení moderování.');
+  if (data.scoreAction === 'discard' && data.confirm !== 'SMAZAT') throw new HttpsError('invalid-argument', 'Pro zahození bodů napište přesně SMAZAT.');
   const eventRef = db.collection('events').doc(eventId);
   const publicRef = db.collection('publicEvents').doc(eventId);
   const quizRef = db.collection('quizzes').doc(quizId);
   const snapshotRef = db.collection('quizSnapshots').doc();
+  const scoreParents = data.scoreAction === 'discard' ? await eventRef.collection('scores').listDocuments() : [];
 
   return runAccessTransaction(db, async (transaction: Transaction) => {
     const eventSnapshot = await transaction.get(eventRef);
     const quizSnapshot = await transaction.get(quizRef);
     const slideSnapshot = await transaction.get(quizRef.collection('slides').orderBy('position'));
     const roundSnapshot = await transaction.get(quizRef.collection('rounds').orderBy('position'));
-    const event = storedEvent(eventSnapshot);
-    if (eventSnapshot.data()?.liveSessionId) throw new HttpsError("failed-precondition", "Připravený kvíz již používá moderování akce.");
+    const event = storedEvent(eventSnapshot, false);
     assertExpectedRevision(event, requestedEventRevision);
-    if (!canLockQuiz(event.lifecycleStatus, event.scoring.started)) {
-      throw new HttpsError('failed-precondition', 'The event quiz can no longer be replaced.');
-    }
+    const currentEvent = eventSnapshot.data()!;
+    const { state, sessions, scores } = await loadEventQuizState(transaction, eventRef, currentEvent);
+    const problem = eventQuizMutationProblem(currentEvent, state, 'version');
+    if (problem) throw new HttpsError('failed-precondition', problem);
+    if (state.hasActiveSession && data.closeUnplayedSession !== true) throw new HttpsError('failed-precondition', 'Moderování je otevřené. Potvrďte jeho ukončení při změně verze, nebo ho nejprve ukončete tlačítkem Ukončit kvíz.');
+    if (scores.size && data.scoreAction === undefined) throw new HttpsError('failed-precondition', 'Akce má zapsané body. Vyberte Ponechat body, nebo Zahodit body a změnit verzi.');
+    const nextRounds = scoringRoundsFromSlides(slideSnapshot.docs.map(row => ({ isQuestion: row.get('isQuestion') === true, ...(typeof row.get('roundId') === 'string' ? { roundId: row.get('roundId') as string } : {}) })), roundSnapshot.docs.map(row => row.id));
+    const nextCounts = new Map(nextRounds.map(row => [row.id, row.questionCount]));
+    if (data.scoreAction === 'preserve' && !compatibleScoringRounds(state.snapshotRounds, nextRounds)) throw new HttpsError('failed-precondition', 'Nová verze má jiná kola – body nelze převzít.');
+    if (data.scoreAction === 'preserve' && scores.docs.some(row => row.get('snapshotId') !== (isObject(currentEvent.quizAssignment) ? currentEvent.quizAssignment.snapshotId : undefined)
+      || !nextRounds.some(round => round.id === row.get('roundId')) || typeof row.get('teamId') !== 'string' || row.id !== scoreHash([row.get('teamId'), row.get('roundId')]))) throw new HttpsError('failed-precondition', 'Uložené body neodpovídají současnému kvízu. Zvolte jejich zahození.');
+    const reset = data.scoreAction === 'discard' ? await scoreResetPlan(transaction, currentEvent, scores.docs, scoreParents) : undefined;
     if (!quizSnapshot.exists) throw new HttpsError('not-found', 'Quiz was not found.');
     const quizData = snapshotData(quizSnapshot, 'Quiz');
     const actualQuizRevision = quizData.revision === undefined ? 0 : quizData.revision;
@@ -360,12 +377,15 @@ export const lockEventQuiz = securedOnCall('lockEventQuiz', callableOptions, asy
       blockerCount: preflight.blockerCount,
       warningCount: preflight.warningCount,
     } as const;
+    if (state.hasActiveSession) closeSessions(transaction, sessions.filter(row => row.session.status !== 'ended'), actor.uid);
+    if (reset) applyScoreReset(transaction, reset);
+    else if (data.scoreAction === 'preserve') for (const row of scores.docs) transaction.update(row.ref, { snapshotId: snapshotRef.id });
     transaction.create(snapshotRef, { ...buildQuizSnapshotMetadata(quiz, preflight, actor.uid, now), eventId });
     for (const slide of slideSnapshot.docs) {
       transaction.create(snapshotRef.collection('slides').doc(slide.id), slide.data());
     }
     for (const round of roundSnapshot.docs) {
-      transaction.create(snapshotRef.collection('rounds').doc(round.id), round.data());
+      transaction.create(snapshotRef.collection('rounds').doc(round.id), { ...round.data(), questionCount: nextCounts.get(round.id)! });
     }
     const quizAssignment = {
       quizId,
@@ -378,12 +398,18 @@ export const lockEventQuiz = securedOnCall('lockEventQuiz', callableOptions, asy
     };
     transaction.update(eventRef, {
       quizAssignment,
+      liveSessionId: FieldValue.delete(),
+      lastEndedSessionId: FieldValue.delete(),
+      ...(reset ? { scoring: reset.scoring } : {}),
       lifecycleStatus: 'ready',
       revision,
       updatedAt: now,
       updatedBy: actor.uid,
     });
     transaction.set(publicRef, publicProjection({ ...event, lifecycleStatus: 'ready' }, revision, now));
+    transaction.create(db.collection('eventAudit').doc(), { eventId, actorUid: actor.uid, action: 'change-quiz-version', revision, at: now,
+      previousSnapshotId: isObject(currentEvent.quizAssignment) ? currentEvent.quizAssignment.snapshotId : null, snapshotId: snapshotRef.id,
+      scoreAction: data.scoreAction ?? 'none', deletedScoreCount: reset?.scoreCount ?? 0, deletedHistoryCount: reset?.historyCount ?? 0 });
     return {
       ...response(eventId, revision, 'ready', event.registrationStatus),
       snapshotId: snapshotRef.id,

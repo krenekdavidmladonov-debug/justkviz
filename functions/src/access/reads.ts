@@ -1,4 +1,5 @@
-import { eventDisposition, hasPermission, normalizeSlideDesign, normalizeResultTemplates, normalizePrintTemplate } from '@filmovy-kviz/quiz-domain';
+import { loadEventQuizState } from '../events/quiz-state.js';
+import { scoringRoundsFromSlides, eventScoringEpoch, eventDisposition, hasPermission, normalizeSlideDesign, normalizeResultTemplates, normalizePrintTemplate } from '@filmovy-kviz/quiz-domain';
 import { assertEventReadable } from '../events/guards.js';
 import { storedEventPricing } from '../events/pricing.js';
 import { deletionInventory } from '../events/deletion.js';
@@ -38,7 +39,7 @@ const roundFields = ['title', 'type', 'position', 'questionCount', 'slideCount']
 const eventFields = ['description', 'disposition', 'previousDisposition', 'trashedAt', 'archivedAt', 'title', 'startsAt', 'timeZone', 'teamCapacity', 'peopleCapacity', 'teamSizeMin', 'teamSizeMax', 'acceptedTeams', 'acceptedPeople', 'registrationPublished', 'registrationOpensAt', 'registrationClosesAt', 'registrationStatus', 'lifecycleStatus', 'revision', 'liveSessionId', 'createdBy'];
 function eventView(data: Record<string, unknown>, member: Membership) {
   return { ...pick(data, eventFields), pricing: storedEventPricing(data.pricing), cancellation: data.cancellation ? pick(data.cancellation as Record<string, unknown>, ['at', 'by', 'publicMessage', ...(hasPermission(member, 'event.manage') || hasPermission(member, 'event.notes.read') ? ['reason'] : [])]) : null, venue: pick((data.venue ?? {}) as Record<string, unknown>, ['name', 'publicLocation']),
-    scoring: pick((data.scoring ?? {}) as Record<string, unknown>, ['unitScale', 'rankingMode', 'started']),
+    scoring: { ...pick((data.scoring ?? {}) as Record<string, unknown>, ['unitScale', 'rankingMode', 'started']), epoch: eventScoringEpoch(data.scoring) },
     quizAssignment: data.quizAssignment ? pick(data.quizAssignment as Record<string, unknown>, ['quizId', 'quizRevision', 'snapshotId', 'quizTitle', 'roundCount', 'questionCount', 'lockedAt']) : null };
 }
 async function scopedList(tx: Transaction, kind: 'quiz' | 'event', member: Membership) {
@@ -111,7 +112,7 @@ export const readAccessData = onCall({ region: 'europe-west1', cors: true, maxIn
       }
       const rounds = await tx.get(ref.collection('rounds').orderBy('position').limit(401));
       const titles = new Map(rounds.docs.map(d => [d.id, String(d.data().title ?? '')]));
-      if (data.operation === 'editor') return wire(mapEditorQuiz(quizId, root, mapped.map(s => s.roundTitle !== undefined || !s.roundId ? s : { ...s, roundTitle: titles.get(s.roundId) })));
+      if (data.operation === 'editor') return wire({ ...mapEditorQuiz(quizId, root, mapped.map(s => s.roundTitle !== undefined || !s.roundId ? s : { ...s, roundTitle: titles.get(s.roundId) })), scoringRounds: scoringRoundsFromSlides(mapped, rounds.docs.map(row => row.id)) });
       const roundViews = [];
       for (const round of rounds.docs) {
         const questions = await tx.get(round.ref.collection('questions').orderBy('position').limit(401));
@@ -144,7 +145,11 @@ export const readAccessData = onCall({ region: 'europe-west1', cors: true, maxIn
         if (!hasPermission(member, 'event.manage') && !hasPermission(member, 'event.delete')) throw new HttpsError('permission-denied', 'Chybí právo správy akce.');
         return wire(await deletionInventory(eventId));
       }
-      if (data.operation === 'event') return wire({ id: eventId, data: eventView(stored(await tx.get(ref)), member) });
+      if (data.operation === 'event') {
+        if (eventDisposition(root) === 'deleting') return wire({ id: eventId, data: eventView(root, member) });
+        const { state } = await loadEventQuizState(tx, ref, root);
+        return wire({ id: eventId, data: { ...eventView(root, member), quizChangeState: state } });
+      }
       const rows = await tx.get(ref.collection('registrations').limit(1001));
       if (rows.size > 1000) throw new HttpsError('resource-exhausted', 'Příliš mnoho týmů.');
       const ordered = data.operation === 'roster' ? registrationOrder(rows.docs) : rows.docs;

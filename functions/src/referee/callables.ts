@@ -2,7 +2,7 @@ import { isWarmupPing, warmupResponse } from '../warmup/ping.js';
 import { assertCapability, assertEventOperational } from '../events/guards.js';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
-import { eventOperational, scopeAllows, type Membership } from '@filmovy-kviz/quiz-domain';
+import { eventScoringEpoch, eventOperational, scopeAllows, type Membership } from '@filmovy-kviz/quiz-domain';
 import { accessActor, authorize, freshIdentity, securedOnCall, runAccessTransaction } from '../access/authorization.js';
 import { getFirestore, Timestamp, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError, onCall, type CallableRequest } from 'firebase-functions/v2/https';
@@ -109,7 +109,7 @@ export const readRefereeEvent = onCall(options, async request => {
     const teams = await transaction.get(db().collection(`events/${c.eventId}/registrations`).where('status', '==', 'accepted'));
     const scores = await transaction.get(db().collection(`events/${c.eventId}/scores`));
     const accepted = new Set(teams.docs.map(d => d.id));
-    return { eventId: c.eventId, title: String(event.title), label: String(grant.label), snapshotId,
+    return { eventId: c.eventId, title: String(event.title), label: String(grant.label), snapshotId, scoringEpoch: eventScoringEpoch(event.scoring),
       rounds: rounds.docs.map(d => ({ id: d.id, title: String(d.data().title ?? 'Kolo'), questionCount: counts.get(d.id)! })),
       teams: registrationOrder(teams.docs).map(d => ({ id: d.id, name: String(d.data().teamName) })),
       scores: scores.docs.filter(d => accepted.has(d.data().teamId as string)).map(d => { const s = d.data(); return { teamId: s.teamId as string, roundId: s.roundId as string, halfPoints: s.halfPoints as number | null, revision: s.revision as number }; }) };

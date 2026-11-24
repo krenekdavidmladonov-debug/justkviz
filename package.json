@@ -40,6 +40,7 @@
     "test:e2e:editor-core-browser": "node tools/local-emulator-environment.mjs full node_modules/@playwright/test/cli.js test --config tests/browser/editor-core-workflow.config.ts --grep @seeded",
     "test:e2e:editor-core-empty-browser": "node tools/local-emulator-environment.mjs full node_modules/@playwright/test/cli.js test --config tests/browser/editor-core-workflow.config.ts --grep @empty-library",
     "test:e2e:events": "node tools/local-emulator-environment.mjs full tests/e2e/events-emulator.mjs && pnpm test:e2e:scoring",
+    "test:e2e:quiz-reset": "node tools/local-emulator-environment.mjs full tests/e2e/event-quiz-reset-emulator.mjs && node tools/local-emulator-environment.mjs full tests/e2e/offline-score-reset-emulator.mjs",
     "test:e2e:scoring": "node tools/local-emulator-environment.mjs full tests/e2e/event-scoring-emulator.mjs",
     "test:e2e:scoring-browser": "playwright test --config tests/browser/event-scoring.config.ts",
     "test:e2e:print": "node tools/local-emulator-environment.mjs full tests/e2e/print-center-emulator.mjs",

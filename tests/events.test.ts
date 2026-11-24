@@ -6,7 +6,6 @@ import {
   buildPublicEventProjection,
   canArchiveEvent,
   canCancelEvent,
-  canLockQuiz,
   canMutateEvent,
   defaultScoringConfiguration,
   validateEventCapacity,
@@ -247,8 +246,6 @@ describe('event lifecycle', () => {
     expect(canCancelEvent('completed')).toBe(false);
     expect(canArchiveEvent('cancelled')).toBe(true);
     expect(canArchiveEvent('ready')).toBe(false);
-    expect(canLockQuiz('ready', false)).toBe(true);
-    expect(canLockQuiz('ready', true)).toBe(false);
   });
 });
 

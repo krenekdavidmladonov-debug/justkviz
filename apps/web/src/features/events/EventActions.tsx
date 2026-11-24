@@ -25,7 +25,7 @@ export function EventActions({ event, onChanged, showWarmup = false }: { event: 
   const disposition = eventDisposition(event);
   const reasonId = useId();
   const primary = disposition === 'trash' ? 'restore' : 'trash';
-  const primaryReason = !can('event.manage') ? 'Vyžaduje právo správy akcí.' : transitionProblem({ ...event, hasActiveSession: Boolean(event.liveSessionId) && ['ready', 'live', 'finalizing'].includes(event.lifecycleStatus) }, primary);
+  const primaryReason = !can('event.manage') ? 'Vyžaduje právo správy akcí.' : transitionProblem({ ...event, hasActiveSession: event.quizChangeState?.hasActiveSession ?? false }, primary);
   const actions: Action[] = disposition === 'deleting' || disposition === 'trash' ? ['delete'] : disposition === 'archived' ? ['unarchive'] : [...(eventOperational(event) ? ['complete' as const] : []), event.lifecycleStatus === 'cancelled' ? 'prepare' : 'cancel', 'archive'];
   return <>
     <div className="event-quick-actions">
@@ -35,7 +35,7 @@ export function EventActions({ event, onChanged, showWarmup = false }: { event: 
       {disposition === 'active' && (can('event.manage') && eventOperational(event) ? <Link to={`/admin/events/${event.id}#event-edit`}>Upravit</Link> : <p>Úpravy nejsou dostupné: {can('event.manage') ? 'akce je uzavřená' : 'chybí právo správy'}.</p>)}
       {actions.map(item => {
         const permitted = can(item === 'delete' ? 'event.delete' : 'event.manage');
-        const reason = !permitted ? item === 'delete' ? 'Vyžaduje samostatné právo trvalého mazání.' : 'Vyžaduje právo správy akcí.' : item === 'delete' ? null : transitionProblem({ ...event, hasActiveSession: Boolean(event.liveSessionId) && ['ready', 'live', 'finalizing'].includes(event.lifecycleStatus) }, item);
+        const reason = !permitted ? item === 'delete' ? 'Vyžaduje samostatné právo trvalého mazání.' : 'Vyžaduje právo správy akcí.' : item === 'delete' ? null : transitionProblem({ ...event, hasActiveSession: event.quizChangeState?.hasActiveSession ?? false }, item);
         return <div key={item}><button type="button" className={['cancel', 'trash', 'delete'].includes(item) ? 'event-action-destructive' : undefined} disabled={Boolean(reason)} onClick={() => setAction(item)}>{disposition === 'deleting' && item === 'delete' ? 'Pokračovat v mazání' : labels[item]}</button>{reason && <small>{reason}</small>}</div>;
       })}
     </div></details></div>
@@ -70,15 +70,24 @@ function ActionDialog({ event: initial, action, onClose, onChanged }: { event: E
   const [inventory, setInventory] = useState<Inventory | null>(null), [pending, setPending] = useState(false), [error, setError] = useState<string | null>(null);
   const [reason, setReason] = useState(''), [publicMessage, setPublicMessage] = useState(''), [endLive, setEndLive] = useState(false);
   const [confirmation, setConfirmation] = useState(''), [password, setPassword] = useState('');
+  const [verified, setVerified] = useState(false);
+  const actionProblem = action === 'delete' ? null : transitionProblem({ ...event, hasActiveSession: event.quizChangeState?.hasActiveSession ?? false }, action);
+  const needsClosure = event.quizChangeState?.hasActiveSession === true && (action === 'complete' || action === 'cancel');
+  const blocked = !verified || !!actionProblem || (needsClosure && (!can('event.live') || !endLive));
   useEffect(() => {
     const modal = dialog.current, previous = document.activeElement;
     modal?.showModal();
     let active = true;
+    void getEvent(initial.id).then(current => {
+      if (!active) return;
+      if (!current || (action !== 'delete' && !current.quizChangeState)) throw new Error('Aktuální moderování se nepodařilo ověřit. Zavřete dialog a načtěte detail znovu.');
+      setEvent(current); setVerified(true);
+    }).catch(issue => { if (active) setError(eventActionError(issue)); });
     if (action === 'delete') void privateRead<Inventory>('eventManagement', { eventId: initial.id }).then(value => { if (active) setInventory(value); }).catch(e => { if (active) setError(eventActionError(e)); });
     return () => { active = false; modal?.close(); if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
   }, [initial.id, action]);
   const submit = async () => {
-    if (busy.current) return;
+    if (busy.current || blocked) return;
     busy.current = true; setPending(true); setError(null);
     try {
       if (action === 'delete') {
@@ -102,7 +111,7 @@ function ActionDialog({ event: initial, action, onClose, onChanged }: { event: E
         return;
       }
       const message = action === 'complete' ? 'Akce byla dokončena. Týmy, výsledky a historie zůstávají zachované.' : action === 'cancel' ? 'Akce byla zrušena. Účastníci nebyli automaticky upozorněni.' : action === 'delete' ? 'Akce byla trvale smazána v aplikaci.' : ['prepare', 'restore', 'unarchive'].includes(action) ? 'Akce byla obnovena. Registrace zůstávají uzavřené; staré odkazy a relace se neobnovují.' : action === 'archive' ? 'Akce byla archivována. Výsledky zůstávají zachované.' : 'Akce byla přesunuta do koše. Kvíz a média v knihovně zůstávají zachované.';
-      const updated = action === 'delete' ? undefined : { ...event, revision: result.revision, lifecycleStatus: result.lifecycleStatus, registrationStatus: result.registrationStatus, registrationPublished: false, disposition: result.disposition ?? eventDisposition(event), ...(['prepare', 'restore'].includes(action) ? { liveSessionId: undefined } : {}) };
+      const updated = action === 'delete' ? undefined : { ...event, revision: result.revision, lifecycleStatus: result.lifecycleStatus, registrationStatus: result.registrationStatus, registrationPublished: false, disposition: result.disposition ?? eventDisposition(event), ...(event.quizChangeState ? { quizChangeState: { ...event.quizChangeState, hasActiveSession: false, hasPresentedQuestion: false } } : {}), ...(['prepare', 'restore'].includes(action) ? { liveSessionId: undefined } : {}) };
       await onChanged(message, action === 'delete', updated); onClose();
     } catch (e) {
       setError(eventActionError(e));
@@ -116,8 +125,8 @@ function ActionDialog({ event: initial, action, onClose, onChanged }: { event: E
     <h2 id="event-action-title">{action === 'trash' ? 'Smazat akci?' : 'Obnovit akci?'}</h2>
     <p>{action === 'trash' ? <>Akce „{event.title}“ bude přesunuta do koše. Můžete ji později obnovit.</> : <>Akce „{event.title}“ se vrátí z koše.</>}</p>
     <p>{action === 'trash' ? 'Výsledky, historie i připravený kvíz zůstanou zachované. Registrace se uzavřou a veřejné odkazy přestanou fungovat.' : 'Registrace zůstanou uzavřené. Obnova nespustí promítání ani neobnoví dřívější odkazy.'}</p>
-    {error && <p className="round-editor-error" role="alert">{error}</p>}
-    <div className="team-tool-actions"><button type="button" autoFocus className="secondary-button" disabled={pending} onClick={onClose}>Zrušit</button><button type="button" className={action === 'trash' ? 'danger-button' : 'primary-button'} disabled={pending} aria-busy={pending} onClick={() => void submit()}>{pending ? action === 'trash' ? 'Přesouvám do koše…' : 'Obnovuji…' : labels[action]}</button></div>
+    {!verified && !error && <p role="status">Ověřuji aktuální stav moderování…</p>}{actionProblem && <p role="alert">{actionProblem}</p>}{error && <p className="round-editor-error" role="alert">{error}</p>}
+    <div className="team-tool-actions"><button type="button" autoFocus className="secondary-button" disabled={pending} onClick={onClose}>Zrušit</button><button type="button" className={action === 'trash' ? 'danger-button' : 'primary-button'} disabled={pending || blocked} aria-busy={pending} onClick={() => void submit()}>{pending ? action === 'trash' ? 'Přesouvám do koše…' : 'Obnovuji…' : labels[action]}</button></div>
   </dialog>;
   return <dialog className="team-tool-dialog event-management-dialog" ref={dialog} aria-labelledby="event-action-title" onCancel={e => { e.preventDefault(); if (!busy.current) onClose(); }}>
     <h2 id="event-action-title">{labels[action]}</h2><p><strong>{event.title}</strong><br />{eventDate(event.startsAt)} · {lifecycleLabels[event.lifecycleStatus]}</p>
@@ -129,10 +138,10 @@ function ActionDialog({ event: initial, action, onClose, onChanged }: { event: E
     {action === 'archive' && <p>Dokončený nebo zrušený výsledek zůstane zachovaný. Archiv je určený ke čtení.</p>}
     {action === 'delete' && <><p>Odstraní se vlastní registrace, kontakty, bodování, historie, relace, veřejné kopie a připravené kvízy patřící pouze této akci. Zůstane minimální audit a technická stopa ID. Smazání v aplikaci nemění retenci poskytovatelských záloh.</p><details><summary>Podrobný rozsah</summary>{inventory && <ul>{Object.entries(inventory.counts).map(([key, value]) => <li key={key}>{inventoryLabels[key] ?? key}: {value}</li>)}<li>Připravené kvízy této akce: {inventory.ownedSnapshots}</li><li>Soubory Storage: 0 (knihovní média)</li></ul>}</details></>}
     {inventory?.progress && <p role="status">Odstraněno {inventory.progress.deletedCount} dokumentů · krok {inventory.progress.phase} / {inventory.progress.totalPhases}. {inventory.progress.error} Akci již nelze obnovit.</p>}
-    <form onSubmit={e => { e.preventDefault(); void submit(); }}><fieldset disabled={pending} className="manual-team-fields">
+    <form onSubmit={e => { e.preventDefault(); void submit(); }}><fieldset disabled={pending || !verified} className="manual-team-fields">
       {action === 'complete' && (can('event.live') ? <label><input type="checkbox" checked={endLive} onChange={e => setEndLive(e.target.checked)} /> Ukončit také případné otevřené promítání a přehrávání.</label> : <p>Před dokončením musí moderátor ukončit případné otevřené promítání.</p>)}
       {action === 'cancel' && <><label className="form-field"><span>Soukromý důvod zrušení</span><textarea maxLength={2000} value={reason} onChange={e => setReason(e.target.value)} /></label><label className="form-field"><span>Zpráva pro veřejnost (volitelné)</span><textarea maxLength={1000} value={publicMessage} onChange={e => setPublicMessage(e.target.value)} /></label>{can('event.live') ? <label><input type="checkbox" checked={endLive} onChange={e => setEndLive(e.target.checked)} /> Ukončit běh a zrušit akci — zastaví všechna související živá ovládání a přehrávání.</label> : <p>Ukončení živého běhu navíc vyžaduje právo ovládat promítání.</p>}</>}
       {action === 'delete' && <><label className="form-field"><span>Opište název akce</span><input required autoComplete="off" value={confirmation} onChange={e => setConfirmation(e.target.value)} /></label><label className="form-field"><span>Vaše současné heslo</span><input required type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} /></label></>}
-    </fieldset>{error && <p className="round-editor-error" role="alert">{error}</p>}<div className="team-tool-actions"><button type="button" autoFocus className="secondary-button" disabled={pending} onClick={onClose}>Zpět</button><button className="danger-button" aria-busy={pending} disabled={pending || (action === 'delete' && (!inventory || confirmation !== event.title || !password))}>{pending ? action === 'delete' ? 'Mažu bezpečné dávky…' : 'Ukládám…' : action === 'cancel' && endLive ? 'Ukončit běh a zrušit akci' : labels[action]}</button></div></form>
+    </fieldset>{!verified && !error && <p role="status">Ověřuji aktuální stav moderování…</p>}{actionProblem && <p role="alert">{actionProblem}</p>}{error && <p className="round-editor-error" role="alert">{error}</p>}<div className="team-tool-actions"><button type="button" autoFocus className="secondary-button" disabled={pending} onClick={onClose}>Zpět</button><button className="danger-button" aria-busy={pending} disabled={pending || blocked || (action === 'delete' && (!inventory || confirmation !== event.title || !password))}>{pending ? action === 'delete' ? 'Mažu bezpečné dávky…' : 'Ukládám…' : action === 'cancel' && endLive ? 'Ukončit běh a zrušit akci' : labels[action]}</button></div></form>
   </dialog>;
 }

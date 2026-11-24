@@ -20,8 +20,11 @@ try {
   assert.equal(ended.status, 'ended');
   assert.equal((await liveOnly.session()).status, 'ended');
   assert.equal((await liveOnly.db.doc('publicSessions/' + liveOnly.sessionId).get()).get('status'), 'ended');
-  assert.deepEqual((await eventRef.get()).data(), eventBefore);
-  console.log('PASS: event.live-only moderator ends the quiz, cannot complete its event, and retains the event unchanged');
+  const eventAfter = (await eventRef.get()).data();
+  assert.equal(eventAfter.liveSessionId, undefined);
+  assert.equal(eventAfter.revision, eventBefore.revision + 1);
+  for (const key of ['lifecycleStatus', 'registrationStatus', 'registrationPublished', 'quizAssignment', 'scoring']) assert.deepEqual(eventAfter[key], eventBefore[key]);
+  console.log('PASS: event.live-only moderator releases the event pointer without completing the event or changing scores/registration');
 } finally { await liveOnly.close(); }
 
 const f = await finalFixture(4);

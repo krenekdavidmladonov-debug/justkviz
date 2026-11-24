@@ -110,6 +110,7 @@ try {
   await libraryRound.delete();
   try { await write({ teamId: online.registrationId, halfPoints: 9 }, moderator); }
   finally { await libraryRound.set(originalRound); }
+  // A legacy relock without an explicit preserve/discard choice still cannot alter existing scores.
   await denied(staff.call('lockEventQuiz', { eventId, expectedRevision: (await eventData()).revision, quizId: 'preflight-ready-e2e', expectedQuizRevision: 0, acknowledgeWarnings: false }), 'failed-precondition');
   assert.deepEqual((await db.doc(`publicEvents/${eventId}`).get()).data(), publicBefore);
   assert.equal((await db.doc(`publicSessions/${eventId}`).get()).exists, false);

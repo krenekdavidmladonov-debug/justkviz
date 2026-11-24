@@ -104,6 +104,8 @@ export interface EditorAppearance {
   readonly imageLayout: 'split' | 'stacked';
 }
 export interface EditorQuiz {
+  /** Server read view: actual slide counts, including empty stored rounds. */
+  readonly scoringRounds?: readonly { readonly id: string; readonly questionCount: number }[];
   readonly status?: 'draft' | 'ready' | 'archived';
   readonly printTemplate?: PrintTemplate;
   readonly defaultDesign?: SlideDesign;

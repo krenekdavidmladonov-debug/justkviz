@@ -4,7 +4,7 @@ import { emptyScore, parseRoundPoints, pointsText, scoreLabel, type Score, type 
 
 type Draft = { text: string; reason: string; clear: boolean; base: Score };
 interface Props {
-  eventId: string; snapshotId: string; roundId: string; roundTitle: string; questionCount?: number | undefined;
+  eventId: string; snapshotId: string; scoringEpoch?: number | undefined; roundId: string; roundTitle: string; questionCount?: number | undefined;
   teams: { id: string; name: string; accepted?: boolean }[]; scores: Record<string, Score>; disabled: boolean;
   onDirty: (dirty: boolean) => void; onPending: (pending: boolean) => void;
   transport?: { save: (request: RoundScoreRequest) => Promise<RoundScoreResponse>; history: typeof loadHistory };
@@ -18,7 +18,7 @@ function draftPoints(draft: Draft) {
   catch (error) { return { error: (error as Error).message }; }
 }
 
-export function RoundScoreForm({ eventId, snapshotId, roundId, roundTitle, questionCount, teams, scores, disabled, onDirty, onPending, transport }: Props) {
+export function RoundScoreForm({ eventId, snapshotId, scoringEpoch, roundId, roundTitle, questionCount, teams, scores, disabled, onDirty, onPending, transport }: Props) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const form = useRef<HTMLFormElement>(null);
@@ -83,7 +83,7 @@ export function RoundScoreForm({ eventId, snapshotId, roundId, roundTitle, quest
         if (changed.length > 200) throw new Error('Najednou lze uložit nejvýše 200 změněných týmů.');
         if (changed.some(score => score.halfPoints === null) && !window.confirm('Vrátit označené výsledky v tomto kole na nezadáno? Historie zůstane zachována.')) return;
         if (overLimit.length && !window.confirm(warning + '\n\n' + overLimit.join('\n'))) return;
-        request = { eventId, snapshotId, roundId, requestId: crypto.randomUUID(), scores: changed };
+        request = { eventId, snapshotId, ...(scoringEpoch === undefined ? {} : { scoringEpoch }), roundId, requestId: crypto.randomUUID(), scores: changed };
       }
     } catch (issue) { setError((issue as Error).message); return; }
     retry.current = request; busy.current = true; setPending(true); onPending(true); setError(''); setNotice('');

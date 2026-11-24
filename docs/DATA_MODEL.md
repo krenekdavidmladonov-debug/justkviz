@@ -347,4 +347,48 @@ optional fields remain compatible. See [EVENT_PUBLICATION.md](archive/EVENT_PUBL
 
 See [EVENT_MANAGEMENT.md](archive/EVENT_MANAGEMENT.md) for the independent disposition overlay, scoped permission mapping, shared transactional guards, capability revocation and exact server-side deletion ownership/allowlist. No content backfill or Storage cleanup is introduced. Cloud team email remains disabled.
 
-Manual completion uses existing events roots and eventOperations/eventAudit receipts. The optional private completion object contains trusted at/by/reason; capabilityVersion and revision advance together. A presentation-only END without `completeEvent: true` does not mutate its event root; explicit privileged staff completion updates the bound event as described above. Existing scores/history and confirmed result versions remain intact after either presentation END or event completion.
+Manual completion uses existing events roots and eventOperations/eventAudit receipts. The optional private completion object contains trusted at/by/reason; capabilityVersion and revision advance together. A presentation-only END without `completeEvent: true` removes the active liveSessionId and advances the event revision in the same transaction, without completing the event; explicit privileged staff completion updates the bound event as described above. Existing scores/history and confirmed result versions remain intact after either presentation END or event completion.
+
+### Score generations and quiz-version changes
+
+Optional private events/{eventId}.scoring.epoch is a non-negative safe integer;
+missing means 0 for historical events and requests. resetEventScores and an
+explicit discard during lockEventQuiz delete all score parents and their history
+in one transaction, set started=false and increment epoch and the event revision.
+Server-only eventOperations keeps an actor/event/request-bound reset receipt;
+eventAudit stores actor/time and deleted score/history counts, without content.
+Old scoreOperations remain immutable, but a prior epoch cannot replay them.
+
+Compatible preservation compares the exact round ID set and question count of
+each old/new frozen round. It updates each existing score's snapshotId while
+retaining its points, revision and history. A new quizSnapshots tree is created;
+old snapshots are not rewritten. Ended sessions never block this operation.
+New private sessions record monotonic hasPresentedQuestion; intro-only navigation
+does not set it, while publishing a question or recap selection does. A legacy
+active session without evidence has unknown history and blocks relock until ended.
+
+Server-only offlineExports records pin scoringEpoch (legacy 0). Synchronization
+rejects a changed generation before preview, reconciliation or receipt replay;
+the generation also remains in the structural digest. No public projection or
+new client-write permission is added.
+
+Bare END also records private lastEndedSessionId. A later completeEvent without
+an active pointer may restore that ID only as completed-event history, after
+transactionally verifying the exact owned, ended session and current snapshot,
+with no active session remaining. The hint never authorizes moderation. Relock
+and score reset delete it; reset also clears any legacy ended active pointer,
+so a prior generation's confirmed final version cannot become the new outcome.
+The limited event view and all public projections omit this field.
+
+The limited editor read view adds optional scoringRounds derived from actual
+question slides plus all stored round IDs, including empty rounds. Version
+comparison uses that same shared derivation for old and new snapshots; stale
+numeric source round counters do not decide whether points can be preserved.
+New snapshots freeze the derived count without rewriting the source or any old
+snapshot.
+
+For an older active session without a question marker, absence remains unknown;
+the private change-state view reports hasUnknownQuestionHistory and a specific
+instruction to end that older run. It does not claim that a question was shown.
+An actual subsequent question sets true; a legacy unknown intro cannot turn the
+marker into false. Ended older runs remain non-blocking.

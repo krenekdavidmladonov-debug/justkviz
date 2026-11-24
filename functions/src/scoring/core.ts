@@ -1,3 +1,4 @@
+import { eventScoringEpoch } from '@filmovy-kviz/quiz-domain';
 import { assertEventOperational } from '../events/guards.js';
 import { createHash } from 'node:crypto';
 import { runAccessTransaction } from '../access/authorization.js';
@@ -21,6 +22,7 @@ export async function commitScore(input: ScoreInput, authorize: (transaction: Tr
     const actor = await authorize(transaction);
     const event: Record<string, unknown> | undefined = (await transaction.get(eventRef)).data();
     if (!event) throw new HttpsError('not-found', 'Event was not found.');
+    assertScoringEpoch(event, input.scoringEpoch ?? 0);
     const operationRef = eventRef.collection('scoreOperations').doc(scoreHash([actor.key, input.eventId, 'saveEventScore', input.requestId]));
     const operation: Record<string, unknown> | undefined = (await transaction.get(operationRef)).data();
     if (operation) {
@@ -65,6 +67,7 @@ export async function commitRoundScores(input: ReturnType<typeof parseRoundScore
     const actor = await authorize(transaction);
     const event = (await transaction.get(eventRef)).data();
     if (!event) throw new HttpsError('not-found', 'Event was not found.');
+    assertScoringEpoch(event, input.scoringEpoch ?? 0);
     const operationRef = eventRef.collection('scoreOperations').doc(scoreHash([actor.key, input.eventId, 'saveEventRoundScores', input.requestId]));
     const operation = (await transaction.get(operationRef)).data();
     if (operation) {
@@ -109,4 +112,12 @@ export async function commitRoundScores(input: ReturnType<typeof parseRoundScore
     }
     return response;
   });
+}
+
+/** Check before receipt replay as well as every new write, including an empty cell. */
+function assertScoringEpoch(event: Record<string, unknown>, requested: number): void {
+  let epoch: number;
+  try { epoch = eventScoringEpoch(event.scoring); }
+  catch { throw new HttpsError('failed-precondition', 'Generace bodování není platná. Kontaktujte správce.'); }
+  if (epoch !== requested) throw new HttpsError('aborted', 'Body akce byly smazány. Staré změny nelze uložit. Obnovte stránku a zadejte body znovu.');
 }

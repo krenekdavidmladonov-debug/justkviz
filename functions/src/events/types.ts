@@ -30,6 +30,7 @@ export type EventPricing = (
 ) & { readonly hidden?: boolean };
 
 export interface EventScoringConfiguration {
+  readonly epoch?: number;
   readonly unitScale: 2;
   readonly rankingMode: 'dense';
   readonly started: boolean;

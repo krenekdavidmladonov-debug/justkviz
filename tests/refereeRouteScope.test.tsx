@@ -148,3 +148,16 @@ it('keeps revocation effective for the current scope', async () => {
   expect(host.textContent).toContain('Přístup vypršel / byl odebrán');
   expect(teamInput('a')?.disabled).toBe(true);
 });
+
+it('retains a stale referee draft disabled when its score epoch changes without a snapshot change', async () => {
+  vi.useFakeTimers();
+  try {
+    read.mockResolvedValueOnce({ ...view('a'), scoringEpoch: 0 });
+    await render(); await input('a', '1');
+    read.mockResolvedValue({ ...view('a'), scoringEpoch: 1 });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
+    expect(teamInput('a')?.value).toBe('1'); expect(teamInput('a')?.disabled).toBe(true);
+    expect(host.textContent).toContain('Staré rozepsané body nelze uložit');
+    expect(write).not.toHaveBeenCalled();
+  } finally { vi.clearAllTimers(); vi.useRealTimers(); }
+});

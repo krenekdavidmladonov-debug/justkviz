@@ -61,7 +61,7 @@ export function applyLiveSessionAction(
 ): PrivateLiveSession {
   assertExpectedRevision(session, expectedRevision);
   assertMutable(session);
-  const common = { revision: session.revision + 1, updatedAt: now, updatedBy: actorUid };
+  const common = { revision: session.revision + 1, updatedAt: now, updatedBy: actorUid, ...(slide?.isQuestion ? { hasPresentedQuestion: true } : {}) };
   if (action.type === 'end-session') {
     return {
       ...withoutShowState(withoutRecapSelection(session)), ...(session.finalReveal ? { finalReveal: { ...session.finalReveal, visible: false } } : {}), ...common, status: 'ended', answerRevealed: false, presentationMode: 'slide',
@@ -79,11 +79,14 @@ export function applyLiveSessionAction(
       throw new LiveSessionError('failed-precondition', 'The requested slide is unavailable.');
     }
     const recap = isRecapKind(slide.kind);
+    const questionHistory = slide.isQuestion || session.hasPresentedQuestion === true ? true
+      : session.hasPresentedQuestion === false || (session.status === 'waiting' && session.currentSlidePosition === 0 && session.startedAt === null) ? false : undefined;
     return {
       ...withoutShowState(withoutRecapSelection(session)),
       ...(session.finalReveal ? { finalReveal: { ...session.finalReveal, visible: false } } : {}),
       ...common,
       status: 'active',
+      ...(questionHistory === undefined ? {} : { hasPresentedQuestion: questionHistory }),
       currentSlidePosition: position,
       currentSlideId: slide.id,
       answerRevealed: false,
@@ -103,7 +106,7 @@ export function applyLiveSessionAction(
       throw new LiveSessionError('failed-precondition', 'The requested recap question is unavailable.');
     }
     return {
-      ...withoutOriginalPlayback(session), ...common, answerRevealed: true,
+      ...withoutOriginalPlayback(session), ...common, hasPresentedQuestion: true, answerRevealed: true,
       recapQuestionPosition: slide.position, recapQuestionId: slide.id,
       mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: session.mediaGeneration + 1,
     };
