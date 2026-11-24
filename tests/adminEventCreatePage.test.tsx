@@ -37,7 +37,7 @@ beforeEach(() => {
     { path: `${listPath}/:eventId`, element: <h1>Detail akce</h1> },
   ], { initialEntries: [createPath] });
 });
-afterEach(async () => { await act(async () => root.unmount()); router.dispose(); host.remove(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); router.dispose(); host.remove(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 async function render() {
   await act(async () => root.render(<React.StrictMode><RouterProvider key={`${auth.uid}:${auth.version}`} router={router} /></React.StrictMode>));
@@ -51,7 +51,7 @@ async function fillForm() {
     ['Místo', 'Testovací sál'], ['Veřejné upřesnění místa', 'Praha'],
   ];
   for (const [label, value] of fields) {
-    const input = [...form().querySelectorAll('label')].find(item => item.textContent === label)!.querySelector('input')!;
+    const input = [...form().querySelectorAll('label')].find(item => item.querySelector('span')?.firstChild?.textContent === label)!.querySelector('input')!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
       input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -61,7 +61,7 @@ async function fillForm() {
 }
 
 async function changeField(label: string, value: string) {
-  const element = [...form().querySelectorAll('label')].find(item => item.querySelector('span')?.textContent === label)!.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input,textarea,select')!;
+  const element = [...form().querySelectorAll('label')].find(item => item.querySelector('span')?.firstChild?.textContent === label)!.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input,textarea,select')!;
   const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
   await act(async () => {
     Object.getOwnPropertyDescriptor(prototype, 'value')!.set!.call(element, value);
@@ -181,7 +181,6 @@ it('restores the full submitted configuration from durable recovery after a comp
   const request = deferCreate();
   await render(); await fillForm();
   await changeField('Datum a čas v Praze', '2030-10-27T02:30');
-  await changeField('Europe/Prague · při opakovaném čase', '+01:00');
   await changeField('Popis akce', 'Synthetic original description');
   await changeField('Způsob účtování', 'per-event');
   await changeField('Cena v Kč', '1700');
@@ -190,7 +189,7 @@ it('restores the full submitted configuration from durable recovery after a comp
   await act(async () => form().querySelector<HTMLInputElement>('input[type=checkbox]')!.click());
   await act(async () => form().requestSubmit());
   const first = vi.mocked(createEvent).mock.calls[0]!;
-  expect(first[0]).toMatchObject({ utcOffset: '+01:00', pricingMode: 'per-event', pricingAmountCzk: 1700, pricingHidden: true, description: 'Synthetic original description', teamCapacity: 17, teamSizeMin: 1 });
+  expect(first[0]).toMatchObject({ pricingMode: 'per-event', pricingAmountCzk: 1700, pricingHidden: true, description: 'Synthetic original description', teamCapacity: 17, teamSizeMin: 1 });
   await act(async () => request.reject(new Error('Synthetic lost ACK')));
   await act(async () => root.unmount()); root = createRoot(host);
   await render();
@@ -249,5 +248,88 @@ it('requires an explicit checked reset before editing an ambiguous submission', 
   vi.mocked(createEvent).mockResolvedValueOnce(created);
   await act(async () => form().requestSubmit());
   expect(vi.mocked(createEvent).mock.calls[1]![1]).not.toBe(first[1]);
+  expect(router.state.location.pathname).toBe(createdPath);
+});
+
+it('identifies, focuses and scrolls to the first missing field without creating an attempt payload', async () => {
+  await render();
+  const title = form().elements.namedItem('title') as HTMLInputElement;
+  const scroll = vi.fn();
+  title.scrollIntoView = scroll;
+  await act(async () => form().requestSubmit());
+  expect(createEvent).not.toHaveBeenCalled();
+  expect(title.getAttribute('aria-invalid')).toBe('true');
+  expect(document.activeElement).toBe(title);
+  expect(scroll).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' });
+  expect(host.querySelector('[role=alert]')?.textContent).toBe('Vyplňte název akce.');
+});
+
+it.each(['', '   '])('reports a missing public location %j next to the required field', async value => {
+  await render(); await fillForm();
+  await changeField('Veřejné upřesnění místa', value);
+  const location = form().elements.namedItem('publicLocation') as HTMLInputElement;
+  location.scrollIntoView = vi.fn();
+  await act(async () => form().requestSubmit());
+  expect(createEvent).not.toHaveBeenCalled();
+  expect(location.required).toBe(true);
+  expect(location.labels?.[0]?.textContent).toContain('*');
+  expect(location.getAttribute('aria-invalid')).toBe('true');
+  expect(document.activeElement).toBe(location);
+  expect(location.labels?.[0]?.querySelector('[role=alert]')?.textContent).toBe('Vyplňte upřesnění místa.');
+});
+
+it.each([
+  ['Datum a čas v Praze', 'startsAt', 'Vyplňte datum a čas.'],
+  ['Místo', 'venueName', 'Vyplňte místo konání.'],
+  ['Cena v Kč', 'pricingAmountCzk', 'Vyplňte cenu v Kč.'],
+  ['Maximální počet týmů', 'teamCapacity', 'Vyplňte maximální počet týmů.'],
+  ['Minimální počet členů týmu', 'teamSizeMin', 'Vyplňte minimální počet členů týmu.'],
+  ['Maximální počet členů týmu', 'teamSizeMax', 'Vyplňte maximální počet členů týmu.'],
+])('marks and explains the missing field %s', async (label, name, message) => {
+  await render(); await fillForm(); await changeField(label, '');
+  const input = form().elements.namedItem(name) as HTMLInputElement;
+  input.scrollIntoView = vi.fn();
+  await act(async () => form().requestSubmit());
+  expect(input.labels?.[0]?.textContent).toContain('*');
+  expect(document.activeElement).toBe(input);
+  expect(document.getElementById(input.getAttribute('aria-describedby')!)?.textContent).toBe(message);
+  expect(createEvent).not.toHaveBeenCalled();
+});
+
+it.each([['Veřejné upřesnění místa', 'publicLocation'], ['Popis akce', 'description']])('explains unsupported pasted characters in %s', async (label, name) => {
+  await render(); await fillForm(); await changeField(label, 'Praha\u202e 1');
+  const field = form().elements.namedItem(name) as HTMLElement;
+  field.scrollIntoView = vi.fn();
+  await act(async () => form().requestSubmit());
+  expect(document.activeElement).toBe(field);
+  expect(host.querySelector('[role=alert]')?.textContent).toBe('Odstraňte z textu nepodporované znaky.');
+  expect(createEvent).not.toHaveBeenCalled();
+});
+
+it('reports an impossible Prague clock time directly at the date field', async () => {
+  await render(); await fillForm();
+  await changeField('Datum a čas v Praze', '2026-03-29T02:30');
+  const date = form().elements.namedItem('startsAt') as HTMLInputElement;
+  date.scrollIntoView = vi.fn();
+  await act(async () => form().requestSubmit());
+  expect(createEvent).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(date);
+  expect(date.labels?.[0]?.querySelector('[role=alert]')?.textContent).toContain('neexistuje');
+});
+
+it('requires confirmation for a past date and leaves the draft editable after cancelling', async () => {
+  await render(); await fillForm();
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2020-01-01T18:01:00Z'));
+  await changeField('Datum a čas v Praze', '2020-01-01T19:00');
+  vi.mocked(createEvent).mockResolvedValue(created);
+  const confirm = vi.fn(() => false);
+  vi.stubGlobal('confirm', confirm);
+  await act(async () => form().requestSubmit());
+  expect(confirm).toHaveBeenCalledExactlyOnceWith('Akce je v minulosti, opravdu?');
+  expect(createEvent).not.toHaveBeenCalled();
+  expect([...form().querySelectorAll('fieldset')].every(item => !item.disabled)).toBe(true);
+  confirm.mockReturnValue(true);
+  await act(async () => form().requestSubmit());
+  expect(createEvent).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ startsAt: '2020-01-01T19:00' }), expect.any(String));
   expect(router.state.location.pathname).toBe(createdPath);
 });

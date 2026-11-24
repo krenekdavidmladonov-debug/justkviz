@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { eventDisposition, eventOperational, hasPermission, pragueDateTime, pragueInstant, rolePresets, transitionProblem, type Membership } from '../packages/quiz-domain/src/index';
+import { eventFormInstant } from '../apps/web/src/features/events/eventFormTime';
 
 describe('event lifecycle and old documents', () => {
   test('missing overlay remains visible; archive retains outcome', () => {
@@ -40,5 +41,27 @@ describe('Prague wall time, independent of browser time zone', () => {
     expect(() => pragueInstant('2026-10-25T02:30')).toThrow('dvakrát');
     expect(pragueInstant('2026-10-25T02:30', '+02:00')).toBe('2026-10-25T00:30:00.000Z');
     expect(pragueInstant('2026-10-25T02:30', '+01:00')).toBe('2026-10-25T01:30:00.000Z');
+  });
+});
+
+describe('automatic Prague time in the event form', () => {
+  test.each([
+    ['2026-01-20T00:00', '2026-01-19T23:00:00.000Z'],
+    ['2026-07-20T00:00', '2026-07-19T22:00:00.000Z'],
+    ['2026-03-29T01:59', '2026-03-29T00:59:00.000Z'],
+    ['2026-03-29T03:00', '2026-03-29T01:00:00.000Z'],
+    ['2026-10-25T01:59', '2026-10-24T23:59:00.000Z'],
+    ['2026-10-25T03:00', '2026-10-25T02:00:00.000Z'],
+    ['2030-11-20T19:00', '2030-11-20T18:00:00.000Z'],
+    ['2030-07-20T19:00', '2030-07-20T17:00:00.000Z'],
+    ['2026-10-25T02:30', '2026-10-25T00:30:00.000Z'],
+  ])('converts %s automatically to %s', (startsAt, expected) => {
+    expect(eventFormInstant({ startsAt })).toBe(expected);
+  });
+  test('retains the later occurrence of an existing autumn event', () => {
+    expect(eventFormInstant({ startsAt: '2026-10-25T02:30', utcOffset: '+01:00' })).toBe('2026-10-25T01:30:00.000Z');
+  });
+  test('rejects a nonexistent spring time', () => {
+    expect(() => eventFormInstant({ startsAt: '2026-03-29T02:30' })).toThrow('neexistuje');
   });
 });

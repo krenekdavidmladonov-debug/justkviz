@@ -92,6 +92,9 @@ jobs:
       - name: Install Playwright Chromium for browser E2E
         run: pnpm exec playwright install chromium
 
+      - name: Event creation form, field validation and Prague time (isolated browser)
+        run: pnpm exec playwright test --config tests/browser/events-form-ux.config.ts
+
       - name: Personal access Firestore and Storage isolation contracts
         run: >-
           pnpm exec firebase emulators:exec --only firestore,storage --project demo-justkviz-access --config firebase.access-rules.json

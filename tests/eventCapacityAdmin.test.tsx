@@ -27,7 +27,7 @@ afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi
 it('shows only team capacity and keeps a three-member minimum with a four-member ceiling', async () => {
   await act(async () => root.render(<EventForm values={values} pending={false} submitLabel="Uložit" onChange={vi.fn()} onSubmit={vi.fn()} />));
   const numberInputs = [...host.querySelectorAll<HTMLInputElement>('fieldset:last-of-type input[type=number]')];
-  expect(numberInputs.map(input => input.closest('label')?.textContent)).toEqual(['Maximální počet týmů', 'Minimální počet členů týmu', 'Maximální počet členů týmu']);
+  expect(numberInputs.map(input => input.closest('label')?.textContent)).toEqual(['Maximální počet týmů *', 'Minimální počet členů týmu *', 'Maximální počet členů týmu *']);
   expect(numberInputs[1]?.value).toBe('3'); expect(numberInputs[1]?.max).toBe('4');
   expect(numberInputs[2]?.min).toBe('3'); expect(numberInputs[2]?.max).toBe('4');
   expect(host.textContent).not.toContain('Maximální počet účastníků');
@@ -38,6 +38,14 @@ it.each([3, 6])('manual teams respect the event maximum %s and the universal cei
   const input = host.querySelector<HTMLInputElement>('input[type=number]')!;
   expect(input.min).toBe('3'); expect(input.max).toBe(String(Math.min(4, teamSizeMax)));
   expect(input.value).toBe('3'); expect(mocks.invoke).not.toHaveBeenCalled();
+});
+
+it('sends the earlier Prague instant for a new autumn time and retains a stored later instant on edit', async () => {
+  const autumn = { ...values, startsAt: '2026-10-25T02:30' };
+  await createEvent(autumn);
+  expect(mocks.invoke.mock.calls.at(-1)?.[0]).toMatchObject({ event: { startsAt: '2026-10-25T00:30:00.000Z', timeZone: 'Europe/Prague' } });
+  await updateEvent('event', 2, { ...autumn, utcOffset: '+01:00' });
+  expect(mocks.invoke.mock.calls.at(-1)?.[0]).toMatchObject({ event: { startsAt: '2026-10-25T01:30:00.000Z' } });
 });
 
 it('derives new compatibility capacity while preserving historical capacity on explicit edits', async () => {
@@ -54,7 +62,7 @@ it('shows public pricing with whole-crown constraints and retains the amount thr
   }
   await act(async () => root.render(<EditableForm />));
   const mode = [...host.querySelectorAll('select')].find(select => select.closest('label')?.textContent?.includes('Způsob účtování'))!;
-  const priceInput = () => [...host.querySelectorAll<HTMLInputElement>('input[type=number]')].find(input => input.closest('label')?.textContent === 'Cena v Kč');
+  const priceInput = () => host.querySelector<HTMLInputElement>('input[name="pricingAmountCzk"]');
   expect(priceInput()?.min).toBe('0'); expect(priceInput()?.max).toBe('1000000'); expect(priceInput()?.step).toBe('1');
   expect(priceInput()?.required).toBe(true);
   expect(host.textContent).toContain('Veřejné zobrazení: 720 Kč za tým');
@@ -62,7 +70,7 @@ it('shows public pricing with whole-crown constraints and retains the amount thr
   for (const value of ['per-event', 'agreement', 'per-team']) {
     await act(async () => { mode.value = value; mode.dispatchEvent(new Event('change', { bubbles: true })); });
     if (value === 'agreement') {
-      expect(priceInput()).toBeUndefined(); expect(host.textContent).toContain('Veřejné zobrazení: Cena dle dohody');
+      expect(priceInput()).toBeNull(); expect(host.textContent).toContain('Veřejné zobrazení: Cena dle dohody');
     } else {
       expect(priceInput()?.value).toBe('720'); expect(host.textContent).toContain(value === 'per-event' ? '720 Kč za celou akci' : '720 Kč za tým');
     }
@@ -103,7 +111,7 @@ it('toggles public price visibility without clearing the editable amount', async
   }
   await act(async () => root.render(<EditableForm />));
   const checkbox = host.querySelector<HTMLInputElement>('input[type=checkbox]')!;
-  const amount = [...host.querySelectorAll<HTMLInputElement>('input[type=number]')].find(input => input.closest('label')?.textContent === 'Cena v Kč')!;
+  const amount = host.querySelector<HTMLInputElement>('input[name="pricingAmountCzk"]')!;
   expect(checkbox.checked).toBe(true);
   await act(async () => checkbox.click());
   expect(checkbox.checked).toBe(false); expect(amount.value).toBe('720'); expect(amount.disabled).toBe(false);

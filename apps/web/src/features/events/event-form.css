@@ -1,0 +1,2 @@
+.event-form [aria-invalid="true"] { border-color: var(--color-error); }
+.event-form .event-field-error { margin: 0; color: var(--color-error); font-size: .875rem; }
