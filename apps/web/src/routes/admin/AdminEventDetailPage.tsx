@@ -288,7 +288,7 @@ function EventDetail({ eventId }: { eventId: string | undefined }) {
       </section>
       {admin && !hidden && !['archived', 'cancelled', 'completed'].includes(event.lifecycleStatus) && <div id="event-referee">
         {(!locked || !['ready', 'live', 'finalizing'].includes(event.lifecycleStatus)) && <p className="event-muted">Před použitím odkazu rozhodčího nejprve <a href="#event-quiz">připravte kvíz ke hraní</a>.</p>}
-        <RefereeAccessPanel key={event.id} eventId={event.id} canIssue={can('event.score')} />
+        <RefereeAccessPanel key={event.id} eventId={event.id} canIssue={can('event.score')} startsAt={event.startsAt} timeZone={event.timeZone} />
         {can('event.export') && can('event.answers.read') && can('event.answers.export') && <p className="event-muted"><Link to={`/admin/events/${event.id}/print`}>Připravit správné odpovědi pro rozhodčího</Link> — v tiskovém centru zvolte organizační arch nebo klíč odpovědí.</p>}
       </div>}
       {admin && can('event.contacts') && EventTeamMessagePanel && <Suspense fallback={null}><EventTeamMessagePanel key={event.id + ':' + currentUser?.uid} eventId={event.id} actorId={currentUser!.uid} canCreate={['draft', 'scheduled', 'ready', 'live'].includes(event.lifecycleStatus)} /></Suspense>}

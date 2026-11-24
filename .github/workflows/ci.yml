@@ -133,7 +133,7 @@ jobs:
           pnpm exec firebase emulators:exec
           --only auth,firestore,functions
           --project demo-filmovy-kviz-v2
-          "pnpm seed:quizzes && node tools/local-emulator-environment.mjs full tests/e2e/referee-access-emulator.mjs && pnpm exec playwright test --config tests/browser/referee-access.config.ts"
+          "pnpm seed:quizzes && node tools/local-emulator-environment.mjs full tests/e2e/referee-access-emulator.mjs && node tools/local-emulator-environment.mjs full node_modules/@playwright/test/cli.js test --config tests/browser/referee-access.config.ts"
 
       - name: Quiz version, atomic score reset and stale offline/referee conflicts (local emulators only)
         run: >-

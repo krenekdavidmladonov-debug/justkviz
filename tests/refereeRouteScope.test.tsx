@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { RefereePage } from '../apps/web/src/routes/referee/RefereePage';
 import { historyReferee, readReferee, writeRefereeRound, type Credential, type RefereeEvent } from '../apps/web/src/features/referee/api';
 import type { RoundScoreResponse } from '../apps/web/src/features/scoring/api';
+import { consumeRefereeAccess, forgetReferee, rememberReferee } from '../apps/web/src/features/referee/sharing';
 import type { ScoreHistory } from '../apps/web/src/features/scoring/model';
 
 vi.mock('../apps/web/src/features/referee/api', () => ({ readReferee: vi.fn(), writeRefereeRound: vi.fn(), historyReferee: vi.fn() }));
@@ -19,7 +20,7 @@ function deferred<T>() {
 }
 const storageKey = (id: string) => `referee-access-v1:${id}`;
 const credential = (id: string): Credential => ({ eventId: id, accessId: `access-${id}`, key: id.repeat(43) });
-const view = (id: string): RefereeEvent => ({ eventId: id, title: `Event ${id}`, label: 'Synthetic referee', snapshotId: `snapshot-${id}`, rounds: [{ id: 'round', title: `Round ${id}` }], teams: [{ id: `team-${id}`, name: `Team ${id}` }], scores: [] });
+const view = (id: string): RefereeEvent => ({ eventId: id, title: `Event ${id}`, label: 'Synthetic referee', expiresAt: '2031-01-01T00:00:00.000Z', snapshotId: `snapshot-${id}`, rounds: [{ id: 'round', title: `Round ${id}` }], teams: [{ id: `team-${id}`, name: `Team ${id}` }], scores: [] });
 let host: HTMLDivElement;
 let root: Root;
 let router: ReturnType<typeof createMemoryRouter>;
@@ -31,7 +32,7 @@ beforeEach(() => {
   confirmMock.mockReset().mockReturnValue(false);
   vi.stubGlobal('confirm', confirmMock);
   vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
-  sessionStorage.clear();
+  sessionStorage.clear(); localStorage.clear();
   for (const id of ['a', 'b']) sessionStorage.setItem(storageKey(id), JSON.stringify(credential(id)));
   window.history.replaceState({}, '', '/referee/a');
   read.mockReset().mockImplementation(c => Promise.resolve(view(c.eventId)));
@@ -39,7 +40,7 @@ beforeEach(() => {
   history.mockReset().mockResolvedValue([]);
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
-afterEach(async () => { await act(async () => root.unmount()); router?.dispose(); host.remove(); sessionStorage.clear(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(async () => { await act(async () => root.unmount()); router?.dispose(); host.remove(); sessionStorage.clear(); localStorage.clear(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 async function render() {
   router = createMemoryRouter([{ path: '/referee/:eventId', element: <RefereePage /> }], { initialEntries: ['/referee/a'] });
@@ -64,12 +65,12 @@ it('loads B credentials and event state after clean same-route navigation, and s
   expect(teamInput('b')?.disabled).toBe(false);
   await input('b'); await click('Uložit body celého kola');
   expect(write).toHaveBeenCalledWith(credential('b'), expect.objectContaining({ eventId: 'b', snapshotId: 'snapshot-b', roundId: 'round' }));
-  expect(sessionStorage.getItem(storageKey('b'))).toBe(JSON.stringify(credential('b')));
+  expect(JSON.parse(localStorage.getItem('referee-access-v2:b')!)).toEqual({ ...credential('b'), expiresAt: view('b').expiresAt });
 });
 
 it('does not render A roster when the next event has no credential', async () => {
   await render(); await navigate('missing');
-  expect(host.textContent).toContain('Přístup vypršel / byl odebrán');
+  expect(host.textContent).toContain('Odkaz je neplatný nebo byl nahrazen novým.');
   expect(host.querySelector('form')).toBeNull();
   expect(host.textContent).not.toContain('Event a');
   expect(read).toHaveBeenCalledTimes(1);
@@ -79,10 +80,10 @@ for (const outcome of ['resolve', 'reject'] as const) {
   it(`ignores an old A poll ${outcome} after loading event B`, async () => {
     const old = deferred<RefereeEvent>(); read.mockReturnValueOnce(old.promise);
     await render(); await navigate('b');
-    await act(async () => { if (outcome === 'resolve') old.resolve(view('a')); else old.reject({ code: 'functions/permission-denied' }); });
+    await act(async () => { if (outcome === 'resolve') old.resolve(view('a')); else old.reject({ code: 'functions/permission-denied', details: { refereeAccess: 'revoked' } }); });
     expect(host.textContent).toContain('Event b');
     expect(host.querySelector('[role=alert]')).toBeNull();
-    expect(sessionStorage.getItem(storageKey('b'))).toBe(JSON.stringify(credential('b')));
+    expect(JSON.parse(localStorage.getItem('referee-access-v2:b')!)).toEqual({ ...credential('b'), expiresAt: view('b').expiresAt });
   });
 }
 
@@ -90,10 +91,10 @@ it('ignores stale A history failure after A → B → A and preserves the newly 
   const old = deferred<ScoreHistory[]>(); history.mockReturnValueOnce(old.promise);
   await render(); await click('Historie změn');
   await navigate('b'); await navigate('a');
-  await act(async () => old.reject({ code: 'functions/permission-denied' }));
+  await act(async () => old.reject({ code: 'functions/permission-denied', details: { refereeAccess: 'revoked' } }));
   expect(host.querySelector('[role=alert]')).toBeNull();
   expect(teamInput('a')?.disabled).toBe(false);
-  expect(sessionStorage.getItem(storageKey('a'))).toBe(JSON.stringify(credential('a')));
+  expect(JSON.parse(localStorage.getItem('referee-access-v2:a')!)).toEqual({ ...credential('a'), expiresAt: view('a').expiresAt });
   await input('a'); await click('Uložit body celého kola');
   expect(write).toHaveBeenCalledWith(credential('a'), expect.objectContaining({ eventId: 'a' }));
 });
@@ -122,7 +123,7 @@ it('does not consume B fragment credentials until dirty navigation is confirmed'
   expect(router.state.location.pathname).toBe('/referee/b');
   expect(read).toHaveBeenLastCalledWith(replacement);
   expect(teamInput('b')?.value).toBe('');
-  expect(sessionStorage.getItem(storageKey('b'))).toBe(JSON.stringify(replacement));
+  expect(JSON.parse(localStorage.getItem('referee-access-v2:b')!)).toEqual({ ...replacement, expiresAt: view('b').expiresAt });
   expect(window.location.hash).toBe('');
 });
 
@@ -142,10 +143,10 @@ it('blocks pending navigation without confirmation, then permits B only after A 
 });
 
 it('keeps revocation effective for the current scope', async () => {
-  history.mockRejectedValueOnce({ code: 'functions/permission-denied' });
+  history.mockRejectedValueOnce({ code: 'functions/permission-denied', details: { refereeAccess: 'revoked' } });
   await render(); await click('Historie změn');
-  expect(sessionStorage.getItem(storageKey('a'))).toBeNull();
-  expect(host.textContent).toContain('Přístup vypršel / byl odebrán');
+  expect(localStorage.getItem('referee-access-v2:a')).toBeNull();
+  expect(host.textContent).toContain('Organizátor tento přístup odebral.');
   expect(teamInput('a')?.disabled).toBe(true);
 });
 
@@ -160,4 +161,60 @@ it('retains a stale referee draft disabled when its score epoch changes without 
     expect(host.textContent).toContain('Staré rozepsané body nelze uložit');
     expect(write).not.toHaveBeenCalled();
   } finally { vi.clearAllTimers(); vi.useRealTimers(); }
+});
+
+it('migrates v1 once and reopens a new panel without a fragment or session storage', async () => {
+  await render();
+  expect(sessionStorage.getItem(storageKey('a'))).toBeNull();
+  await navigate('b'); sessionStorage.clear(); await navigate('a');
+  expect(read).toHaveBeenLastCalledWith(credential('a'));
+  expect(teamInput('a')?.disabled).toBe(false);
+});
+
+it('lets the server verify stored access even when the device clock is past expiry', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2031-01-02T00:00:00Z'));
+  rememberReferee(credential('a'), '2031-01-01T00:00:00.000Z');
+  await render();
+  expect(read).toHaveBeenLastCalledWith(credential('a'));
+  expect(host.querySelector('[role=alert]')).toBeNull();
+  expect(teamInput('a')?.disabled).toBe(false);
+  expect(localStorage.getItem('referee-access-v2:a')).not.toBeNull();
+});
+
+it('removes expired stored access only after the server confirms expiry', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2031-01-01T00:00:00Z'));
+  rememberReferee(credential('a'), '2031-01-01T00:00:00.000Z');
+  const response = deferred<RefereeEvent>(); read.mockReturnValueOnce(response.promise);
+  await render();
+  expect(read).toHaveBeenLastCalledWith(credential('a'));
+  expect(localStorage.getItem('referee-access-v2:a')).not.toBeNull();
+  await act(async () => response.reject({ code: 'functions/permission-denied', details: { refereeAccess: 'expired' } }));
+  expect(host.querySelector('[role=alert]')?.textContent).toContain('Platnost odkazu vypršela.');
+  expect(localStorage.getItem('referee-access-v2:a')).toBeNull();
+  expect(sessionStorage.getItem(storageKey('a'))).toBeNull();
+  expect(read).toHaveBeenCalledTimes(1);
+});
+
+it('cleans up stored access older than seven days past expiry without an SDK call', async () => {
+  vi.useFakeTimers(); vi.setSystemTime(new Date('2031-01-08T00:00:00.001Z'));
+  rememberReferee(credential('a'), '2031-01-01T00:00:00.000Z');
+  await render();
+  expect(localStorage.getItem('referee-access-v2:a')).toBeNull();
+  expect(read).not.toHaveBeenCalled();
+});
+
+it('strips invalid fragments before any SDK request and never falls back to an older credential', async () => {
+  rememberReferee(credential('a'), view('a').expiresAt);
+  window.history.replaceState({}, '', '/referee/a#access=bad&key=bad');
+  expect(consumeRefereeAccess('a')).toEqual({ credential: null, reason: 'not-found' });
+  expect(window.location.hash).toBe('');
+  expect(localStorage.getItem('referee-access-v2:a')).toBeNull();
+});
+
+it('does not let an older tab erase or overwrite a replacement link in shared storage', () => {
+  const newer = { ...credential('a'), key: 'z'.repeat(43) };
+  rememberReferee(newer, null); rememberReferee(newer, view('a').expiresAt);
+  rememberReferee(credential('a'), '2030-12-31T00:00:00.000Z');
+  forgetReferee('a', credential('a'));
+  expect(consumeRefereeAccess('a')).toEqual({ credential: newer, reason: null });
 });
