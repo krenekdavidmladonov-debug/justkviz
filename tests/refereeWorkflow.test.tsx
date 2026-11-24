@@ -4,17 +4,20 @@ import { createRoot, type Root } from 'react-dom/client';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RefereePage } from '../apps/web/src/routes/referee/RefereePage';
-import { readReferee, writeRefereeRound, type RefereeEvent } from '../apps/web/src/features/referee/api';
+import { historyReferee, readReferee, writeRefereeRound, type RefereeEvent } from '../apps/web/src/features/referee/api';
 import { forgetReferee } from '../apps/web/src/features/referee/sharing';
 import type { RoundScoreResponse } from '../apps/web/src/features/scoring/api';
 
 vi.mock('../apps/web/src/features/referee/api', () => ({ readReferee: vi.fn(), writeRefereeRound: vi.fn(), historyReferee: vi.fn().mockResolvedValue([]) }));
-vi.mock('../apps/web/src/features/referee/sharing', () => ({ consumeRefereeCredential: () => ({ eventId: 'event', accessId: 'synthetic-access', key: 'synthetic-key' }), forgetReferee: vi.fn() }));
+vi.mock('../apps/web/src/features/referee/sharing', async importOriginal => ({
+  ...await importOriginal<typeof import('../apps/web/src/features/referee/sharing')>(),
+  consumeRefereeAccess: () => ({ credential: { eventId: 'event', accessId: 'synthetic-access', key: 'synthetic-key' }, reason: null }), forgetReferee: vi.fn(), rememberReferee: vi.fn(),
+}));
 vi.mock('../apps/web/src/features/scoring/api', () => ({ saveRoundScores: vi.fn(), loadHistory: vi.fn() }));
 let host: HTMLDivElement, root: Root;
 const confirm = vi.fn<(message?: string) => boolean>();
 function fixture(): RefereeEvent {
-  return { eventId: 'event', title: 'Filmový večer', label: 'Rozhodčí', snapshotId: 'snapshot',
+  return { eventId: 'event', title: 'Filmový večer', label: 'Rozhodčí', expiresAt: '2026-11-23T13:00:00.000Z', snapshotId: 'snapshot',
     rounds: [{ id: 'r1', title: 'První kolo', questionCount: 10 }, { id: 'r2', title: 'Druhé kolo', questionCount: 5 }],
     teams: [{ id: 'a', name: 'Alfa' }, { id: 'c', name: 'Gama' }, { id: 'b', name: 'Beta' }],
     scores: [{ teamId: 'a', roundId: 'r1', halfPoints: 0, revision: 1 }, { teamId: 'b', roundId: 'r1', halfPoints: null, revision: 2 }, { teamId: 'c', roundId: 'r2', halfPoints: 5, revision: 1 }] };
@@ -33,7 +36,7 @@ async function render(data = fixture()) {
   await act(async () => root.render(<RouterProvider router={router} />)); return router;
 }
 beforeEach(() => {
-  vi.clearAllMocks(); vi.useFakeTimers(); Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  vi.clearAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-23T12:00:00Z')); Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true); window.confirm = confirm.mockReset().mockReturnValue(false);
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
@@ -124,7 +127,7 @@ describe('round-first referee workflow', () => {
   it('preserves and replays exactly the same round intent after a lost response', async () => {
     await render(); await input('Beta', '0'); vi.mocked(writeRefereeRound).mockRejectedValueOnce({ code: 'functions/unavailable' });
     await click('Uložit body celého kola'); const first = vi.mocked(writeRefereeRound).mock.calls[0]![1];
-    expect(points('Beta').value).toBe('0'); expect(points('Beta').disabled).toBe(true); expect(host.textContent).not.toContain('Potvrzeno serverem.');
+    expect(points('Beta').value).toBe('0'); expect(points('Beta').disabled).toBe(false); expect(host.textContent).not.toContain('Potvrzeno serverem.');
     const data = fixture(); data.scores = data.scores.filter(score => score.teamId !== 'b'); data.scores.push({ teamId: 'b', roundId: 'r1', revision: 3, halfPoints: 0 });
     vi.mocked(readReferee).mockResolvedValue(data); await poll();
     vi.mocked(writeRefereeRound).mockResolvedValue({ scores: [{ teamId: 'b', revision: 3, halfPoints: 0 }] });
@@ -133,9 +136,68 @@ describe('round-first referee workflow', () => {
   it('disables verified work offline and stops polling after capability revocation', async () => {
     await render(); await act(async () => window.dispatchEvent(new Event('offline'))); expect(points('Alfa').disabled).toBe(true);
     await act(async () => window.dispatchEvent(new Event('online'))); expect(points('Alfa').disabled).toBe(false);
-    vi.mocked(readReferee).mockRejectedValue({ code: 'functions/permission-denied' }); await poll();
-    expect(forgetReferee).toHaveBeenCalledWith('event'); expect(host.textContent).toContain('Přístup vypršel / byl odebrán'); expect(points('Alfa').disabled).toBe(true);
+    await input('Beta', '4,5');
+    vi.mocked(readReferee).mockRejectedValue({ code: 'functions/permission-denied', details: { refereeAccess: 'revoked' } }); await poll();
+    expect(forgetReferee).toHaveBeenCalledWith('event', expect.anything()); expect(host.textContent).toContain('Organizátor tento přístup odebral.'); expect(points('Alfa').disabled).toBe(true);
+    expect(points('Beta').value).toBe('4,5');
     const calls = vi.mocked(readReferee).mock.calls.length; await poll(); expect(readReferee).toHaveBeenCalledTimes(calls);
+  });
+  it.each(['unavailable', 'internal', 'aborted', 'resource-exhausted', 'deadline-exceeded', 'failed-precondition', 'permission-denied', 'network-request-failed'])('keeps access and drafts through 15 minutes of %s errors and recovers', async code => {
+    await render(); await input('Beta', '4,5');
+    vi.mocked(readReferee).mockRejectedValue({ code: 'functions/' + code });
+    await act(async () => { await vi.advanceTimersByTimeAsync(15 * 60000); });
+    expect(readReferee).toHaveBeenCalledTimes(181);
+    expect(forgetReferee).not.toHaveBeenCalled();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('zkouším znovu');
+    expect(points('Beta').value).toBe('4,5'); expect(points('Beta').disabled).toBe(false);
+    vi.mocked(readReferee).mockResolvedValue(fixture()); await poll();
+    expect(host.querySelector('[role="alert"]')).toBeNull(); expect(points('Beta').value).toBe('4,5');
+  });
+  it.each([
+    ['expired', 'Platnost odkazu vypršela.'], ['not-found', 'Odkaz je neplatný nebo byl nahrazen novým.'],
+    ['issuer-inactive', 'správce, který ho vydal, už nemá oprávnění.'], ['event-closed', 'Akce už není otevřená pro zápis bodů.'],
+  ])('shows the specific terminal reason %s and retains drafts', async (reason, message) => {
+    await render(); await input('Beta', '2,5');
+    if (reason === 'expired') vi.setSystemTime(new Date(fixture().expiresAt));
+    vi.mocked(readReferee).mockRejectedValue({ code: 'functions/permission-denied', details: { refereeAccess: reason } }); await poll();
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(message);
+    expect(forgetReferee).toHaveBeenCalledWith('event', expect.anything()); expect(points('Beta').value).toBe('2,5'); expect(points('Beta').disabled).toBe(true);
+  });
+  it('keeps access after nonaccepted-team history and write errors, including unclassified denial', async () => {
+    await render(); await input('Beta', '2,5');
+    const message = 'Tým už není na soupisce přijatých týmů.';
+    vi.mocked(historyReferee).mockRejectedValueOnce({ code: 'functions/failed-precondition', message }); await click('Historie změn');
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe(message);
+    expect(forgetReferee).not.toHaveBeenCalled(); expect(points('Beta').disabled).toBe(false);
+    vi.mocked(writeRefereeRound).mockRejectedValueOnce({ code: 'functions/permission-denied' }); await click('Uložit body celého kola');
+    expect(forgetReferee).not.toHaveBeenCalled(); expect(points('Beta').value).toBe('2,5');
+    await poll(); expect(points('Beta').disabled).toBe(false);
+  });
+  it('leaves revision conflicts to the form without showing a page banner', async () => {
+    await render(); await input('Beta', '2,5');
+    vi.mocked(writeRefereeRound).mockRejectedValueOnce({ code: 'functions/aborted' });
+    await click('Uložit body celého kola');
+    expect(host.querySelector('.referee-page > [role="alert"]')).toBeNull();
+    expect(host.textContent).not.toContain('Spojení se serverem se nepodařilo ověřit');
+    expect(points('Beta').value).toBe('2,5'); expect(points('Beta').disabled).toBe(false);
+    expect(forgetReferee).not.toHaveBeenCalled();
+    await poll(); expect(readReferee).toHaveBeenCalledTimes(2);
+  });
+  it('shows server validation errors without losing access or drafts', async () => {
+    await render(); await input('Beta', '2,5');
+    const message = 'Body patří k jiné akci než odkaz rozhodčího.';
+    vi.mocked(writeRefereeRound).mockRejectedValueOnce({ code: 'functions/invalid-argument', message });
+    await click('Uložit body celého kola');
+    expect(host.querySelector('.referee-page > [role="alert"]')?.textContent).toBe(message);
+    expect(points('Beta').value).toBe('2,5'); expect(points('Beta').disabled).toBe(false);
+    expect(forgetReferee).not.toHaveBeenCalled();
+  });
+  it('explains voluntary access termination and stops polling', async () => {
+    await render(); await click('Ukončit přístup v tomto panelu');
+    expect(host.querySelector('[role="alert"]')?.textContent).toBe('Přístup v tomto panelu byl ukončen. Pro pokračování znovu otevřete odkaz nebo QR od organizátora.');
+    expect(forgetReferee).toHaveBeenCalledWith('event', expect.anything());
+    expect(host.querySelector('form')).toBeNull();
+    await poll(); expect(readReferee).toHaveBeenCalledTimes(1);
   });
   it('shows an empty roster without an empty scoring form', async () => {
     await render({ ...fixture(), teams: [], scores: [] }); expect(host.textContent).toContain('Na soupisce zatím nejsou žádné týmy'); expect(host.querySelector('form')).toBeNull();
