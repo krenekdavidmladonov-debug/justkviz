@@ -63,8 +63,8 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
         if (!active || version !== writeVersion.current || pendingWrite.current) return;
         rememberReferee(credential, next.expiresAt);
         const previous = previousView.current;
-        if (previous && (previous.snapshotId !== next.snapshotId)) {
-          setVerifiedAt(null); setError('Připravený kvíz se změnil. Před obnovením stránky zkontrolujte rozepsané body.'); return;
+        if (previous && (previous.snapshotId !== next.snapshotId || (previous.scoringEpoch ?? 0) !== (next.scoringEpoch ?? 0))) {
+          setVerifiedAt(null); setError('Kvíz nebo generace bodování se změnily. Staré rozepsané body nelze uložit. Před obnovením stránky je zkontrolujte.'); return;
         }
         previousView.current = next; setData(next); setRoundId(old => old || next.rounds[0]?.id || '');
         setVerifiedAt(new Date()); setError('');
@@ -119,7 +119,7 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
         if (pendingWrite.current || (hasDirty && !window.confirm('Změnit kolo a zahodit neuložené body?'))) return;
         setDirty(false); setRoundId(event.target.value);
       }}>{data.rounds.map((round, index) => <option key={round.id} value={round.id}>{index + 1}. {round.title}</option>)}</select></label>
-      {data.teams.length === 0 ? <p role="status">Na soupisce zatím nejsou žádné týmy.</p> : roundId && <RoundScoreForm key={JSON.stringify([data.snapshotId, roundId])} eventId={eventId} snapshotId={data.snapshotId} roundId={roundId}
+      {data.teams.length === 0 ? <p role="status">Na soupisce zatím nejsou žádné týmy.</p> : roundId && <RoundScoreForm key={JSON.stringify([data.snapshotId, roundId])} eventId={eventId} snapshotId={data.snapshotId} scoringEpoch={data.scoringEpoch} roundId={roundId}
         roundTitle={round?.title ?? 'Kolo'} questionCount={round?.questionCount} teams={data.teams}
         scores={Object.fromEntries(data.scores.filter(score => score.roundId === roundId).map(score => [score.teamId, score]))} disabled={!editable} onDirty={onDirty} onPending={onPending} transport={transport} />}
       {data.rounds.length === 0 && <p>Připravený kvíz zatím nemá žádná kola.</p>}

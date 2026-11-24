@@ -1,0 +1,74 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { expect, test } from '@playwright/test';
+import { offlineEventFixture } from './offline-event-fixture.mjs';
+import { localEmulatorEndpoint, requireFullEmulatorEnvironment } from '../../tools/local-emulator-environment.mjs';
+
+let fixture;
+test.beforeAll(async () => {
+  const env = requireFullEmulatorEnvironment(process.env, 'N11 browser fixtures');
+  assert.equal(env.projectId, 'demo-filmovy-kviz-v2');
+  localEmulatorEndpoint(process.env.FIREBASE_STORAGE_EMULATOR_HOST, 'Storage emulator');
+  fixture = await offlineEventFixture();
+});
+test.afterAll(async () => { await fixture?.dispose(); });
+
+test('rehearsal version preserves compatible points, reset blocks an old draft, and changed rounds require discard', async ({ page, context }) => {
+  await context.route('**/*', route => ['127.0.0.1', 'localhost'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
+  await page.goto('/admin/login');
+  await page.getByLabel('E-mail').fill(fixture.identity.email); await page.getByLabel('Heslo').fill(fixture.identity.password);
+  await page.getByRole('button', { name: 'Přihlásit se', exact: true }).click(); await expect(page).toHaveURL(/\/admin$/u);
+  const scoringUrl = '/admin/events/' + fixture.eventId + '/scoring', detailUrl = '/admin/events/' + fixture.eventId;
+  await page.goto(scoringUrl);
+  await page.getByLabel('Body — QA01', { exact: true }).fill('1');
+  await page.getByRole('button', { name: 'Uložit body celého kola', exact: true }).click();
+  await expect(page.getByText('Body kola jsou uložené. Potvrzeno serverem.')).toBeVisible();
+  const live = await fixture.call('createEventLiveSession', { eventId: fixture.eventId, expectedRevision: (await fixture.event()).revision });
+  const question = (await fixture.slides()).find(slide => slide.isQuestion);
+  await fixture.call('goToSlide', { sessionId: live.sessionId, expectedRevision: 0, position: question.position });
+  await fixture.call('endLiveSession', { sessionId: live.sessionId, expectedRevision: 1 });
+  const quizRef = fixture.identity.db.doc('quizzes/' + fixture.quizId);
+  await fixture.call('updateQuizMetadata', { quizId: fixture.quizId, expectedRevision: (await quizRef.get()).get('revision'), quiz: { title: 'Synthetic revised browser quiz', description: '' } });
+  await page.goto(detailUrl);
+  await page.getByRole('button', { name: 'Aktualizovat kvíz pro akci', exact: true }).click();
+  let dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('Akce má zapsané body: 1 záznam.');
+  await dialog.getByLabel('Ponechat body', { exact: true }).check();
+  await dialog.getByRole('button', { name: 'Ponechat body a změnit verzi', exact: true }).click();
+  await expect(page.getByText('Kvíz pro akci byl aktualizován.', { exact: true })).toBeVisible();
+  assert.equal((await fixture.event()).liveSessionId, undefined);
+  assert.equal((await fixture.identity.db.collection('events/' + fixture.eventId + '/scores').get()).size, 1);
+  const stale = await context.newPage();
+  try {
+    await stale.goto(scoringUrl);
+    const stalePoints = stale.getByLabel('Body — QA01', { exact: true });
+    await expect(stalePoints).toHaveValue('1'); await stalePoints.fill('2');
+    await page.getByRole('button', { name: 'Smazat všechny body', exact: true }).click();
+    dialog = page.getByRole('dialog');
+    await expect(dialog).toContainText('Akce má zapsané body: 1 záznam.');
+    await dialog.getByLabel('Pro potvrzení napište SMAZAT').fill('smazat');
+    await expect(dialog.getByRole('button', { name: 'Smazat všechny body', exact: true })).toBeDisabled();
+    await dialog.getByLabel('Pro potvrzení napište SMAZAT').fill('SMAZAT');
+    await dialog.getByRole('button', { name: 'Smazat všechny body', exact: true }).click();
+    await expect(page.getByText('Všechny body akce a jejich historie byly smazány.', { exact: true })).toBeVisible();
+    await expect(stale.getByRole('alert').filter({ hasText: 'Body akce byly smazány' })).toBeVisible();
+    await expect(stalePoints).toBeDisabled(); await expect(stalePoints).toHaveValue('2');
+  } finally { await stale.close(); }
+  const current = await fixture.event(), snapshotId = current.quizAssignment.snapshotId;
+  const roundId = (await fixture.identity.db.collection('quizSnapshots/' + snapshotId + '/rounds').orderBy('position').get()).docs[0].id;
+  const roster = await fixture.call('readAccessData', { operation: 'roster', eventId: fixture.eventId });
+  await fixture.call('saveEventScore', { eventId: fixture.eventId, snapshotId, roundId, teamId: roster[0].id, scoringEpoch: 1, expectedRevision: 0, halfPoints: 0, reason: '', requestId: randomUUID() });
+  const recap = (await fixture.slides()).find(slide => slide.kind === 'recap');
+  await fixture.add('free', { correctAnswer: 'Synthetic extra private answer' }, recap.position);
+  await page.reload();
+  await page.getByRole('button', { name: 'Aktualizovat kvíz pro akci', exact: true }).click();
+  dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Ponechat body', { exact: true })).toBeDisabled();
+  await expect(dialog).toContainText('Nová verze má jiná kola – body nelze převzít.');
+  await dialog.getByLabel('Zahodit body a změnit verzi', { exact: true }).check();
+  await dialog.getByLabel('Pro potvrzení napište SMAZAT').fill('SMAZAT');
+  await dialog.getByRole('button', { name: 'Zahodit body a změnit verzi', exact: true }).click();
+  await expect(page.getByText('Kvíz pro akci byl aktualizován.', { exact: true })).toBeVisible();
+  assert.equal((await fixture.event()).scoring.epoch, 2);
+  assert.equal((await fixture.identity.db.collection('events/' + fixture.eventId + '/scores').get()).size, 0);
+});

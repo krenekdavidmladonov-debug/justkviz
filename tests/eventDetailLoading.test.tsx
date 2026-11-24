@@ -99,7 +99,7 @@ it.each<Partial<EventRecord>>([{ disposition: 'trash' }, { disposition: 'archive
   expect(host.querySelector('a[href="#event-referee"]')).toBeNull(); expect(host.querySelector('#event-referee')).toBeNull();
 });
 it.each<Partial<EventRecord>>([
-  { liveSessionId: 'live' }, { scoring: { unitScale: 2, rankingMode: 'dense', started: true } },
+  { liveSessionId: 'live' },
   { lifecycleStatus: 'completed' }, { lifecycleStatus: 'cancelled' }, { disposition: 'archived' }, { disposition: 'trash' },
 ])('does not fetch the library or private source quiz when assignment is immutable: %j', async patch => {
   vi.mocked(getEvent).mockResolvedValue(record(patch)); await render();
@@ -240,4 +240,16 @@ it('offers a local retry when the selected quiz cannot be loaded', async () => {
   expect(host.textContent).toContain('Kvíz se nepodařilo načíst'); expect(prepareButton().disabled).toBe(true);
   await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Zkusit znovu')!.click());
   expect(host.querySelector('[data-preflight-status]')?.getAttribute('data-preflight-status')).toBe('READY'); expect(prepareButton().disabled).toBe(false);
+});
+
+it('allows selecting a new quiz after rehearsal scores and an ended historical pointer', async () => {
+  vi.mocked(getEvent).mockResolvedValue(record({ liveSessionId: 'old-ended', scoring: { unitScale: 2, rankingMode: 'dense', started: true }, quizChangeState: { hasActiveSession: false, hasPresentedQuestion: false, scoreDocumentCount: 1, snapshotRounds: [{ id: 'round', questionCount: 1 }] } }));
+  vi.mocked(getEditorQuiz).mockResolvedValue(readyQuiz(2));
+  await render();
+  expect(listQuizzes).toHaveBeenCalledTimes(1);
+  expect(prepareButton().disabled).toBe(false);
+  expect(host.textContent).not.toContain('Výběr zdrojového kvízu vyžaduje');
+  await act(async () => prepareButton().click());
+  expect(host.querySelector('dialog')?.textContent).toContain('Akce má zapsané body: 1 záznam.');
+  expect(lockEventQuiz).not.toHaveBeenCalled();
 });

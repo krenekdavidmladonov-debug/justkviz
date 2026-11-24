@@ -17,6 +17,7 @@ export interface PrivateLiveSession {
   readonly quizTitle: string;
   readonly slideCount: number;
   readonly status: LiveSessionStatus;
+  readonly hasPresentedQuestion?: boolean;
   readonly currentSlidePosition: number;
   readonly currentSlideId?: string;
   readonly answerRevealed: boolean;

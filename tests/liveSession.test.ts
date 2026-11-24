@@ -658,3 +658,16 @@ test.each([undefined, 1, 3, 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])('publishes
   expect(parsePublicLiveState(channel)?.roundNumber).toBe(expected);
   if (expected === undefined && roundNumber !== undefined) expect(parsePublicLiveState({ ...channel, roundNumber })).toBeUndefined();
 });
+
+test('question presentation is monotonic, while a new intro-only session can still change version', () => {
+  const waiting = session({ status: 'waiting', currentSlidePosition: 0, startedAt: null, revision: 0, hasPresentedQuestion: false });
+  const intro = { ...questionSlide(1), id: 'intro', kind: 'intro', isQuestion: false };
+  const started = applyLiveSessionAction(waiting, { type: 'go-to-slide', position: 1, slideId: intro.id }, 0, 'staff', now, intro);
+  expect(started.hasPresentedQuestion).toBe(false);
+  const question = questionSlide(2);
+  const played = applyLiveSessionAction(started, { type: 'go-to-slide', position: 2, slideId: question.id }, 1, 'staff', now, question);
+  const returned = applyLiveSessionAction(played, { type: 'go-to-slide', position: 1, slideId: intro.id }, 2, 'staff', now, intro);
+  expect(played.hasPresentedQuestion).toBe(true); expect(returned.hasPresentedQuestion).toBe(true);
+  expect(buildPublicSessionState(returned, intro)).not.toHaveProperty('hasPresentedQuestion');
+  expect(applyLiveSessionAction(session(), { type: 'go-to-slide', position: 1, slideId: intro.id }, 1, 'staff', now, intro).hasPresentedQuestion).toBeUndefined();
+});

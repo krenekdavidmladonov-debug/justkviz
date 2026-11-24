@@ -153,3 +153,21 @@ it('hides cancelled teams and preserves other drafts when a team is cancelled du
   await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Uložit body celého kola')!.click());
   expect(saveRoundScores).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ scores: [{ teamId: 'b', expectedRevision: 0, halfPoints: 1, reason: '' }] }));
 });
+
+it('pins a draft to its loaded epoch and disables it after reset instead of assigning a fresh epoch', async () => {
+  let receiveEvent!: Parameters<typeof watchScoringEvent>[1];
+  vi.mocked(watchScoringEvent).mockImplementation((_id, receive) => {
+    receiveEvent = receive; receive('s', true, 'Akce', 0); return () => undefined;
+  });
+  await openScoring('e');
+  const field = host.querySelector<HTMLInputElement>('input')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, '1');
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => receiveEvent('s', true, 'Akce', 1));
+  expect(field.value).toBe('1'); expect(field.disabled).toBe(true);
+  expect(host.textContent).toContain('Body akce byly smazány');
+  await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Uložit body celého kola')!.click());
+  expect(saveRoundScores).not.toHaveBeenCalled();
+});

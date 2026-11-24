@@ -1,3 +1,4 @@
+import { eventScoringEpoch } from '@filmovy-kviz/quiz-domain';
 import { getFirestore, Timestamp, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { applyOfflineOperation, canonicalOfflineJson, eventDisposition, initialOfflineState, offlineEventLimits as limits,
@@ -71,6 +72,7 @@ async function boundExport(tx: Transaction, auth: AuthIdentity, eventId: string,
   if (!event || ['trash', 'deleting', 'archived'].includes(eventDisposition(event)) || !record || record.exportId !== exportId
     || record.actorId !== member.uid || record.membershipVersion !== member.version) throw new HttpsError('permission-denied', 'Původní offline oprávnění již neodpovídá aktuálnímu přístupu k akci. Data zůstala místně uložená.');
   assertOfflineExportContext(record, scope, eventId);
+  if ((record.scoringEpoch ?? 0) !== eventScoringEpoch(event.scoring)) throw new HttpsError('aborted', 'Body akce byly smazány. Ze starého offline průběhu je nelze obnovit. Připravte nový offline soubor.');
   return { member, event, record, exportRef: exportDoc!.ref };
 }
 function parseRequest(data: unknown, commit: boolean) {

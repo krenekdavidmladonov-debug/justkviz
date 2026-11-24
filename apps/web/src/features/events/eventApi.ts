@@ -55,12 +55,14 @@ export const lockEventQuiz = (
   quizId: string,
   quizRevision: number,
   acknowledgeWarnings: boolean,
+  options?: { scoreAction?: 'preserve' | 'discard'; confirm?: string; closeUnplayedSession?: boolean },
 ) => invoke('lockEventQuiz', {
   eventId,
   expectedRevision: eventRevision,
   quizId,
   expectedQuizRevision: quizRevision,
   acknowledgeWarnings,
+  ...options,
 });
 
 export function eventActionError(error: unknown): string {
@@ -71,4 +73,10 @@ export function eventActionError(error: unknown): string {
   }
   if (error instanceof Error && !('code' in error)) return error.message;
   return 'Akci se nepodařilo uložit. Zkuste to prosím znovu.';
+}
+
+export async function resetEventScores(eventId: string, expectedRevision: number, requestId: string, confirm: string) {
+  return (await httpsCallable<Record<string, unknown>, { eventId: string; revision: number; deletedScoreCount: number; deletedHistoryCount: number; scoringEpoch: number }>(
+    getFirebaseServices().functions, 'resetEventScores', { timeout: 130000 },
+  )({ eventId, expectedRevision, requestId, confirm })).data;
 }

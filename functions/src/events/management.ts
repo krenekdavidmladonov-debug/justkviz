@@ -42,7 +42,18 @@ async function transition(request: CallableRequest, action: EventManagementActio
     const now = Timestamp.now(), revision = expected + 1;
     const patch: Record<string, unknown> = { revision, updatedAt: now, updatedBy: actor.uid };
     if (action === 'cancel') Object.assign(patch, { lifecycleStatus: 'cancelled', cancellation: { at: now, by: actor.uid, reason: note, publicMessage }, capabilityVersion: Number(current.capabilityVersion ?? 0) + 1 });
-    if (action === 'complete') Object.assign(patch, { lifecycleStatus: 'completed', completion: { at: now, by: actor.uid, reason: note }, capabilityVersion: Number(current.capabilityVersion ?? 0) + 1 });
+    if (action === 'complete') {
+      Object.assign(patch, { lifecycleStatus: 'completed', completion: { at: now, by: actor.uid, reason: note }, capabilityVersion: Number(current.capabilityVersion ?? 0) + 1 });
+      // Bare END releases moderation; this validated private hint preserves later completion history.
+      if ((current.liveSessionId === undefined || current.liveSessionId === null) && !active && current.lastEndedSessionId !== undefined) {
+        const ended = sessions.find(row => row.session.sessionId === current.lastEndedSessionId)?.session;
+        const assignment = isObject(current.quizAssignment) ? current.quizAssignment : undefined;
+        if (typeof current.lastEndedSessionId !== 'string' || !ended || ended.status !== 'ended'
+          || ended.eventId !== eventId || !assignment || ended.snapshotId !== assignment.snapshotId) throw new HttpsError('failed-precondition', 'Vazba ukončeného moderování neodpovídá připravenému kvízu. Kontaktujte správce.');
+        patch.liveSessionId = ended.sessionId;
+        patch.lastEndedSessionId = FieldValue.delete();
+      }
+    }
     if (action === 'prepare') Object.assign(patch, { lifecycleStatus: current.quizAssignment ? 'ready' : 'scheduled', liveSessionId: FieldValue.delete() });
     if (action === 'archive') Object.assign(patch, { disposition: 'archived', archivedAt: now, archivedBy: actor.uid });
     if (action === 'unarchive') {

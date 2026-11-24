@@ -88,7 +88,7 @@ export async function authorizeOperation(name: string, request: CallableRequest,
   if (['completeEvent', 'cancelEvent', 'archiveEvent', 'trashEvent', 'restoreEvent'].includes(name)) {
     return authorize(request.auth, (name === 'cancelEvent' || name === 'completeEvent') && data?.endLive === true ? ['event.manage', 'event.live'] : ['event.manage'], event(), tx);
   }
-  if (tx && data?.eventId && [...eventManagement, ...eventLive, ...email.filter(operation => !['listEventTeamMessages', 'getEventTeamMessage'].includes(operation)), 'lockEventQuiz', 'saveEventScore', 'issueRefereeAccess', 'changeRefereeAccess'].includes(name)) {
+  if (tx && data?.eventId && [...eventManagement, ...eventLive, ...email.filter(operation => !['listEventTeamMessages', 'getEventTeamMessage'].includes(operation)), 'saveEventScore', 'issueRefereeAccess', 'changeRefereeAccess'].includes(name)) {
     const resource = event();
     await authorize(request.auth, ['event.read'], resource, tx);
     const ref = getFirestore().doc(`events/${resource.id}`);
@@ -117,8 +117,9 @@ export async function authorizeOperation(name: string, request: CallableRequest,
   }
   if (name === 'lockEventQuiz') {
     await activeQuiz(quizExportPermissions);
-    return authorize(request.auth, ['event.manage'], event(), tx);
+    return authorize(request.auth, ['event.read', 'event.manage', ...(data?.scoreAction === 'discard' ? ['event.score' as const] : []), ...(data?.closeUnplayedSession === true ? ['event.live' as const] : [])], event(), tx);
   }
+  if (name === 'resetEventScores') return authorize(request.auth, ['event.manage', 'event.score'], event(), tx);
   if (name === 'saveEventScore') return authorize(request.auth, ['event.score'], event(), tx);
   if (eventLive.includes(name)) return authorize(request.auth, ['event.live'], event(), tx);
   if (live.includes(name)) {

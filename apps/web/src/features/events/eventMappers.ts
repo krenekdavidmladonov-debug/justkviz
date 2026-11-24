@@ -1,4 +1,4 @@
-import { eventDisposition } from '@filmovy-kviz/quiz-domain';
+import { eventDisposition, eventScoringEpoch } from '@filmovy-kviz/quiz-domain';
 import { Timestamp, type DocumentData } from 'firebase/firestore';
 import { mapEventPricing, mapPublicEventPricing } from './eventPricing';
 
@@ -101,7 +101,8 @@ export function mapEvent(id: string, value: DocumentData): EventRecord {
     ...(registrationClosesAt === undefined ? {} : { registrationClosesAt }),
     registrationStatus: registrationStatus(data.registrationStatus),
     lifecycleStatus: lifecycleStatus(data.lifecycleStatus),
-    scoring: { unitScale: 2, rankingMode: 'dense', started: scoring.started },
+    scoring: { unitScale: 2, rankingMode: 'dense', started: scoring.started, ...(scoring.epoch === undefined ? {} : { epoch: eventScoringEpoch(scoring) }) },
+    ...(object(data.quizChangeState) ? { quizChangeState: data.quizChangeState as NonNullable<EventRecord['quizChangeState']> } : {}),
     revision: integer(data, 'revision', 1),
     ...(assignment === undefined ? {} : { quizAssignment: assignment }),
   };

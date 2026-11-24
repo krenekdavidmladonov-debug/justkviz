@@ -1,7 +1,7 @@
 import { loadSlidePromptImages } from './upcoming-images.js';
 import { assertPlayableQuizSource } from '../quizzes/playable.js';
 import { getApps, initializeApp } from 'firebase-admin/app';
-import { getFirestore, Timestamp, type DocumentSnapshot, type Transaction } from 'firebase-admin/firestore';
+import { FieldValue, getFirestore, Timestamp, type DocumentSnapshot, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
 import { accessActor, securedOnCall, runAccessTransaction } from '../access/authorization.js';
 import { canHideInfoSlide, eventDisposition, resolveLegacySlideAppearance, normalizeResultPagination, parseShowCue } from '@filmovy-kviz/quiz-domain';
@@ -121,6 +121,8 @@ export function parseSession(snapshot: DocumentSnapshot): PrivateLiveSession {
   const data = snapshotData(snapshot, 'Live session');
   const status = data.status;
   if (status !== 'waiting' && status !== 'active' && status !== 'ended') throw new LiveSessionError('failed-precondition', 'Live session is malformed.');
+  if (data.hasPresentedQuestion !== undefined && typeof data.hasPresentedQuestion !== 'boolean') throw new LiveSessionError('failed-precondition', 'Stav odehraných otázek není platný.');
+  const hasPresentedQuestion = data.hasPresentedQuestion ?? (status === 'waiting' && data.currentSlidePosition === 0 && (data.startedAt === undefined || data.startedAt === null) ? false : undefined);
   const presentationMode = data.presentationMode === 'recap' ? 'recap' : 'slide';
   const commandSet = new Set<LiveMediaCommand>(['idle', 'play', 'stop', 'replay', 'finished', 'error']);
   const mediaCommand = commandSet.has(data.mediaCommand as LiveMediaCommand) ? data.mediaCommand as LiveMediaCommand : 'idle';
@@ -148,6 +150,7 @@ export function parseSession(snapshot: DocumentSnapshot): PrivateLiveSession {
     quizTitle: requiredString(data, 'quizTitle', 'Live session'),
     slideCount: requiredNumber(data, 'slideCount', 'Live session'),
     status,
+    ...(hasPresentedQuestion === undefined ? {} : { hasPresentedQuestion }),
     currentSlidePosition: requiredNumber(data, 'currentSlidePosition', 'Live session'),
     ...(currentSlideId === undefined ? {} : { currentSlideId }),
     answerRevealed: data.answerRevealed === true,
@@ -256,7 +259,7 @@ export const createLiveSession = securedOnCall('createLiveSession', callableOpti
       const now = Timestamp.now();
       const session: PrivateLiveSession = {
         sessionId: sessionRef.id, quizId, quizTitle: requiredString(quiz, 'title', 'Quiz'), slideCount,
-        status: 'waiting', currentSlidePosition: 0, answerRevealed: false, presentationMode: 'slide',
+        status: 'waiting', hasPresentedQuestion: false, currentSlidePosition: 0, answerRevealed: false, presentationMode: 'slide',
         mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: 0, introGeneration: 0, revision: 0,
         createdBy: actor.uid, updatedBy: actor.uid, createdAt: now, startedAt: null, endedAt: null, updatedAt: now,
       };
@@ -358,6 +361,11 @@ async function mutateSession(request: CallableRequest<unknown>, kind: MutationKi
         transaction.delete(db.doc('publicEvents/' + session.eventId));
         transaction.create(db.doc('eventAudit/live_end_' + sessionId + '_' + updated.revision),
           { eventId: session.eventId, sessionId, actorUid: actor.uid, action: 'complete', revision: eventRevision, at: now });
+      }
+      if (kind === 'end-session' && !completeEvent && session.eventId && boundEvent) {
+        const eventRevision: unknown = boundEvent.revision;
+        if (!Number.isSafeInteger(eventRevision) || (eventRevision as number) < 1 || (eventRevision as number) >= Number.MAX_SAFE_INTEGER) throw new HttpsError('failed-precondition', 'Revize akce není platná.');
+        transaction.update(db.doc('events/' + session.eventId), { liveSessionId: FieldValue.delete(), lastEndedSessionId: sessionId, revision: (eventRevision as number) + 1, updatedAt: now, updatedBy: actor.uid });
       }
       transaction.set(sessionRef, updated);
       transaction.set(publicRef, buildPublicSessionState(updated, slide));

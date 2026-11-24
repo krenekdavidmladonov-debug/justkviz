@@ -135,6 +135,11 @@ jobs:
           --project demo-filmovy-kviz-v2
           "pnpm seed:quizzes && node tools/local-emulator-environment.mjs full tests/e2e/referee-access-emulator.mjs && node tools/local-emulator-environment.mjs full node_modules/@playwright/test/cli.js test --config tests/browser/referee-access.config.ts"
 
+      - name: Quiz version, atomic score reset and stale offline/referee conflicts (local emulators only)
+        run: >-
+          pnpm exec firebase emulators:exec --only auth,firestore,functions,storage --project demo-filmovy-kviz-v2
+          "pnpm test:e2e:quiz-reset && node tools/local-emulator-environment.mjs full node_modules/@playwright/test/cli.js test --config tests/browser/event-quiz-reset.config.ts"
+
       - name: Registration email, Gmail worker contracts and fake browser E2E (local emulators only)
         run: >-
           pnpm exec firebase emulators:exec

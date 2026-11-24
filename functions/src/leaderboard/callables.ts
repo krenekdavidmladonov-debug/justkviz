@@ -66,7 +66,7 @@ export const createEventLiveSession = securedOnCall('createEventLiveSession', op
         const now = Timestamp.now();
         const session: PrivateLiveSession = {
             sessionId: sessionRef.id, eventId, snapshotId, quizId: String(object(event.quizAssignment).quizId), quizTitle: String(event.title), slideCount: snapshot.slideCount as number,
-            status: 'waiting', currentSlidePosition: 0, answerRevealed: false, presentationMode: 'slide',
+            status: 'waiting', hasPresentedQuestion: false, currentSlidePosition: 0, answerRevealed: false, presentationMode: 'slide',
             mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: 0, introGeneration: 0, revision: 0,
             createdBy: uid, updatedBy: uid, createdAt: now, updatedAt: now, startedAt: null, endedAt: null,
         };
