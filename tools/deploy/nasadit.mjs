@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { stagingClient, stagingWebConfig } from '../staging/cloud.mjs';
 import { STAGING_PROJECT as PROJECT } from '../staging/guard.mjs';
+import { buildLockZip } from './lock-bundle.mjs';
+import { linuxProof, publishLock } from './lock-release.mjs';
 import { prepareArtifact, prepareFunctionCreation, removeArtifact } from './artefakt.mjs';
 
 const SITE = 'justkviz-v2';
@@ -28,7 +30,7 @@ const git = args => execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', win
 const gh = endpoint => JSON.parse(execFileSync('gh', ['api', '--hostname', 'github.com', 'repos/' + REPO + '/' + endpoint],
   { cwd: ROOT, encoding: 'utf8', windowsHide: true, timeout: 45_000 }));
 
-export function verifyMain(readGit, readGitHub) {
+export function verifyMain(readGit, readGitHub, checkJobs) {
   if (readGit(['branch', '--show-current']).trim() !== 'main') throw new Error('Nasazení vyžaduje větev main.');
   if (readGit(['status', '--porcelain=v1', '--untracked-files=all', '--ignore-submodules=none']).trim()) {
     throw new Error('Pracovní strom není čistý.');
@@ -53,6 +55,7 @@ export function verifyMain(readGit, readGitHub) {
   if (!jobs?.some(job => job.name === 'Quality gate' && job.status === 'completed' && job.conclusion === 'success')) {
     throw new Error('Quality gate pro aktuální běh CI není zelená.');
   }
+  checkJobs?.(head, jobs);
   return head;
 }
 
@@ -131,6 +134,9 @@ export async function functionTargets(client, entryPoints) {
   for (const entryPoint of entryPoints) {
     const name = location + '/functions/' + entryPoint;
     const fn = deployed.get(name);
+    if (entryPoint === 'lockEventQuiz' && fn?.buildConfig?.environmentVariables?.GOOGLE_NODE_RUN_SCRIPTS !== 'gcp-build') {
+      throw new Error('Inventář lockEventQuiz neodpovídá D2. Obecné nasazení bylo zastaveno.');
+    }
     if (!fn) {
       missing.push(entryPoint);
       continue;
@@ -151,7 +157,17 @@ export async function functionTargets(client, entryPoints) {
   return { existing, missing, extra, special };
 }
 
-export async function deployFunctionPlan(plan, artifact, { prepare = prepareFunctionCreation, deploy, update, verifyCreated }) {
+export async function deployFunctionPlan(plan, artifact, { prepare = prepareFunctionCreation, deploy, update, verifyCreated, createReset }) {
+  if (plan.missing.includes('resetEventScores')) {
+    if (plan.missing.length !== 1 || !['saveEventScore', 'saveRefereeScore', 'commitOfflineSync', 'authorizeOfflineEvent',
+      'prepareOfflineEvent', 'previewOfflineSync'].every(name => plan.existing.some(fn => fn.entryPoint === name))) {
+      throw new Error('Inventář pro první vydání resetEventScores neodpovídá plánu. Zastaveno před zápisem.');
+    }
+    await update(plan.existing, artifact.zip);
+    await createReset(artifact.zip);
+    await verifyCreated(['resetEventScores']);
+    return;
+  }
   if (plan.missing.length) {
     await prepare(artifact);
     await deploy(plan.missing.map(entryPoint => 'functions:' + entryPoint).join(','));
@@ -178,14 +194,13 @@ export function functionSourcePatch(name, storageSource) {
   return { name, buildConfig: { source: { storageSource } } };
 }
 
-async function deployFunctions(client, targets, zip) {
+async function uploadSource(client, archive, pinned = false) {
   const { body: { uploadUrl, storageSource } } = await client.post(location + '/functions:generateUploadUrl');
   const url = new URL(uploadUrl);
   if (url.origin !== 'https://storage.googleapis.com' || url.username || url.password || url.hash ||
       !storageSource?.bucket || !storageSource.object) throw new Error('Neočekávaná adresa úložiště zdrojů Functions.');
   const pathFromSource = '/' + storageSource.bucket + '/' + storageSource.object;
   if (decodeURIComponent(url.pathname) !== pathFromSource) throw new Error('Podepsaná adresa neodpovídá zdroji Functions.');
-  const archive = readFileSync(zip);
   if (!archive.length || archive.length > 104857600) throw new Error('Neplatná velikost archivu Functions.');
   const upload = await fetch(url, {
     method: 'PUT', redirect: 'error', signal: AbortSignal.timeout(120_000),
@@ -193,8 +208,38 @@ async function deployFunctions(client, targets, zip) {
   });
   if (!upload.ok) throw new Error('Nahrání zdroje Functions selhalo (HTTP ' + upload.status + ').');
   const generation = upload.headers.get('x-goog-generation');
-  if (generation && /^\d+$/u.test(generation)) storageSource.generation = generation;
+  if (generation && /^[1-9]\d*$/u.test(generation)) storageSource.generation = generation;
+  if (pinned && !/^[1-9]\d*$/u.test(storageSource.generation)) throw new Error('Chybí neměnná generace nahraného zdroje.');
+  return storageSource;
+}
+
+async function waitForBuild(operation) {
+  const prefix = 'projects/(?:filmovy-kviz-v2-staging|177615774316)/locations/europe-west1/operations/';
+  if (!new RegExp('^' + prefix + '[a-zA-Z0-9_-]+$').test(operation.name)) throw new Error('Neočekávaná operace pro Functions.');
   const { pollOperation } = require('firebase-tools/lib/operation-poller');
+  return pollOperation({ apiOrigin: functionsOrigin, apiVersion: 'v2', operationResourceName: operation.name, masterTimeout: 900_000 });
+}
+
+export async function createPrivateReset(client, storageSource, wait = waitForBuild) {
+  const name = location + '/functions/resetEventScores';
+  const { body: scoring } = await client.get(location + '/functions/saveEventScore');
+  const identity = scoring.serviceConfig?.serviceAccountEmail;
+  if (scoring.name !== location + '/functions/saveEventScore' || scoring.state !== 'ACTIVE' || !identity?.endsWith('.gserviceaccount.com')) {
+    throw new Error('Nepodařilo se ověřit runtime identitu bodování.');
+  }
+  // Direct Gen 2 CREATE has no setIamPolicy call. Only the later operator step grants public transport.
+  const { body: op } = await client.post(location + '/functions', { name, environment: 'GEN_2',
+    buildConfig: { runtime: 'nodejs22', entryPoint: 'resetEventScores', source: { storageSource }, environmentVariables: { GOOGLE_NODE_RUN_SCRIPTS: '' } },
+    serviceConfig: { serviceAccountEmail: identity, timeoutSeconds: 120 },
+    labels: { 'deployment-callable': 'true' } }, { queryParams: { functionId: 'resetEventScores' } });
+  const fn = await wait(op);
+  if (fn.name !== name || fn.state !== 'ACTIVE' || fn.serviceConfig?.serviceAccountEmail !== identity)
+    throw new Error('Vytvoření resetEventScores nebylo potvrzeno.');
+}
+
+async function deployFunctions(client, targets, zip) {
+  const storageSource = await uploadSource(client, readFileSync(zip));
+
   for (let offset = 0; offset < targets.length; offset += FUNCTION_BATCH_SIZE) {
     const batch = await Promise.allSettled(targets.slice(offset, offset + FUNCTION_BATCH_SIZE).map(async target => {
       const { body } = await client.get(target.name);
@@ -203,9 +248,7 @@ async function deployFunctions(client, targets, zip) {
       }
       const { body: operation } = await client.patch(target.name, functionSourcePatch(target.name, storageSource),
         { queryParams: { updateMask: 'buildConfig.source.storageSource' } });
-      if (!operation.name?.startsWith(location + '/operations/') &&
-          !operation.name?.startsWith('projects/177615774316/locations/' + REGION + '/operations/')) throw new Error('Neočekávaná operace pro ' + target.entryPoint);
-      await pollOperation({ apiOrigin: functionsOrigin, apiVersion: 'v2', operationResourceName: operation.name, masterTimeout: 900_000 });
+      await waitForBuild(operation);
       console.log('Functions hotovo: ' + target.entryPoint);
     }));
     const failure = batch.find(result => result.status === 'rejected');
@@ -220,6 +263,13 @@ function checklist() {
   console.log('- Přihlášení do administrace ' + LIVE_URL + '/admin/login');
 }
 
+export function menuAction(selection, options = {}) {
+  if (options.mode === '--rollback' && selection === undefined) return 'hosting';
+  if (selection === '4' && !options.mode) return 'lockEventQuiz';
+  if (['1', '2', '3'].includes(selection)) return 'hosting';
+  throw new Error('Neplatná kombinace volby a parametrů nasazení.');
+}
+
 async function run() {
   const options = parseArgs(process.argv.slice(2));
   if (process.versions.node.split('.')[0] !== '22') throw new Error('Použijte Node.js 22.');
@@ -228,8 +278,23 @@ async function run() {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     const selection = options.mode === '--rollback' ? undefined : await rl.question(
-      'PRODUKCE ' + LIVE_URL + '\n1) Jen web\n2) Web + Functions\n3) Web + Functions + Rules\nVolba: ');
-    if (selection !== undefined && !['1', '2', '3'].includes(selection)) throw new Error('Neplatná volba.');
+      'PRODUKCE ' + LIVE_URL + '\n1) Jen web\n2) Web + Functions\n3) Web + Functions + Rules\n4) D2 – pouze lockEventQuiz\nVolba: ');
+    if (menuAction(selection, options) === 'lockEventQuiz') {
+      const proof = () => {
+        let record;
+        const currentHead = verifyMain(git, gh, (sha, jobs) => {
+          record = linuxProof(sha, jobs, id => execFileSync('gh',
+            ['api', '--hostname', 'github.com', '--allow-escape-sequences', 'repos/' + REPO + '/actions/jobs/' + id + '/logs'],
+            { cwd: ROOT, encoding: 'utf8', windowsHide: true, timeout: 45_000, maxBuffer: 8 * 1024 * 1024 }));
+        });
+        if (currentHead !== head) throw new Error('Main se změnil.');
+        return record;
+      };
+      const { bytes } = await buildLockZip(head);
+      const client = await stagingClient(functionsOrigin, 'v2');
+      return await publishLock({ head, bytes, verifyCI: proof, client, upload: (api, data) => uploadSource(api, data, true),
+        wait: waitForBuild, confirm: phrase => rl.question('Pro změnu jediné produkční funkce napište ' + phrase + ': ') });
+    }
     const hosting = await stagingClient('https://firebasehosting.googleapis.com', 'v1beta1');
     const { body: site } = await hosting.get('projects/' + PROJECT + '/sites/' + SITE);
     if (!['projects/' + PROJECT + '/sites/' + SITE, 'projects/177615774316/sites/' + SITE].includes(site.name)) {
@@ -307,6 +372,7 @@ async function run() {
         if (!isDeepStrictEqual(await functionTargets(functions, entryPoints), plan)) throw new Error('Inventář Functions se od náhledu změnil.');
         await deployFunctionPlan(plan, artifact, {
           deploy,
+          createReset: async zip => createPrivateReset(functions, await uploadSource(functions, readFileSync(zip), true)),
           verifyCreated: async created => {
             const deployed = await listDeployedFunctions(functions);
             const absent = created.filter(entryPoint => deployed.get(location + '/functions/' + entryPoint)?.state !== 'ACTIVE');

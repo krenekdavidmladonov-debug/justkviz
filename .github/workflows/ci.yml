@@ -229,10 +229,44 @@ jobs:
           pnpm exec firebase emulators:exec --only auth,firestore,functions,storage --project demo-filmovy-kviz-v2
           "node tools/local-emulator-environment.mjs full tests/e2e/event-management-emulator.mjs && node tools/local-emulator-environment.mjs full node_modules/@playwright/test/cli.js test --config tests/browser/event-management.config.ts"
 
+  d2-lock:
+    name: D2 Linux lockEventQuiz
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Build and import the exact ZIP on Linux
+        env:
+          BASE_SHA: ${{ github.base_ref == 'main' && github.event.pull_request.base.sha || '' }}
+          GCLOUD_PROJECT: demo-d2-build
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          for sha in "$GITHUB_SHA" ${BASE_SHA:+"$BASE_SHA"}; do
+            dir="$(mktemp -d)"
+            node tools/deploy/lock-bundle.mjs "$sha" "$dir/source.zip"
+            (cd "$dir" && unzip -q source.zip && test "$(cat source-commit.txt)" = "$sha" &&
+              npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm run gcp-build)
+            echo "D2_VERIFIED $sha $(sha256sum "$dir/source.zip" | cut -d' ' -f1) $(stat -c%s "$dir/source.zip")"
+          done
+      - name: Exercise deployment boundaries without cloud clients
+        run: node --test tools/deploy/lock-release.test.mjs
+
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [quality-core, editor-media-acceptance, show-mode-acceptance, oauth-windows, restart-recovery-acceptance, dependency-security]
+    needs: [quality-core, editor-media-acceptance, show-mode-acceptance, oauth-windows, restart-recovery-acceptance, dependency-security, d2-lock]
     if: ${{ always() }}
     steps:
       - name: Require every acceptance job to succeed
@@ -242,6 +276,7 @@ jobs:
           SHOW_RESULT: ${{ needs.show-mode-acceptance.result }}
           OAUTH_RESULT: ${{ needs.oauth-windows.result }}
           RECOVERY_RESULT: ${{ needs.restart-recovery-acceptance.result }}
+          D2_RESULT: ${{ needs.d2-lock.result }}
           SECURITY_RESULT: ${{ needs.dependency-security.result }}
         run: |
           test "$CORE_RESULT" = success
@@ -250,6 +285,7 @@ jobs:
           test "$OAUTH_RESULT" = success
           test "$RECOVERY_RESULT" = success
           test "$SECURITY_RESULT" = success
+          test "$D2_RESULT" = success
 
   show-mode-acceptance:
     name: SHOW MODE and whole evening acceptance

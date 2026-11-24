@@ -110,6 +110,20 @@ it('disables incompatible preservation and requires SMAZAT for discard', async (
   await act(async () => button('Zahodit body a změnit verzi').click());
   expect(lockEventQuiz).toHaveBeenCalledExactlyOnceWith(record().id, 8, 'quiz', 2, false, { scoreAction: 'discard', confirm: 'SMAZAT' });
 });
+it('keeps the dialog open and never resets separately when a legacy lock rejects discard after rehearsal', async () => {
+  const saved = vi.fn(), close = vi.fn();
+  vi.mocked(lockEventQuiz).mockRejectedValueOnce(new Error('The event quiz can no longer be replaced.'));
+  await act(async () => root.render(<EventQuizChangeDialog eventId={record().id} quizId="quiz" onClose={close} onSaved={saved} />));
+  await act(async () => host.querySelectorAll<HTMLInputElement>('input[type=radio]')[1]!.click());
+  await input('SMAZAT');
+  await act(async () => button('Zahodit body a změnit verzi').click());
+  expect(host.textContent).toContain('The event quiz can no longer be replaced.');
+  expect(lockEventQuiz).toHaveBeenCalledTimes(1);
+  expect(resetEventScores).not.toHaveBeenCalled();
+  expect(saved).not.toHaveBeenCalled();
+  expect(close).not.toHaveBeenCalled();
+});
+
 it('requires explicit closure of an unplayed active session and the matching live permission', async () => {
   vi.mocked(getEvent).mockResolvedValue({ ...record(), quizChangeState: { ...state, hasActiveSession: true, scoreDocumentCount: 0 } });
   await act(async () => root.render(<EventQuizChangeDialog eventId={record().id} quizId="quiz" onClose={vi.fn()} onSaved={vi.fn().mockResolvedValue(undefined)} />));
