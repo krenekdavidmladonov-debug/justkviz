@@ -75,6 +75,15 @@ Public browser ───── public reads / validated call> public events / Cl
 
 Sensitive state transitions—quiz editing, team registration, quiz publication, live-state changes, answer reveal, role management, and result finalization—belong in Functions. The implemented editor and live-session callables use Firestore transactions and explicit optimistic revisions. The server derives authoritative fields such as timestamps, counters, ordering, revisions, derived round/question records, and public projection payloads.
 
+Owned image reads discover a representation hash through the authorized gateway,
+then use a private immutable HTTP cache URL scoped to one in-memory access epoch.
+Projector lookahead receives only up to nine owned prompt image references from
+the next three visible slides; globally answer-associated images are excluded.
+The gateway authorizes the exact current publication/lookahead before and after
+network IO. Previously delivered HTTP cache bytes cannot be remotely recalled.
+Derived immutable snapshot prompt plans have a bounded process cache; access
+permissions and current session authority are never cached there.
+
 ## Frontend modules
 
 An explicitly entered offline event runtime is separate from the online Firebase-authoritative routes. It uses one scoped, time-bounded signed snapshot export, encrypted local persistence and an independently saved file. A pinned local projector receives only the current public allowlist. Reconnection uses a fresh authorized, baseline-checked atomic journal import rather than Firestore persistence. The candidate protocol and acceptance status are in [OFFLINE_MODE.md](archive/OFFLINE_MODE.md).
@@ -95,6 +104,15 @@ tabs can still need the explicit refresh if an older lazy module was replaced.
 Hashed assets keep their existing cache behavior. The settings page contains
 account/access controls only; quiz appearance remains in the quiz editor.
 
+Quiz appearance stores the optional boolean `defaultDesign.projectorAnimations`
+(default on) through the existing validated design, immutable snapshot and public
+design allowlist. Motion is explicitly enabled only by the real online/offline
+projector and respects reduced motion; moderator/editor previews retain their
+previous behavior. The trusted live loader derives optional public `roundNumber`
+from the already-read round position; offline projection uses the frozen manifest
+round position. Invalid or absent legacy positions omit the number. No question
+time limit exists in the authoritative model, so this change adds no timer.
+
 Feature folders may be added when real behavior arrives. A generic repository/service abstraction is not required until repeated use proves it valuable.
 
 The first implemented feature is the read-only admin quiz library. `features/quizzes/quizRepository.ts` is a small query and runtime-mapping boundary. It reads only private `quizzes`, nested `rounds`, and nested `questions`; its UI view model deliberately omits correct answers. V1-migrated quizzes additionally keep a private, globally ordered `slides` source stream so intro, agenda, recap, end, and other presentation records are not forced into question documents. That stream is not a projector API; trusted Functions derive the deliberately sanitized `publicSessions` state from private source data.
@@ -111,7 +129,7 @@ The simplified editor checks the complete working copy after a short typing paus
 
 The guided repair layer lives at `/admin/quizzes/:quizId/readiness/repair`. It consumes the same bounded quiz load and `PreflightResult`, orders current blockers by their semantic references, and supports only two intentionally narrow repairs: an explicit Choice option index and explicit Video START/END seconds. Moderators can inspect the queue but cannot save. Admin saves call `repairQuizPreflightIssue`, which reloads the authoritative slide in a revision-checked transaction, derives the selected answer from the current stored options, or validates the explicit timing pair, and returns only the normal sanitized mutation counters. After every save the browser reloads the whole authoritative quiz and reruns shared preflight before removing an item from the queue. Unsupported blockers retain their severity and deep-link to the full editor.
 
-The first Events Foundation slice adds `/admin/events`, event create/detail/configuration, and immutable quiz preparation. Event mutations are admin-only callable Functions with expected revisions; moderators have operational read-only access. Locking imports the same quiz-domain mapper and computes an advisory preflight summary without rejecting editorial findings or requiring warning acknowledgement, then atomically copies the exact private slide stream and round metadata into a new `quizSnapshots` document tree and attaches it to the event. Relock creates another snapshot and is allowed only while server-owned scoring state has not started. `publicEvents` is a whole-document allowlist projection with safe aggregate capacities and registration window but no quiz references, team identities, answers, or contacts.
+The first Events Foundation slice adds `/admin/events`, event create/detail/configuration, and immutable quiz preparation. Event mutations are admin-only callable Functions with expected revisions; moderators have operational read-only access. Locking imports the same quiz-domain mapper and computes an advisory preflight summary without rejecting editorial findings or requiring warning acknowledgement, then atomically copies the exact private slide stream and round metadata into a new `quizSnapshots` document tree and attaches it to the event. Relock creates another snapshot. Operational events may replace it after ended rehearsals; an active run that has already shown a question blocks replacement. An explicitly confirmed, unplayed run can be closed atomically by staff with current event.live. Existing scores require explicit preservation for identical round IDs/question counts, or an atomic discard with event.score and SMAZAT confirmation. `publicEvents` is a whole-document allowlist projection with safe aggregate capacities and registration window but no quiz references, team identities, answers, or contacts.
 
 Public registrations use trusted create/get/edit/cancel operations. Capacity and unique names are transactional; records retain only the management-token verifier. Private email intents, encrypted capability envelopes, replay receipts and a safe organizer delivery summary are documented in [TRANSACTIONAL_EMAIL.md](archive/TRANSACTIONAL_EMAIL.md). Gmail delivery uses a private Cloud Tasks worker. Default-off discovery binds no secrets. The separately approved 972ed71 V2 staging activation enabled only new public online registrations from 2026-10-15T15:26:19.550Z; the queue is RUNNING and the owner confirmed all three create/update/cancel messages. The earlier selected-recipient activation in [EMAIL_ACTIVATION_EXECUTION.md](archive/EMAIL_ACTIVATION_EXECUTION.md) is historical evidence. This source revision adds Czech templates, an encrypted management link for new update intents and conservative handling of uncertain provider outcomes; its deployment requires a separate exact release approval. Local verification uses a fake Gmail transport. Internal round scoring uses the scoped saveEventScore callable; see [EVENT_SCORING.md](archive/EVENT_SCORING.md).
 
@@ -231,4 +249,13 @@ Manual publication and the anonymous event boundary are described in
 
 See [EVENT_MANAGEMENT.md](archive/EVENT_MANAGEMENT.md) for the independent disposition overlay, scoped permission mapping, shared transactional guards, capability revocation and exact server-side deletion ownership/allowlist. No content backfill or Storage cleanup is introduced. Cloud team email remains disabled.
 
-Moderator presentation END and event completion are independent. END only closes the selected presentation; explicit completeEvent in event settings applies current scoped manage/live checks, closes sessions when explicitly requested, and retains scores/snapshots/confirmed result history. Explicit question jumps can atomically dismiss result overlays into an unrevealed snapshot slide; finale publication remains reviewed and revision-protected. See [EVENT_MANAGEMENT.md](archive/EVENT_MANAGEMENT.md) and [FINAL_REVEAL.md](archive/FINAL_REVEAL.md).
+Moderator presentation END and event completion are independent. END closes the selected presentation and atomically removes its active event pointer while advancing the event revision; explicit completeEvent in event settings applies current scoped manage/live checks, closes sessions when explicitly requested, and retains scores/snapshots/confirmed result history. Explicit question jumps can atomically dismiss result overlays into an unrevealed snapshot slide; finale publication remains reviewed and revision-protected. See [EVENT_MANAGEMENT.md](archive/EVENT_MANAGEMENT.md) and [FINAL_REVEAL.md](archive/FINAL_REVEAL.md).
+
+Score reset is a separate scoped administrative mutation, resetEventScores. It
+atomically removes all event score documents and their history, clears the
+server-owned started marker, advances scoring.epoch, and records one audit and
+idempotency receipt. Both online score forms pin the generation they loaded;
+single/round writes and offline export replay check the generation before any
+receipt or new mutation. Legacy absence means generation zero. Source snapshots,
+registrations and referee grants remain intact. This is source preparation only;
+the new callable requires separate D1 approval for its transport binding.

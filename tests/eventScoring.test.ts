@@ -99,3 +99,38 @@ describe('atomic round scoring', () => {
     await expect(commitRoundScores(request(), () => Promise.reject(new Error('revoked')))).rejects.toThrow('revoked');
   });
 });
+
+describe('scoring generation after reset', () => {
+  const batch = { eventId: 'e', snapshotId: 's', roundId: 'r', requestId: 'old', scores: [{ teamId: 'a', expectedRevision: 0, halfPoints: 2, reason: '' }] };
+  const authorize = () => Promise.resolve({ key: 'actor', audit: { actorUid: 'actor' } });
+  beforeEach(() => {
+    fake.documents.clear(); fake.writes.length = 0;
+    fake.documents.set('events/e', { lifecycleStatus: 'ready', revision: 5, quizAssignment: { snapshotId: 's' }, scoring: { unitScale: 2, started: false, epoch: 1 } });
+    fake.documents.set('quizSnapshots/s', {}); fake.documents.set('quizSnapshots/s/rounds/r', {});
+    fake.documents.set('events/e/registrations/a', { eventId: 'e', status: 'accepted' });
+  });
+  it.each([undefined, 0])('rejects generation %s for a formerly empty cell without writing anything', async scoringEpoch => {
+    await expect(commitRoundScores(parseRoundScoreRequest({ ...batch, scoringEpoch }), authorize)).rejects.toMatchObject({ code: 'aborted' });
+    expect(fake.writes).toHaveLength(0);
+  });
+  it('accepts a fresh form, but rejects its receipt after another reset', async () => {
+    const input = parseRoundScoreRequest({ ...batch, scoringEpoch: 1 });
+    await commitRoundScores(input, authorize);
+    const receipt = fake.writes.find(write => write.path.includes('/scoreOperations/'))!;
+    fake.documents.set(receipt.path, receipt.data);
+    fake.documents.set('events/e', { lifecycleStatus: 'ready', scoring: { epoch: 2 } });
+    fake.writes.length = 0;
+    await expect(commitRoundScores(input, authorize)).rejects.toMatchObject({ code: 'aborted' });
+    expect(fake.writes).toHaveLength(0);
+  });
+  it('validates the epoch in single and round requests without changing legacy normalization', () => {
+    const single = { eventId: 'e', snapshotId: 's', roundId: 'r', teamId: 'a', requestId: 'id', expectedRevision: 0, halfPoints: 0, reason: '' };
+    expect(parseScoreRequest(single)).not.toHaveProperty('scoringEpoch');
+    expect(parseRoundScoreRequest(batch)).not.toHaveProperty('scoringEpoch');
+    for (const scoringEpoch of [-1, 0.5, NaN, Infinity, '1', null, Number.MAX_SAFE_INTEGER]) {
+      expect(() => parseScoreRequest({ ...single, scoringEpoch })).toThrow();
+      expect(() => parseRoundScoreRequest({ ...batch, scoringEpoch })).toThrow();
+    }
+    expect(parseRoundScoreRequest({ ...batch, scoringEpoch: 1 }).scoringEpoch).toBe(1);
+  });
+});

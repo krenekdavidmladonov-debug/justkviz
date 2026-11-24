@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
-import { verifyMain, storageBucketExists, functionSourcePatch } from './nasadit.mjs';
-import { deploymentConfig } from './artefakt.mjs';
+import { verifyMain, storageBucketExists, functionSourcePatch, listDeployedFunctions, functionTargets, deployFunctionPlan } from './nasadit.mjs';
+import { deploymentConfig, prepareFunctionCreation } from './artefakt.mjs';
 
 const head = 'a'.repeat(40);
 const origin = 'https://github.com/krenekdavidmladonov-debug/justkviz.git';
@@ -148,4 +150,185 @@ test('změna Functions obsahuje pouze jméno a zdroj sestavení', () => {
   const name = 'projects/filmovy-kviz-v2-staging/locations/europe-west1/functions/health';
   const storageSource = { bucket: 'staging-upload', object: 'function.zip', generation: '123' };
   assert.deepEqual(functionSourcePatch(name, storageSource), { name, buildConfig: { source: { storageSource } } });
+});
+
+test('function inventory asks for the first page without a pageToken and follows nextPageToken', async () => {
+  const calls = [];
+  const pages = [
+    { functions: [{ name: 'a' }], nextPageToken: 'p2' },
+    { functions: [{ name: 'b' }] },
+  ];
+  const client = { async get(path, options) { calls.push(options.queryParams); return { body: pages[calls.length - 1] }; } };
+  const deployed = await listDeployedFunctions(client);
+  assert.deepEqual([...deployed.keys()], ['a', 'b']);
+  assert.deepEqual(calls, [{ pageSize: 100 }, { pageSize: 100, pageToken: 'p2' }]);
+  assert.ok(!('pageToken' in calls[0]));
+});
+
+const functionLocation = 'projects/filmovy-kviz-v2-staging/locations/europe-west1/functions/';
+function activeFunction(entryPoint, overrides = {}) {
+  return { name: functionLocation + entryPoint, environment: 'GEN_2', state: 'ACTIVE',
+    buildConfig: { runtime: 'nodejs22', entryPoint }, updateTime: '2026-11-17T10:00:00Z', ...overrides };
+}
+
+test('čtecí náhled rozliší existující, chybějící a přebytečné Functions i přes stránky', async () => {
+  const calls = [];
+  const pages = [
+    { functions: [activeFunction('health')], nextPageToken: 'second' },
+    { functions: [activeFunction('legacyOnly')] },
+  ];
+  const client = { async get(url, options) {
+    calls.push({ url, options });
+    return { body: pages[calls.length - 1] };
+  } };
+  const plan = await functionTargets(client, ['authorizeLocalImageBackup', 'health']);
+  assert.deepEqual(plan, {
+    existing: [{ name: functionLocation + 'health', entryPoint: 'health', updateTime: '2026-11-17T10:00:00Z' }],
+    missing: ['authorizeLocalImageBackup'],
+    extra: ['legacyOnly'],
+    special: [],
+  });
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(call => call.url === functionLocation.slice(0, -1)));
+});
+
+test('prázdný inventář znamená nové funkce; neúplné API není prázdný inventář', async () => {
+  assert.deepEqual(await functionTargets({ async get() { return { body: {} }; } }, ['health']),
+    { existing: [], missing: ['health'], extra: [], special: [] });
+  await assert.rejects(functionTargets({ async get() {
+    return { body: { unreachable: ['europe-west1'] } };
+  } }, ['health']), /není úplný/u);
+});
+
+test('existující neaktivní, Gen 1 nebo jinak nastavená funkce se nevydává za chybějící', async () => {
+  for (const overrides of [
+    { environment: 'GEN_1' }, { state: 'DEPLOYING' }, { updateTime: undefined },
+    { buildConfig: { runtime: 'nodejs20', entryPoint: 'health' } },
+    { buildConfig: { runtime: 'nodejs22', entryPoint: 'other' } },
+  ]) {
+    await assert.rejects(functionTargets({ async get() {
+      return { body: { functions: [activeFunction('health', overrides)] } };
+    } }, ['health']), /Nelze bezpečně aktualizovat/u);
+  }
+});
+
+test('další čtecí náhled odhalí vytvoření funkce jiným nasazením před zápisem', async () => {
+  let created = false;
+  const client = { async get() {
+    return { body: { functions: created ? [activeFunction('health')] : [] } };
+  } };
+  const preview = await functionTargets(client, ['health']);
+  created = true;
+  assert.notDeepEqual(await functionTargets(client, ['health']), preview);
+});
+
+test('nejprve vytvoří pouze chybějící ze stejného artefaktu, potom aktualizuje existující', async () => {
+  const calls = [];
+  const artifact = { zip: 'same-artifact/functions.zip' };
+  const plan = { existing: [{ entryPoint: 'health' }],
+    missing: ['authorizeLocalImageBackup', 'readLocalImageManifest'], extra: ['legacyOnly'] };
+  await deployFunctionPlan(plan, artifact, {
+    prepare(value) { assert.equal(value, artifact); calls.push('prepare'); },
+    deploy(only) { calls.push(only); },
+    update(targets, zip) {
+      assert.equal(targets, plan.existing);
+      assert.equal(zip, artifact.zip);
+      calls.push('update');
+    },
+  });
+  assert.deepEqual(calls, [
+    'prepare', 'functions:authorizeLocalImageBackup,functions:readLocalImageManifest', 'update',
+  ]);
+  assert.ok(calls.every(call => !call.includes('legacyOnly') && !call.includes('--force')));
+});
+
+test('při chybě přípravy nebo vytváření se aktualizace a následující kroky nespustí', async () => {
+  for (const failure of ['prepare', 'create', 'update']) {
+    const calls = [];
+    const step = name => {
+      calls.push(name);
+      if (failure === name) throw new Error(name + ' failed');
+    };
+    await assert.rejects(async () => {
+      await deployFunctionPlan({ missing: ['newFunction'], existing: [{ entryPoint: 'health' }], extra: [] }, {}, {
+        prepare() { step('prepare'); },
+        deploy() { step('create'); },
+        update() { step('update'); },
+      });
+      step('hosting');
+    }, new RegExp(failure + ' failed', 'u'));
+    assert.deepEqual(calls, ['prepare', 'create', 'update'].slice(0,
+      ['prepare', 'create', 'update'].indexOf(failure) + 1));
+  }
+});
+
+test('bez chybějících nevytváří a bez existujících neaktualizuje ani nenahrává další ZIP', async () => {
+  for (const missing of [[], ['newFunction']]) {
+    const calls = [];
+    await deployFunctionPlan({ missing, existing: [], extra: ['legacyOnly'] }, {}, {
+      prepare() { calls.push('prepare'); },
+      deploy(only) { calls.push(only); },
+      update() { assert.fail('Žádná existující funkce nesmí být aktualizována.'); },
+    });
+    assert.deepEqual(calls, missing.length ? ['prepare', 'functions:newFunction'] : []);
+  }
+  const calls = [];
+  await deployFunctionPlan({ missing: [], existing: [{ entryPoint: 'health' }], extra: [] }, {}, {
+    prepare() { assert.fail('Není co vytvářet.'); },
+    deploy() { assert.fail('Není co vytvářet.'); },
+    update() { calls.push('update'); },
+  });
+  assert.deepEqual(calls, ['update']);
+});
+
+test('CLI vytváření používá již sestavený balíček D1 a zamčené závislosti bez rebuildů', context => {
+  const directory = mkdtempSync(path.join(tmpdir(), 'justkviz-d1-creation-test-'));
+  context.after(() => rmSync(directory, { recursive: true, force: true }));
+  const source = path.join(directory, 'source');
+  mkdirSync(source);
+  const configName = 'firebase.produkce.json';
+  const configPath = path.join(source, configName);
+  const hosting = { site: 'justkviz-v2' };
+  writeFileSync(configPath, JSON.stringify({ hosting }));
+  const artifact = { directory, source, configName, env: { SYNTHETIC: 'true' } };
+  const calls = [];
+  prepareFunctionCreation(artifact, (...args) => calls.push(args));
+  assert.deepEqual(calls, [[process.execPath, [
+    path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js'),
+    'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund',
+  ], path.join(directory, 'functions'), artifact.env]]);
+  assert.deepEqual(JSON.parse(readFileSync(configPath, 'utf8')), {
+    hosting, functions: { source: path.join(directory, 'functions'), codebase: 'default', runtime: 'nodejs22' },
+  });
+});
+test('funkce s vlastním sestavením (GOOGLE_NODE_RUN_SCRIPTS) se neaktualizují obecným artefaktem', async () => {
+  const worker = activeFunction('beginQuizMediaUpload');
+  worker.buildConfig = { ...worker.buildConfig, environmentVariables: { GOOGLE_NODE_RUN_SCRIPTS: 'gcp-build' } };
+  const plain = activeFunction('health');
+  plain.buildConfig = { ...plain.buildConfig, environmentVariables: { GOOGLE_NODE_RUN_SCRIPTS: '' } };
+  const plan = await functionTargets({ async get() { return { body: { functions: [worker, plain] } }; } }, ['beginQuizMediaUpload', 'health']);
+  assert.deepEqual(plan.special, ['beginQuizMediaUpload']);
+  assert.deepEqual(plan.existing.map(target => target.entryPoint), ['health']);
+  assert.deepEqual(plan.missing, []);
+});
+
+test('nevytvořené nové funkce zastaví nasazení před aktualizací a webem', async () => {
+  const steps = [];
+  await assert.rejects(deployFunctionPlan({ missing: ['newOne'], existing: [{ entryPoint: 'health' }] }, {}, {
+    prepare: async () => steps.push('prepare'),
+    deploy: async () => steps.push('deploy'),
+    verifyCreated: async () => { throw new Error('Nové Functions nevznikly'); },
+    update: async () => steps.push('update'),
+  }), /nevznikly/u);
+  assert.deepEqual(steps, ['prepare', 'deploy']);
+});
+
+test('podřízené procesy D1 mají Node z .tools v PATH', async () => {
+  const { childEnv } = await import('./artefakt.mjs');
+  const env = childEnv({ Path: 'C:\\Windows', NODE_OPTIONS: 'x', VITE_X: '1' }, 'C:\\Projects\\justkviz\\.tools\\node22');
+  const key = Object.keys(env).find(name => name.toUpperCase() === 'PATH');
+  assert.equal(key, 'Path');
+  assert.ok(env.Path.startsWith('C:\\Projects\\justkviz\\.tools\\node22'));
+  assert.ok(env.Path.endsWith('C:\\Windows'));
+  assert.ok(!('NODE_OPTIONS' in env) && !('VITE_X' in env));
 });

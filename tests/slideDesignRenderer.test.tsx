@@ -42,12 +42,22 @@ describe('shared viewer appearance', () => {
     const question = renderToStaticMarkup(<SlideRenderer quizTitle="Večer" slide={picture} />);
     const reveal = renderToStaticMarkup(<SlideRenderer quizTitle="Večer" mode="recap" slide={{ ...picture, revealedAnswer: 'Brno' }} />);
     const preview = renderToStaticMarkup(<SlidePreview quizTitle="Večer" slide={{ ...picture, correctAnswer: 'Brno' }} showAnswer />);
-    for (const html of [question, reveal, preview]) {
+    for (const html of [question]) {
       expect(html).toContain('layout-split align-left');
       expect(html).toContain('fixed-photo-question');
       expect(html).toContain('--slide-media-fit:contain');
       expect(html.indexOf('fixed-photo-copy')).toBeLessThan(html.indexOf('question-image-frame'));
       expect(html.indexOf('slide-options')).toBeLessThan(html.indexOf('question-image-frame'));
+    }
+    // Revealed recap with an answer picture: the answer picture becomes the hero on the right,
+    // copy + answer on the left and the original picture stays as a small reminder.
+    for (const html of [reveal, preview]) {
+      expect(html).toContain('layout-split align-left');
+      expect(html).toContain('answer-focus');
+      expect(html).not.toContain('fixed-photo-question');
+      expect(html.indexOf('answer-focus-copy')).toBeLessThan(html.indexOf('answer-focus-image'));
+      expect(html.indexOf('slide-answer')).toBeLessThan(html.indexOf('answer-focus-image'));
+      expect(html.indexOf('photo.jpg', html.indexOf('answer-focus-copy'))).toBeLessThan(html.indexOf('private-answer.png', html.indexOf('answer-focus-copy')));
     }
     expect(question).not.toContain('private-answer.png');
     expect(reveal).toContain('private-answer.png');

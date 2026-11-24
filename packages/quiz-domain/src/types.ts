@@ -104,6 +104,8 @@ export interface EditorAppearance {
   readonly imageLayout: 'split' | 'stacked';
 }
 export interface EditorQuiz {
+  /** Server read view: actual slide counts, including empty stored rounds. */
+  readonly scoringRounds?: readonly { readonly id: string; readonly questionCount: number }[];
   readonly status?: 'draft' | 'ready' | 'archived';
   readonly printTemplate?: PrintTemplate;
   readonly defaultDesign?: SlideDesign;
@@ -134,6 +136,7 @@ export type PreflightSource = 'SAVED_QUIZ' | 'LOCAL_DRAFT';
 export type PreflightCategory = EditorValidationCategory | 'PROJECTOR';
 export type PreflightIssueCode = EditorValidationCode
   | 'QUIZ_TITLE_MISSING'
+  | 'QUIZ_INTRO_MISSING'
   | 'QUIZ_HAS_NO_ROUNDS'
   | 'ROUND_TITLE_MISSING'
   | 'ROUND_HAS_NO_QUESTIONS'
@@ -142,6 +145,9 @@ export type PreflightIssueCode = EditorValidationCode
   | 'AGENDA_OUT_OF_DATE'
   | 'MEDIA_ONLINE_UNVERIFIED'
   | 'IMAGE_ONLINE_UNVERIFIED'
+  | 'MEDIA_NOT_OFFLINE'
+  | 'IMAGE_WIDTH_SMALL'
+  | 'IMAGE_URL_ANSWER_HINT'
   | 'UNSAVED_CHANGES';
 
 export interface PreflightReference {
@@ -158,7 +164,7 @@ export interface PreflightFixTarget {
   readonly kind: 'quiz' | 'round' | 'question' | 'system';
   readonly roundId?: string;
   readonly questionId?: string;
-  readonly systemKey?: 'agenda';
+  readonly systemKey?: 'agenda' | 'opening';
   readonly field?: string;
 }
 
@@ -176,7 +182,18 @@ export interface PreflightCategoryCount {
   readonly warnings: number;
 }
 
+export interface PreflightMediaSummary {
+  readonly imageCount: number;
+  readonly smallImageCount: number;
+  readonly unknownImageCount: number;
+  readonly offlineExcludedCount: number;
+  readonly youtubeCount: number;
+  readonly driveCount: number;
+  readonly externalCount: number;
+  readonly answerUrlCount: number;
+}
 export interface PreflightResult {
+  readonly media?: PreflightMediaSummary;
   readonly status: PreflightStatus;
   readonly source: PreflightSource;
   readonly validationDurationMs: number;

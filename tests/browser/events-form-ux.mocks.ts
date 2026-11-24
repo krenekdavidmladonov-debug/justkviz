@@ -69,4 +69,5 @@ export function refereeCall(name: string, payload: unknown) {
 const unsupportedMutation = (): Promise<never> => Promise.reject(new Error('Unsupported mutation in the isolated form fixture.'));
 export const archiveEvent: typeof EventApi.archiveEvent = unsupportedMutation;
 export const cancelEvent: typeof EventApi.cancelEvent = unsupportedMutation;
+export const resetEventScores: typeof EventApi.resetEventScores = unsupportedMutation;
 export const lockEventQuiz: typeof EventApi.lockEventQuiz = unsupportedMutation;

@@ -19,10 +19,13 @@ export const readQuizMedia = onRequest({ region: 'europe-west1', cors: true, max
   response.set('Cache-Control', 'no-store').set('X-Content-Type-Options', 'nosniff').set('Access-Control-Expose-Headers', 'ETag, Server-Timing');
   if (request.method !== 'GET') { response.status(405).end(); return; }
   const reference = request.query.reference, parsed = parseQuizAsset(reference), offlineExportId = request.query.offlineExportId;
-  const allowedQuery = offlineExportId === undefined ? ['reference', 'sessionId', 'snapshotId', 'eventId'] : ['reference', 'eventId', 'offlineExportId'];
+  const allowedQuery = offlineExportId === undefined ? ['reference', 'sessionId', 'snapshotId', 'eventId', 'cacheScope', 'pin'] : ['reference', 'eventId', 'offlineExportId'];
   if (!parsed || typeof reference !== 'string' || Object.keys(request.query).some(key => !allowedQuery.includes(key))
     || ['sessionId', 'snapshotId', 'eventId'].filter(key => request.query[key] !== undefined).length > 1) { response.status(400).end(); return; }
   try {
+    const cacheScope = request.query.cacheScope, pin = request.query.pin;
+    if ((cacheScope !== undefined && (typeof cacheScope !== 'string' || !/^[a-f0-9]{32}$/u.test(cacheScope)))
+      || (pin !== undefined && (typeof pin !== 'string' || !/^[a-f0-9]{64}$/u.test(pin) || cacheScope === undefined))) { response.status(400).end(); return; }
     const snapshotId = request.query.snapshotId === undefined ? undefined : mediaId(request.query.snapshotId);
     let eventId = request.query.eventId === undefined ? undefined : mediaId(request.query.eventId);
     let offline: OfflineMediaRead | undefined;
@@ -60,6 +63,13 @@ export const readQuizMedia = onRequest({ region: 'europe-west1', cors: true, max
     try { range = mediaByteRange(request.get('range'), size); }
     catch { response.status(416).set('Content-Range', 'bytes */' + size).end(); return; }
     const etag = '"' + createHash('sha256').update(JSON.stringify([reference, asset.generation, asset.contentType, size])).digest('hex') + '"';
+    // Only a URL explicitly pinned to this immutable representation can outlive a request.
+    if (pin !== undefined && (pin !== etag.slice(1, -1) || asset.kind !== 'image')) { response.status(404).end(); return; }
+    if (cacheScope !== undefined && pin === undefined && asset.kind === 'image') {
+      const target = new URL(request.originalUrl, 'http://localhost');
+      target.searchParams.set('pin', etag.slice(1, -1));
+      response.status(307).set('Location', target.search).end(); return;
+    }
     const unchanged = !range && request.get('if-none-match') === etag;
     const isDrive = asset.drive !== undefined || asset.generation.startsWith('drive:');
     if (offline && (isDrive || asset.storageBackend === 'drive' || etag !== offline.etag)) { response.status(404).end(); return; }
@@ -92,6 +102,9 @@ export const readQuizMedia = onRequest({ region: 'europe-west1', cors: true, max
       + ', media;dur=' + (mediaFinishedAt - authorizedAt).toFixed(1)
       + ', reauthorization;dur=' + (finishedAt - mediaFinishedAt).toFixed(1)
       + ', total;dur=' + (finishedAt - started).toFixed(1)).set('ETag', etag);
+    if (pin !== undefined && !range) {
+      response.set('Cache-Control', 'private,max-age=31536000,immutable').set('Vary', 'Authorization, Origin');
+    }
     if (unchanged) { response.status(304).end(); return; }
     response.set('Content-Type', asset.contentType as string).set('Accept-Ranges', 'bytes').set('Content-Length', String(bytes.length));
     if (range) response.status(206).set('Content-Range', 'bytes ' + range.start + '-' + range.end + '/' + size);

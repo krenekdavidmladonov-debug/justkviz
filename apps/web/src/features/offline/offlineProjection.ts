@@ -37,8 +37,9 @@ export function buildOfflineProjection(manifest: OfflineEventManifest, state: Of
     const backgroundImage = owned(slide.backgroundImage) || legacy('background', 'image');
     const mediaSource = video || (audio && revealed && state.recap) ? owned(slide.mediaSource) || legacy('prompt', video ? 'video' : 'audio') : undefined;
     const answerImage = revealed ? owned(slide.answerImage) || legacy('answer', 'image') : undefined;
+    const roundNumber = manifest.rounds.find(round => round.id === slide.roundId)?.position;
     const renderMode = revealed ? 'recap' : kind === 'intro' || ['round', 'roundheader', 'round-header', 'section'].includes(kind) ? 'roundIntro' : kind === 'agenda' ? 'agenda' : kind === 'rules' ? 'rules' : kind === 'end' ? 'end' : 'question';
-    return { ...base, slideKind: slide.kind, title: typeof slide.title === 'string' ? slide.title : '', text: typeof slide.text === 'string' ? slide.text : '',
+    return { ...base, ...(Number.isSafeInteger(roundNumber) && (roundNumber ?? 0) > 0 ? { roundNumber } : {}), slideKind: slide.kind, title: typeof slide.title === 'string' ? slide.title : '', text: typeof slide.text === 'string' ? slide.text : '',
         options: slide.options.filter(option => typeof option === 'string'), media: [], presentation: {}, renderMode, design,
         ...(typeof slide.roundTitle === 'string' ? { roundTitle: slide.roundTitle } : {}), ...(slide.questionNumber === undefined ? {} : { questionNumber: slide.questionNumber }), ...(slide.questionCount === undefined ? {} : { questionCount: slide.questionCount }),
         ...(questionImage ? { questionImage } : {}), ...(backgroundImage ? { backgroundImage } : {}), ...(mediaSource ? { mediaSource } : {}),

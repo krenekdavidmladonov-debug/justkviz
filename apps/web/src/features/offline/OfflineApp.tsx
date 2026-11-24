@@ -45,11 +45,11 @@ function OfflineShellSelfTest({ nonce }: { readonly nonce: string }) {
   return <p>Ověřuji spuštění aplikace bez síťových spojení…</p>;
 }
 
-function PublicPresentation({ state, finished, mediaEnabled = true }: { readonly state: PublicLiveState; readonly finished?: (() => void) | undefined; readonly mediaEnabled?: boolean }) {
+function PublicPresentation({ state, finished, mediaEnabled = true, projector = false }: { readonly state: PublicLiveState; readonly projector?: boolean; readonly finished?: (() => void) | undefined; readonly mediaEnabled?: boolean }) {
   const slide: SlideRenderInput = {
     ...state, kind: state.slideKind ?? 'question', title: state.title ?? '', text: state.text ?? '',
   };
-  return <ShowModeRenderer state={state}>
+  return <ShowModeRenderer state={state} projector={projector}>
     {state.status === 'waiting' ? <div className="offline-projector-message">Kvíz brzy začne</div>
       : state.status === 'ended' ? <div className="offline-projector-message">Děkujeme za hru</div>
       : <SlideRenderer slide={slide} quizTitle={state.quizTitle} mode={state.renderMode} liveEventsEnabled={false}
@@ -78,7 +78,7 @@ function OfflineProjector({ sessionId }: { readonly sessionId: string }) {
   }), [sessionId, state?.mediaGeneration]);
   return <main className="offline-projector" data-offline-projector>
     <OfflineMediaContext.Provider value={resolver}>
-      {state ? <PublicPresentation state={state} finished={() => connection.current?.finished(state.mediaGeneration)} /> : <div className="offline-projector-message">{error}<p>Otevřete projektor z odemčeného moderování.</p></div>}
+      {state ? <PublicPresentation projector state={state} finished={() => connection.current?.finished(state.mediaGeneration)} /> : <div className="offline-projector-message">{error}<p>Otevřete projektor z odemčeného moderování.</p></div>}
     </OfflineMediaContext.Provider>
   </main>;
 }

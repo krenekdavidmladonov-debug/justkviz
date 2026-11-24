@@ -97,10 +97,6 @@ export function canArchiveEvent(lifecycleStatus: EventLifecycleStatus): boolean 
   return lifecycleStatus === 'cancelled' || lifecycleStatus === 'completed';
 }
 
-export function canLockQuiz(lifecycleStatus: EventLifecycleStatus, scoringStarted: boolean): boolean {
-  return !scoringStarted && (lifecycleStatus === 'draft' || lifecycleStatus === 'scheduled' || lifecycleStatus === 'ready');
-}
-
 export function isRegistrationStatus(value: unknown): value is RegistrationStatus {
   return value === 'scheduled' || value === 'open' || value === 'paused'
     || value === 'full' || value === 'closed';

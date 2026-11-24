@@ -407,3 +407,24 @@ describe('trusted snapshot mapper', () => {
     expect(mapped.quiz.printTemplate).toEqual({ title: 'Zamčená šablona', footer: 'A'.repeat(160) });
   });
 });
+
+  test('omits cancelled registrations from rendered score-table and named team sheets', async () => {
+    const registrations = [
+      { id: 'accepted', status: 'accepted', teamName: 'Synteticky Aktivni' },
+      { id: 'cancelled', status: 'cancelled', teamName: 'Synteticky Zruseny' },
+    ];
+    const teams = registrations.flatMap(registration => {
+      const team = registrationToPrintTeam(registration.id, registration);
+      return team ? [team] : [];
+    });
+    const drawText = vi.spyOn(PDFPage.prototype, 'drawText');
+    try {
+      for (const artifactType of ['score-table', 'team-sheets'] as const) {
+        drawText.mockClear();
+        await renderPrintArtifact(syntheticPrintEvent(), { artifactType, disposition: 'inline', mode: 'all', teams });
+        const text = drawText.mock.calls.map(([value]) => value).join('\n');
+        expect(text).toContain('Synteticky Aktivni');
+        expect(text).not.toContain('Synteticky Zruseny');
+      }
+    } finally { drawText.mockRestore(); }
+  });

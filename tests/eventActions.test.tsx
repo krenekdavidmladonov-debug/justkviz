@@ -3,6 +3,9 @@ import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { warmEventFunctions } from '../apps/web/src/features/events/eventWarmup';
+vi.mock('../apps/web/src/features/events/eventWarmup', () => ({ warmEventFunctions: vi.fn() }));
+import { getEvent } from '../apps/web/src/features/events/eventRepository';
 import { EventActions } from '../apps/web/src/features/events/EventActions';
 import { eventFormRecord } from './browser/events-form-ux.data';
 import type { EventRecord } from '../apps/web/src/features/events/types';
@@ -28,9 +31,11 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.unstubAllGlobals(); });
 const button = (text: string) => [...host.querySelectorAll('button')].find(item => item.textContent === text)!;
-async function render(patch: Partial<EventRecord> = {}) {
+async function render(patch: Partial<EventRecord> = {}, showWarmup = false) {
   const changed = vi.fn().mockResolvedValue(undefined);
-  await act(async () => root.render(<MemoryRouter><EventActions event={{ ...eventFormRecord(), title: 'Filmový večer', ...patch }} onChanged={changed} /></MemoryRouter>));
+  const event: EventRecord = { ...eventFormRecord(), title: 'Filmový večer', quizChangeState: { hasActiveSession: !!patch.liveSessionId, hasPresentedQuestion: !!patch.liveSessionId, scoreDocumentCount: 0, snapshotRounds: [] }, ...patch };
+  vi.mocked(getEvent).mockResolvedValue(event);
+  await act(async () => root.render(<MemoryRouter><EventActions showWarmup={showWarmup} event={event} onChanged={changed} /></MemoryRouter>));
   return changed;
 }
 async function openPermanentDeletion() {
@@ -164,4 +169,42 @@ it('retains the event completion dialog after rejection and lets the owner retry
   await act(async () => host.querySelector('dialog form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
   expect(changed).not.toHaveBeenCalled(); expect(host.querySelector('[role=alert]')).not.toBeNull();
   expect(host.querySelector<HTMLButtonElement>('dialog .danger-button')?.disabled).toBe(false);
+});
+
+it('shows preparation only when explicitly requested on an operational detail with live permission', async () => {
+  await render({ lifecycleStatus: 'ready' });
+  expect(button('Připravit večer')).toBeUndefined();
+  await render({ lifecycleStatus: 'ready' }, true);
+  expect(button('Připravit večer')).toBeDefined();
+  mocks.denied = ['event.live'];
+  await render({ lifecycleStatus: 'ready' }, true);
+  expect(button('Připravit večer')).toBeUndefined();
+});
+it('reports partial preparation failure, prevents double clicks and permits an explicit retry', async () => {
+  let complete!: (value: Awaited<ReturnType<typeof warmEventFunctions>>) => void;
+  vi.mocked(warmEventFunctions).mockReset().mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+  await render({ lifecycleStatus: 'ready' }, true);
+  await act(async () => { button('Připravit večer').click(); button('Připravit večer')?.click(); });
+  expect(warmEventFunctions).toHaveBeenCalledTimes(1);
+  expect(button('Připravuji večer…').disabled).toBe(true);
+  await act(async () => complete({ ready: ['revealAnswer'], failed: ['saveEventScore', 'readRefereeEvent', 'previewInterimResults', 'generatePrintArtifact', 'createEventLiveSession'] }));
+  expect(host.textContent).toContain('Odpovědělo 1 ze 6 služeb');
+  vi.mocked(warmEventFunctions).mockResolvedValueOnce({ ready: ['createEventLiveSession', 'previewInterimResults', 'readRefereeEvent', 'revealAnswer', 'saveEventScore', 'generatePrintArtifact'], failed: [] });
+  await act(async () => button('Připravit večer').click());
+  expect(warmEventFunctions).toHaveBeenCalledTimes(2);
+  expect(host.textContent).toContain('Všech šest služeb večera odpovědělo');
+});
+
+it('treats a legacy ended pointer as inactive and verifies the current state before trash confirmation', async () => {
+  await render({ liveSessionId: 'ended', quizChangeState: { hasActiveSession: false, hasPresentedQuestion: false, scoreDocumentCount: 0, snapshotRounds: [] } });
+  expect(button('Smazat').disabled).toBe(false);
+  let complete!: (event: EventRecord) => void;
+  vi.mocked(getEvent).mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+  await act(async () => button('Smazat').click());
+  expect(button('Smazat akci').disabled).toBe(true);
+  await act(async () => button('Smazat akci').click());
+  expect(mocks.invoke).not.toHaveBeenCalled();
+  await act(async () => complete({ ...eventFormRecord(), quizChangeState: { hasActiveSession: true, hasPresentedQuestion: false, scoreDocumentCount: 0, snapshotRounds: [] } }));
+  expect(button('Smazat akci').disabled).toBe(true);
+  expect(host.querySelector('dialog')?.textContent).toContain('ukončete živý běh');
 });

@@ -414,7 +414,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
     let selectionKey: string | undefined;
     if (questionId !== null && semantic.questionBySlideId.has(questionId)) selectionKey = `slide:${questionId}`;
     else if (roundId !== null && semantic.rounds.some((round) => round.id === roundId)) selectionKey = `round:${roundId}`;
-    else if (section === 'agenda') selectionKey = 'system:agenda';
+    else if (section === 'agenda' || section === 'opening') selectionKey = `system:${section}`;
     else if (field === 'quizTitle') selectionKey = 'quiz';
     handledDeepLink.current = deepLinkKey;
     if (selectionKey === undefined) return;
@@ -818,8 +818,10 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const inheritedRound = selectedRound === undefined ? undefined : (parked[`round:${selectedRound.id}`]?.draft ?? selectedRound.settingsSlide)?.design;
   const inheritedDesign = resolveSlideDesign(defaultDesign, selectedKey.startsWith('round:') ? undefined : inheritedRound);
   const previewBase = selectedTemplate ? localDraft('end', 0, { title: template?.title ?? (selectedTemplate === 'final' ? 'Finální výsledky' : 'Průběžné pořadí'), text: template?.subtitle ?? 'Pořadí a body se doplní z publikovaných výsledků.', ...(template?.design ? { design: template.design } : {}) }) : draft ?? selectedRound?.settingsSlide ?? semantic.introduction.find((item) => item.slide)?.slide ?? quiz.slides[0];
+  const previewRoundNumber = semantic.rounds.find(round => round.id === previewBase?.roundId)?.position;
   const previewSlide = previewBase === undefined ? undefined : {
     ...previewBase, ...resolveLegacySlideAppearance(appearance, previewBase), design: resolveSlideDesign(defaultDesign, selectedKey.startsWith('round:') || selectedTemplate ? undefined : inheritedRound, previewBase.design),
+    ...(previewRoundNumber === undefined ? {} : { roundNumber: previewRoundNumber }),
     ...(selectedKey.startsWith('round:') && dirtyRound ? { title: roundTitle } : {}),
     ...(selectedSection?.key === 'agenda' && previewBase.automaticAgenda === true ? { options: generatedAgendaOptions(semantic.rounds, quiz.slides) } : {}),
   };
@@ -903,6 +905,8 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
         <div className="editor-preflight-shell">
           {validationPending || preflightResult === null ? <p role="status">Aktualizuji připravenost podle rozepsaných změn…</p> : <QuizPreflightPanel
             quizId={quiz.id}
+            answersReadable={can('quiz.answers.read')}
+            quiz={checkedSnapshot?.quiz}
             result={preflightResult}
             onFix={openPreflightFix}
           />}

@@ -178,7 +178,7 @@ test('OBS-01 keeps gateway failures visible with diagnostics closed and clears t
     };
     await projector.route(matchPrompt, injectFailure);
     await projector.goto('/projector/' + sessionId);
-    await expect(projector.getByText('Čekáme na první slide')).toBeVisible();
+  await expect(projector.getByText('VÍTEJTE NA KVÍZU')).toBeVisible();
     await fixture.navigate(sessionId, 3);
 
     const retry = projector.getByRole('button', { name: 'Zkusit načíst znovu', exact: true });

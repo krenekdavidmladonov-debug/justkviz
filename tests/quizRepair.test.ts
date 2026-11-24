@@ -19,8 +19,9 @@ function slide(values: Partial<EditorSlide>): EditorSlide {
 }
 
 function syntheticRepairQuiz(): EditorQuiz {
-  const slides: EditorSlide[] = [];
-  let position = 0;
+  const slides: EditorSlide[] = [slide({ id: 'intro', position: 1, kind: 'intro', storedKind: 'intro',
+    isQuestion: false, roundId: undefined, roundTitle: undefined, title: 'Úvod kvízu', text: '', options: [], correctAnswer: '' })];
+  let position = 1;
   for (let round = 1; round <= 5; round += 1) {
     for (let question = 1; question <= 3; question += 1) {
       const optionCount = 4 + ((round + question) % 3);
@@ -53,7 +54,7 @@ function syntheticRepairQuiz(): EditorQuiz {
   }
   return {
     id: 'synthetic-repair', title: 'Syntetický repair kvíz', description: '', revision: 0,
-    slideCount: slides.length, questionCount: slides.length, roundCount: 5, slides,
+    slideCount: slides.length, questionCount: slides.filter(slide => slide.isQuestion).length, roundCount: 5, slides,
   };
 }
 
@@ -63,7 +64,8 @@ describe('guided preflight repair queue', () => {
     const result = runQuizPreflight(quiz);
     const queue = buildRepairQueue(quiz, result);
     expect(result.blockerCount).toBe(16);
-    expect(result.warningCount).toBe(3);
+    expect(result.warningCount).toBe(6);
+    expect(result.issues.filter(issue => issue.code === 'MEDIA_NOT_OFFLINE')).toHaveLength(3);
     expect(queue).toHaveLength(16);
     expect(queue.filter((item) => item.kind === 'choice-answer')).toHaveLength(15);
     expect(queue.filter((item) => item.kind === 'video-timing')).toHaveLength(1);
@@ -81,9 +83,10 @@ describe('guided preflight repair queue', () => {
   test('builds a larger queue in bounded time without reading per issue', () => {
     const base = syntheticRepairQuiz();
     const slides = Array.from({ length: 20 }, (_, copy) => base.slides.map((item, index) => ({
-      ...item, id: `${copy}-${item.id}`, position: copy * base.slides.length + index + 1, roundId: `${copy}-${item.roundId}`,
+      ...item, id: `${copy}-${item.id}`, position: copy * base.slides.length + index + 1,
+      ...(item.roundId === undefined ? {} : { roundId: `${copy}-${item.roundId}` }),
     }))).flat();
-    const large = { ...base, slides, slideCount: slides.length, questionCount: slides.length, roundCount: 100 };
+    const large = { ...base, slides, slideCount: slides.length, questionCount: slides.filter(slide => slide.isQuestion).length, roundCount: 100 };
     const started = performance.now();
     const queue = buildRepairQueue(large, runQuizPreflight(large));
     expect(queue).toHaveLength(320);

@@ -1,3 +1,4 @@
+import { eventScoringEpoch } from '@filmovy-kviz/quiz-domain';
 import { collection, getDocsFromServer, onSnapshot, orderBy, query, Timestamp } from 'firebase/firestore';
 import { privateRead, watchPrivate, type PrivateDocument } from '../access/api';
 import { httpsCallable } from 'firebase/functions';
@@ -7,9 +8,10 @@ import type { Score, ScoreHistory, ScoreRound } from './model';
 
 export interface ScoreRequest {
   eventId: string; snapshotId: string; teamId: string; roundId: string; requestId: string;
-  expectedRevision: number; halfPoints: number | null; reason: string;
+  expectedRevision: number; halfPoints: number | null; reason: string; scoringEpoch?: number;
 }
 export interface RoundScoreRequest {
+  scoringEpoch?: number;
   eventId: string; snapshotId: string; roundId: string; requestId: string;
   scores: { teamId: string; expectedRevision: number; halfPoints: number | null; reason: string }[];
 }
@@ -43,11 +45,11 @@ export function watchRoster(eventId: string, receive: (teams: { id: string; name
     receive(rows.map(item => ({ id: item.id, name: String(item.data.teamName), accepted: item.data.status === 'accepted' })));
   }, fail);
 }
-export function watchScoringEvent(eventId: string, receive: (snapshotId: string | null, allowed: boolean, title: string) => void, fail: () => void) {
+export function watchScoringEvent(eventId: string, receive: (snapshotId: string | null, allowed: boolean, title: string, scoringEpoch?: number) => void, fail: () => void) {
   return watchPrivate<PrivateDocument>('event', { eventId }, result => {
     const data = result.data;
     const assignment = data?.quizAssignment as { snapshotId?: string } | undefined;
-    receive(assignment?.snapshotId ?? null, ['ready', 'live', 'finalizing'].includes(data?.lifecycleStatus as string), typeof data?.title === 'string' ? data.title : 'Akce');
+    receive(assignment?.snapshotId ?? null, ['ready', 'live', 'finalizing'].includes(data?.lifecycleStatus as string), typeof data?.title === 'string' ? data.title : 'Akce', eventScoringEpoch(data.scoring));
   }, fail);
 }
 export async function loadHistory(eventId: string, teamId: string, roundId: string): Promise<ScoreHistory[]> {

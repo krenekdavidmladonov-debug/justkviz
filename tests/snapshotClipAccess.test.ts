@@ -158,3 +158,14 @@ test.each(['suspended', 'scope', 'permission', 'assignment', 'trash'] as const)(
   await expect(authorizePrivateMedia(auth, reference, 'frozen')).rejects.toMatchObject({ code: 'permission-denied' });
   expect(state.reads.some(path => path.includes('/mediaAssets'))).toBe(false);
 });
+
+test.each([undefined, 1, 3, 0, -1, 1.5, '2'])('live loader derives round number from the already-read frozen round position: %s', position => {
+  state.records[frozenPath]!.roundId = 'round-one';
+  state.records[frozenPath]!.roundNumber = 999;
+  state.records['quizSnapshots/frozen/rounds/round-one'] = { position };
+  acknowledgeFixtureChange();
+  return loadSlide(transaction as unknown as Parameters<typeof loadSlide>[0], 'quiz', 1, 'frozen').then(slide => {
+    expect(slide.roundNumber).toBe(typeof position === 'number' && Number.isSafeInteger(position) && position > 0 ? position : undefined);
+    expect(state.reads.filter(path => path === 'quizSnapshots/frozen/rounds/round-one')).toHaveLength(1);
+  });
+});

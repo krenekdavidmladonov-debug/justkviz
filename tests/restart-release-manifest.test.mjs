@@ -31,7 +31,7 @@ assert(localDemoExports.every(name => access.unchangedExcluded[name]?.includes('
 const laterFeatureExports = [
   ...localDemoExports, ...offline.newCallableFunctions,
   ...show.newFunctions, ...drive.functions, ...driveMedia.newFunctions, ...driveLocal.newFunctions,
-  'restoreQuiz', 'trashQuiz', 'completeEvent', 'duplicateQuiz',
+  'restoreQuiz', 'trashQuiz', 'completeEvent', 'duplicateQuiz', 'configurePublicEventResults', 'resetEventScores',
 ];
 
 function sourceExports() {
@@ -88,7 +88,7 @@ test('frozen restart inventory and separate later features account for current e
   assertInventory(manifest);
   assert.equal(manifest.counts.releaseFunctions, 70);
   assert.equal(manifest.counts.sourceExports, 77);
-  assert.equal(sourceExports().length, 106);
+  assert.equal(sourceExports().length, 108);
   assert.deepEqual(manifest.sourceManifests, [
     'tools/staging/editor-release-manifest.mjs',
     'tools/access/deployment-manifest.json',
@@ -114,6 +114,13 @@ test('later exports belong to their feature manifests or documented quiz-trash/c
   }
   for (const name of ['restoreQuiz', 'trashQuiz']) assert(read('docs/archive/QUIZ_TRASH.md').includes('`' + name + '`'));
   assert(read('docs/archive/EVENT_MANAGEMENT.md').includes('completeEvent'));
+});
+
+test('score reset stays outside the frozen release and requires separate D1 approval', () => {
+  assert(laterFeatureExports.includes('resetEventScores'));
+  assert(!manifest.functions.includes('resetEventScores'));
+  assert(!access.functions.includes('resetEventScores'));
+  assert.match(access.unchangedExcluded.resetEventScores, /D1 transport\/IAM binding requires separate explicit owner approval before any deployment/u);
 });
 
 test('omitted legacy handlers, duplicates and accidental email activation fail the inventory contract', () => {

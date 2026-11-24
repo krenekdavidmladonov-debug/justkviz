@@ -2,6 +2,7 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { preflightImageObservationEpoch, preflightImageWidths, recordPreflightImageWidth } from '../apps/web/src/features/preflight/imageObservations';
 import { OfflinePreparationWizard } from '../apps/web/src/features/offline/OfflinePreparationWizard';
 import { checkOnlineOfflineEvent, observeOfflineIdentity } from '../apps/web/src/features/offline/offlineOnline';
 import { listOfflineSessions } from '../apps/web/src/features/offline/offlineStore';
@@ -70,11 +71,29 @@ test('reports actionable media errors without exposing diagnostic fields', async
 });
 
 test('removes an approved preflight when the current account changes', async () => {
+  recordPreflightImageWidth('https://example.test/private.png', 100, preflightImageObservationEpoch());
   await render();
   await act(async () => button('Pokračovat k balíčku')?.click());
   expect(container.querySelectorAll('input[type=password]')).toHaveLength(2);
   await act(async () => vi.mocked(observeOfflineIdentity).mock.calls[0]![0]());
   expect(container.querySelector('[role=alert]')?.textContent).toContain('Přihlášení se změnilo');
+  expect(preflightImageWidths().size).toBe(0);
   expect(container.querySelectorAll('input[type=password]')).toHaveLength(0);
   expect(button('Pokračovat k balíčku')).toBeUndefined();
+});
+
+test('shows advisory counts before package download without blocking continuation', async () => {
+  vi.mocked(checkOnlineOfflineEvent).mockResolvedValue({ ...result, expiresAtMs: Date.now() + 60_000, recommendations: {
+    media: { imageCount: 0, smallImageCount: 0, unknownImageCount: 0, offlineExcludedCount: 3, youtubeCount: 1, driveCount: 1, externalCount: 1, answerUrlCount: 1 },
+    imageSources: [], issues: [{ slidePosition: 1, field: 'questionImage', message: 'Adresa externího obrázku může napovídat správnou odpověď.' }],
+  } });
+  await render();
+  const recommendations = container.querySelector('[aria-label="Doporučení před offline balíčkem"]');
+  expect(recommendations?.textContent).toContain('YouTube 1, Google Drive 1, ostatní externí odkazy 1');
+  expect(recommendations?.textContent).toContain('může napovídat');
+  expect(container.querySelectorAll('input[type=password]')).toHaveLength(0);
+  expect(button('Pokračovat k balíčku')?.disabled).toBe(false);
+  await act(async () => button('Pokračovat k balíčku')?.click());
+  expect(container.querySelector('[aria-label="Doporučení před offline balíčkem"]')).not.toBeNull();
+  expect(container.querySelectorAll('input[type=password]')).toHaveLength(2);
 });

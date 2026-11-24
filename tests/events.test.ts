@@ -6,7 +6,6 @@ import {
   buildPublicEventProjection,
   canArchiveEvent,
   canCancelEvent,
-  canLockQuiz,
   canMutateEvent,
   defaultScoringConfiguration,
   validateEventCapacity,
@@ -234,6 +233,23 @@ describe('event configuration', () => {
     expect(() => requestedEventConfiguration({ event: { ...request.event, allowLegacyTeamSize: true } })).toThrow('teamSizeMax');
   });
 
+  test.each(['', '   ', 'x'.repeat(501), 'Praha\u202e 1'])('rejects missing or invalid public venue details before creating the event', async publicLocation => {
+    const event = { ...creationInput().event, venue: { ...validConfiguration.venue, publicLocation } };
+    await expect(invokeCreation({ expectedRevision: 0, event })).rejects.toMatchObject({ code: 'invalid-argument' });
+    expect(creation.writes).toEqual([]);
+  });
+
+  test.each(['2026-03-29T02:30', '2026-10-25T02:30', '2026-02-30T09:00:00Z', '2026-03-29T24:00:00Z'])('requires an explicit, valid instant for %s', startsAt => {
+    expect(() => requestedEventConfiguration({ event: { ...creationInput().event, startsAt } })).toThrow('Datum a čas');
+  });
+
+  test.each([
+    ['2026-10-25T02:30+02:00', '2026-10-25T00:30:00.000Z'],
+    ['2026-10-25T02:30:00+01:00', '2026-10-25T01:30:00.000Z'],
+  ])('retains the absolute instant of existing offset-bearing inputs %s', (startsAt, expected) => {
+    expect(requestedEventConfiguration({ event: { ...creationInput().event, startsAt } }).startsAt.toISOString()).toBe(expected);
+  });
+
   test('uses half-point integer units and dense ranking by default', () => {
     expect(defaultScoringConfiguration).toEqual({ unitScale: 2, rankingMode: 'dense', started: false });
   });
@@ -247,8 +263,6 @@ describe('event lifecycle', () => {
     expect(canCancelEvent('completed')).toBe(false);
     expect(canArchiveEvent('cancelled')).toBe(true);
     expect(canArchiveEvent('ready')).toBe(false);
-    expect(canLockQuiz('ready', false)).toBe(true);
-    expect(canLockQuiz('ready', true)).toBe(false);
   });
 });
 

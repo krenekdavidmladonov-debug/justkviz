@@ -23,6 +23,14 @@ export function transitionProblem(event: { disposition?: unknown; lifecycleStatu
   return 'Neplatná změna stavu.';
 }
 
+export function hasUnsupportedEventText(value: string, multiline = false): boolean {
+  if (multiline) return /\p{Cf}/u.test(value);
+  return [...value].some(character => {
+    const code = character.codePointAt(0)!;
+    return code <= 31 || code === 127 || (code >= 0x202a && code <= 0x202e) || (code >= 0x2066 && code <= 0x2069);
+  });
+}
+
 /** Display and parse wall time independently of the browser's time zone. Ambiguous DST requires an explicit offset choice. */
 export function pragueDateTime(date: Date): string {
   const parts = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(date);

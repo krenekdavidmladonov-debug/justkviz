@@ -21,6 +21,7 @@ export interface EventQuizAssignment {
 }
 
 export interface EventRecord {
+  readonly quizChangeState?: import('@filmovy-kviz/quiz-domain').EventQuizChangeState;
   readonly pricing?: EventPricing;
   readonly disposition?: 'active' | 'archived' | 'trash' | 'deleting';
   readonly description?: string;
@@ -42,7 +43,7 @@ export interface EventRecord {
   readonly registrationClosesAt?: Date;
   readonly registrationStatus: RegistrationStatus;
   readonly lifecycleStatus: EventLifecycleStatus;
-  readonly scoring: { readonly unitScale: 2; readonly rankingMode: 'dense'; readonly started: boolean };
+  readonly scoring: { readonly unitScale: 2; readonly rankingMode: 'dense'; readonly started: boolean; readonly epoch?: number };
   readonly revision: number;
   readonly quizAssignment?: EventQuizAssignment;
 }

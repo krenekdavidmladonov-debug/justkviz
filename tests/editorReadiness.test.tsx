@@ -432,6 +432,10 @@ it('private practice offers full original only after reveal and resets it on hid
 });
 
 it('debounces edits, hides stale results and checks only the newest complete working snapshot', async () => {
+  const intro: EditorSlide = { ...question('intro', 1), kind: 'intro', storedKind: 'intro', isQuestion: false,
+    roundId: undefined, roundTitle: undefined, title: 'Úvod kvízu', text: '', correctAnswer: '' };
+  vi.mocked(getEditorQuiz).mockResolvedValue({ ...quiz, slideCount: 3,
+    slides: [intro, ...quiz.slides.map(slide => ({ ...slide, position: slide.position + 1 }))] });
   await render();
   const calls = vi.mocked(runQuizPreflight).mock.calls.length;
   await act(async () => host.querySelector<HTMLButtonElement>('.readiness-chip')!.click());
@@ -446,7 +450,7 @@ it('debounces edits, hides stale results and checks only the newest complete wor
   expect(vi.mocked(runQuizPreflight).mock.calls).toHaveLength(calls);
   await advance(1);
   expect(vi.mocked(runQuizPreflight).mock.calls).toHaveLength(calls + 1);
-  expect(vi.mocked(runQuizPreflight).mock.lastCall?.[0].slides[0]?.text).toBe('Nejnovější zadání');
+  expect(vi.mocked(runQuizPreflight).mock.lastCall?.[0].slides.find(slide => slide.id === 'q1')?.text).toBe('Nejnovější zadání');
   expect(vi.mocked(runQuizPreflight).mock.lastCall?.[1]).toEqual({ source: 'LOCAL_DRAFT', hasUnsavedChanges: true });
   const result = vi.mocked(runQuizPreflight).mock.results.at(-1)?.value as ReturnType<typeof runQuizPreflight> | undefined;
   expect(result?.issues.map(issue => issue.code)).toEqual(['UNSAVED_CHANGES']);

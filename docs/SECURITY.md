@@ -4,7 +4,11 @@ Original image URLs are derived only from bound private import receipts. Answer
 image URLs retain explicit reveal and private editor permission checks; see
 [ORIGINAL_IMAGE_SOURCES.md](archive/ORIGINAL_IMAGE_SOURCES.md).
 
-Media conditional reads and bounded browser retention preserve fresh authorization;
+Media network reads preserve current authorization. Exact pinned image URLs may
+reuse previously delivered bytes from a private HTTP cache in the same access
+namespace; logout/membership invalidation rotates that namespace, but already
+downloaded bytes cannot be remotely erased. Public prompt lookahead excludes all
+answer-associated media across the source;
 see [MEDIA_PLAYBACK_REVALIDATION.md](archive/MEDIA_PLAYBACK_REVALIDATION.md).
 
 ## Private Drive media extension
@@ -46,6 +50,8 @@ The local demo image backup reauthorizes the exact currently published image in 
 5. Sensitive state changes are validated and authorized server-side.
 6. Firestore and Storage start deny-by-default; access is added narrowly and tested in emulators.
 7. Production access and deployment require explicit user approval.
+
+The six evening endpoints `createEventLiveSession`, `previewInterimResults`, `generatePrintArtifact`, `readRefereeEvent`, `revealAnswer` and `saveEventScore` also accept a public health ping containing exactly the plain JSON object `{ "warmup": true }` (inside callable `data`, or the print endpoint's POST JSON body). Only that singleton receives the constant `{ "warmup": true }` response before identity checks, event reads, referee throttling or business IO; it carries no event identifier, answer, capability or private data and performs no database, receipt, rate-limit, PDF or media operation. Every other payload retains the existing validation and authorization path. The moderator page sends these bounded pings once per page lifetime; the event detail permits an explicit retry. No `minInstances` is configured, and a successful ping does not guarantee that a cloud instance stays warm. Emulator first/repeated invocation measurements are local evidence only.
 
 ## Preventing answer leakage
 
@@ -254,4 +260,36 @@ See [EVENT_MANAGEMENT.md](archive/EVENT_MANAGEMENT.md) for the independent dispo
 
 Optional quiz review separates editorial completeness from authority. Root draft/ready status and question authoring status grant no access. Live creation and event locking accept saved editorial drafts and missing answers; they still require current scoped permission checks and valid ordered visible sources. Event locking retains exact revision, immutable copy and ready owned-asset checks. Public answer allowlists and explicit reveal are unchanged; readiness summaries stay private.
 
-Manual completeEvent requires current active event.manage and event scope on each invocation/transaction attempt; explicit endLive additionally requires event.live. Active sessions require that explicit closure intent. Presentation END authorizes only a session mutation and never completes or unpublishes its event. Explicit slide jumps during results clear answer/media/overlay intent and rebuild the existing public allowlist from the current bound snapshot. No client input can supply public answer or result rows.
+Manual completeEvent requires current active event.manage and event scope on each invocation/transaction attempt; explicit endLive additionally requires event.live. Active sessions require that explicit closure intent. Bare presentation END closes its session and atomically releases the active event pointer without completing the event. The moderator UI ends the presentation with event.live alone. It separately offers explicit completeEvent only to staff with current event.manage; other moderators see that an administrator completes the event. Explicit completion requires both current event.live and event.manage with event scope on invocation and every transaction attempt. It validates the current liveSessionId/snapshot binding, atomically ends all event sessions, marks the event completed, closes and unpublishes registrations, increments the capability cutoff, and retains scores and confirmed private versions. Duplicate completion replays require current permissions, the unchanged binding and the completed session revision or its immediate predecessor; they do not mutate history again. Explicit slide jumps during results clear answer/media/overlay intent and rebuild the existing public allowlist from the current bound snapshot. No client input can supply public answer or result rows.
+
+### Quiz version and score reset boundary
+
+resetEventScores requires fresh identity and current scoped event.manage plus
+event.score on every transaction attempt, exact confirm: SMAZAT, event revision
+and an actor-bound request ID. It refuses terminal/disposed events and every
+active event session. All score/history deletes, generation/start state, audit
+and receipt commit together; a retry never deletes scores written after that
+reset. Orphan history parents are discovered only under the authorized event.
+
+lockEventQuiz reuses the same transactional score deletion for explicit discard;
+that option additionally requires event.score and SMAZAT. Preservation requires
+identical round IDs/question counts and retains the original history. An active
+session which has shown a question blocks relock even after returning to intro.
+Closing an unplayed session during relock requires explicit closeUnplayedSession
+and current scoped event.live. Ended historical pointers need no data migration.
+
+Both staff and referee score writes compare the caller's pinned scoringEpoch
+before receipt replay, including previously empty cells. Referee credential and
+issuer authority rules are otherwise unchanged. UI keeps old drafts disabled
+after generation changes rather than assigning a new epoch to stale values.
+Offline exports compare their server-pinned generation before receipt replay or
+explicit conflict resolution. Rules continue to deny all direct event, score,
+history and audit writes. The new endpoint needs separate concrete D1 approval;
+this source change performs no IAM, production-data or deployment operation.
+
+A private lastEndedSessionId bridges presentation END to later explicit event
+completion. It is not an active pointer or a capability. Completion validates
+the exact event/snapshot/ended-session binding in the same transaction before
+restoring it as terminal historical authority; it never chooses an arbitrary
+session. Reset and relock clear the hint, preventing old finals from surviving
+a scoring generation change.

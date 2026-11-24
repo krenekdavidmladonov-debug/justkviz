@@ -7,7 +7,7 @@ const cli = (name) => require(`firebase-tools/lib/${name}`);
 // Reuse the operator's Firebase CLI OAuth session in memory; never export a key.
 export async function stagingClient(origin, version) {
   assertStagingProject(STAGING_PROJECT);
-  if (!['https://firebase.googleapis.com', 'https://identitytoolkit.googleapis.com', 'https://firestore.googleapis.com', 'https://firebasehosting.googleapis.com'].includes(origin)) {
+  if (!['https://firebase.googleapis.com', 'https://identitytoolkit.googleapis.com', 'https://firestore.googleapis.com', 'https://firebasehosting.googleapis.com', 'https://cloudfunctions.googleapis.com'].includes(origin)) {
     throw new Error('Cloud API origin is not allowlisted.');
   }
   const account = cli('auth').getGlobalDefaultAccount();

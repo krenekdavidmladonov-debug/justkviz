@@ -41,10 +41,14 @@ export function deploymentConfig(hosting, withRules, withStorageRules) {
   return config;
 }
 
-function childEnv() {
-  return Object.fromEntries(Object.entries(process.env).filter(([key]) =>
+export function childEnv(source = process.env, nodeDir = path.dirname(process.execPath)) {
+  const env = Object.fromEntries(Object.entries(source).filter(([key]) =>
     !/^(VITE_|NODE_ENV$|NODE_OPTIONS$|NODE_PATH$|FIREBASE_.*(?:_URL|_ORIGIN|_HOST)$)/iu.test(key) &&
     !/_EMULATOR_HOST$/iu.test(key)));
+  // firebase-tools spouští při analýze Functions příkaz `node`; D1 běží přes .tools\node22 mimo PATH.
+  const key = Object.keys(env).find(name => name.toUpperCase() === 'PATH') ?? 'PATH';
+  env[key] = nodeDir + path.delimiter + (env[key] ?? '');
+  return env;
 }
 
 function webEnvironment(sdk, env) {
@@ -114,6 +118,17 @@ async function packageFunctions(source, directory, cliRequire) {
     archive.finalize().catch(reject);
   });
   return zip;
+}
+
+// CLI vytváří pouze chybějící exporty ze stejného balíčku, ze kterého vznikl functions.zip.
+export function prepareFunctionCreation(artifact, execute = run) {
+  const bundle = path.join(artifact.directory, 'functions');
+  const npm = path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
+  execute(process.execPath, [npm, 'ci', '--omit=dev', '--ignore-scripts', '--no-audit', '--no-fund'], bundle, artifact.env);
+  const configPath = path.join(artifact.source, artifact.configName);
+  const config = readJson(configPath);
+  config.functions = { source: bundle, codebase: 'default', runtime: 'nodejs22' };
+  writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
 
 export async function prepareArtifact(root, head, sdk, { withFunctions, withRules, withStorageRules }) {

@@ -16,6 +16,8 @@ function AdminEventScoringEvent({ eventId }: { readonly eventId: string }) {
   const [snapshotId, setSnapshotId] = useState<string | null>(null);
   const [liveSnapshotId, setLiveSnapshotId] = useState<string | null>(null);
   const [title, setTitle] = useState('');
+  const [scoringEpoch, setScoringEpoch] = useState<number | null>(null);
+  const [liveScoringEpoch, setLiveScoringEpoch] = useState(0);
   const [allowed, setAllowed] = useState(false);
   const [eventLoaded, setEventLoaded] = useState(false);
   const [rounds, setRounds] = useState<ScoreRound[]>([]);
@@ -44,7 +46,8 @@ function AdminEventScoringEvent({ eventId }: { readonly eventId: string }) {
   }, [hasDirty, pending]);
   useEffect(() => {
     const fail = () => setError('Aktuální data se nepodařilo načíst. Obnovte stránku; rozepsané body si nejprve zkontrolujte.');
-    const stopEvent = watchScoringEvent(eventId, (id, canWrite, eventTitle = '') => {
+    const stopEvent = watchScoringEvent(eventId, (id, canWrite, eventTitle = '', epoch = 0) => {
+      setScoringEpoch(previous => previous ?? epoch); setLiveScoringEpoch(epoch);
       setTitle(eventTitle);
       setSnapshotId(previous => previous ?? id); setLiveSnapshotId(id); setAllowed(canWrite); setEventLoaded(true);
     }, fail);
@@ -61,12 +64,14 @@ function AdminEventScoringEvent({ eventId }: { readonly eventId: string }) {
   }, [snapshotId]);
   const round = rounds.find(item => item.id === roundId);
   const snapshotChanged = snapshotId !== liveSnapshotId;
+  const scoringReset = scoringEpoch !== null && scoringEpoch !== liveScoringEpoch;
   return <article className="event-detail-page">
     <Link className="back-link" to={'/admin/events/' + eventId}>← Zpět na detail akce</Link>
     <header className="event-page-heading"><div><p className="eyebrow">Interní zápis</p><h1>Bodování</h1><p className="event-muted">{title}</p><p className="lead">Vyberte kolo, zapište body všem týmům a uložte celé kolo.</p></div></header>
     {!eventLoaded && !error && <p>Načítám bodování akce…</p>}
     {error && <p role="alert" className="round-editor-error">{error}</p>}
     {eventLoaded && !allowed && <p role="status">V tomto stavu akce nelze zapisovat body.</p>}
+    {scoringReset && <p role="alert">Body akce byly smazány. Staré rozepsané body nelze uložit. Zkontrolujte je a obnovte stránku.</p>}
     {snapshotChanged && <p role="alert">Připravený kvíz akce se změnil. Zkontrolujte rozepsané hodnoty a obnovte stránku.</p>}
     {eventLoaded && !snapshotId && <p>Nejprve připravte kvíz v detailu akce.</p>}
     {snapshotId && <section className="event-section">
@@ -77,9 +82,9 @@ function AdminEventScoringEvent({ eventId }: { readonly eventId: string }) {
       }}>{rounds.map(round => <option key={round.id} value={round.id}>{round.title}</option>)}</select></label>
       <p className="event-muted">Povoleny jsou půlbody, například 0; 2,5 nebo 2.5. Prázdné pole uložené body nemaže.</p>
       {!scoresLoaded ? <p>Načítám uložené body…</p> : roundId && <RoundScoreForm
-        key={JSON.stringify([eventId, snapshotId, roundId])} eventId={eventId} snapshotId={snapshotId} roundId={roundId} roundTitle={round?.title ?? 'Kolo'} questionCount={round?.questionCount}
+        key={JSON.stringify([eventId, snapshotId, roundId])} eventId={eventId} snapshotId={snapshotId} scoringEpoch={scoringEpoch ?? 0} roundId={roundId} roundTitle={round?.title ?? 'Kolo'} questionCount={round?.questionCount}
         teams={teams} scores={Object.fromEntries(teams.map(team => [team.id, scores[JSON.stringify([team.id, roundId])] ?? emptyScore]))}
-        disabled={!can('event.score') || !allowed || snapshotChanged || !!error} onDirty={onDirty} onPending={onPending}
+        disabled={!can('event.score') || !allowed || snapshotChanged || scoringReset || !!error} onDirty={onDirty} onPending={onPending}
       />}
       {scoresLoaded && !teams.some(team => team.accepted) && <p>Akce zatím nemá přijaté týmy.</p>}
     </section>}

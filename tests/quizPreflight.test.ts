@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'vitest';
 
 import type { EditorQuiz, EditorSlide } from '../apps/web/src/features/editor/types';
-import { runQuizPreflight } from '../apps/web/src/features/preflight/validation';
+import { preflightVisibleQuiz, runQuizPreflight } from '../apps/web/src/features/preflight/validation';
 
 function slide(values: Partial<EditorSlide> = {}): EditorSlide {
   return {
@@ -15,20 +15,24 @@ function slide(values: Partial<EditorSlide> = {}): EditorSlide {
   };
 }
 
-function quiz(slides: readonly EditorSlide[] = [slide()]): EditorQuiz {
+function quiz(slides: readonly EditorSlide[] = [slide()], includeIntro = true): EditorQuiz {
+  const orderedSlides = includeIntro ? [slide({ id: 'quiz-intro', position: 1, kind: 'intro', storedKind: 'intro',
+    isQuestion: false, roundId: undefined, roundTitle: undefined, title: 'Úvod kvízu', text: '', correctAnswer: '' }),
+  ...slides.map(item => ({ ...item, position: item.position + 1 }))] : slides;
   return {
     id: 'synthetic-quiz', title: 'Syntetický kvíz', description: '', revision: 0,
-    slideCount: slides.length, questionCount: slides.filter((item) => item.isQuestion).length,
-    roundCount: 1, slides,
+    slideCount: orderedSlides.length, questionCount: orderedSlides.filter((item) => item.isQuestion).length,
+    roundCount: 1, slides: orderedSlides,
   };
 }
 
 const codes = (value: ReturnType<typeof runQuizPreflight>) => value.issues.map((issue) => issue.code);
 
 describe('whole-quiz preflight', () => {
-  test('valid free question is ready', () => {
+  test('valid free question with a quiz intro is ready without warnings', () => {
     const result = runQuizPreflight(quiz());
     expect(result.status).toBe('READY');
+    expect(result.warningCount).toBe(0);
     expect(result.blockerCount).toBe(0);
     expect(result.validAnswerCount).toBe(1);
   });
@@ -111,6 +115,21 @@ describe('whole-quiz preflight', () => {
     expect(runQuizPreflight(quiz([roundHeader, question, recap])).status).toBe('READY');
   });
 
+  test('a visible quiz intro clears the warning, while a hidden or round intro does not', () => {
+    const intro = slide({ id: 'intro', position: 1, kind: 'intro', storedKind: 'intro',
+      isQuestion: false, roundId: undefined, roundTitle: undefined, correctAnswer: '' });
+    expect(runQuizPreflight(quiz([intro, slide({ position: 2 })], false)).status).toBe('READY');
+    for (const other of [{ ...intro, hidden: true }, { ...intro, roundId: 'round-1' }, { ...intro, isQuestion: true }]) {
+      expect(codes(runQuizPreflight(quiz([other, slide({ position: 2 })], false)))).toContain('QUIZ_INTRO_MISSING');
+    }
+  });
+
+  test('an otherwise ready quiz without an intro gets the dedicated warning', () => {
+    const result = runQuizPreflight(quiz([slide()], false));
+    expect(result.status).toBe('READY_WITH_WARNINGS');
+    expect(result.issues).toEqual([expect.objectContaining({ code: 'QUIZ_INTRO_MISSING', severity: 'WARNING' })]);
+  });
+
   test('online media uncertainty is a warning rather than a blocker', () => {
     const question = slide({ kind: 'video', storedKind: 'video', mediaSource: 'abcdefghijk', clipStartSeconds: 0, clipEndSeconds: 10 });
     const result = runQuizPreflight(quiz([question]));
@@ -143,4 +162,84 @@ describe('whole-quiz preflight', () => {
     expect(serialized).not.toContain('PRIVATE-SENTINEL-NOTE');
     expect(serialized).not.toContain('legacy.raw');
   });
+});
+
+describe('advisory media readiness', () => {
+  test('uses strictly width <800 and keeps unknown dimensions distinct', () => {
+    const a = 'https://example.test/one.png', b = 'https://example.test/two.png', c = 'https://example.test/three.png';
+    const value = quiz([slide({ questionImage: a, answerImage: b, backgroundImage: c })]);
+    const unknown = runQuizPreflight(value);
+    expect(unknown.media).toMatchObject({ imageCount: 3, unknownImageCount: 3, smallImageCount: 0 });
+    const checked = runQuizPreflight(value, { imageWidths: new Map([[a, 799], [b, 800], [c, 0]]) });
+    expect(checked.media).toMatchObject({ imageCount: 3, unknownImageCount: 1, smallImageCount: 1 });
+    expect(checked.issues.filter(issue => issue.code === 'IMAGE_WIDTH_SMALL')).toHaveLength(1);
+    expect(checked.blockerCount).toBe(0);
+    expect(checked.status).toBe('READY_WITH_WARNINGS');
+  });
+
+  test('deduplicates actual sources and distinguishes YouTube, Drive, external and owned provenance', () => {
+    const image = 'https://example.test/image.png', drive = 'https://drive.google.com/file/d/synthetic/view';
+    const owned = 'quiz-asset:synthetic-quiz/' + 'a'.repeat(64);
+    const value = quiz([slide({ questionImage: image, backgroundImage: image, answerImage: drive,
+      kind: 'video', storedKind: 'video', mediaSource: 'abcdefghijk', clipStartSeconds: 0, clipEndSeconds: 2,
+      originalMediaSource: 'https://youtube.com/watch?v=provenance0', media: [{ role: 'prompt', kind: 'image', source: owned }] })]);
+    const result = runQuizPreflight(value);
+    expect(result.media).toMatchObject({ imageCount: 3, offlineExcludedCount: 3, youtubeCount: 1, driveCount: 1, externalCount: 1 });
+    const driveOwned = runQuizPreflight(value, { offlineExcludedReferences: new Set([owned]) });
+    expect(driveOwned.media).toMatchObject({ offlineExcludedCount: 4, driveCount: 2 });
+    expect(result.issues.filter(issue => issue.code === 'MEDIA_NOT_OFFLINE')).toHaveLength(3);
+    expect(result.blockerCount).toBe(0);
+  });
+
+  test.each([
+    ['https://example.test/%C5%BDelva-velk%C3%A1.png', 'Želva', true],
+    ['https://example.test/%25C5%25BDelva.png', 'Želva', true],
+    ['https://example.test/ZELVA.png?bad=%ZZ', 'Želva', true],
+    ['https://example.test/zelvami.png', 'Želva', false],
+    ['https://example.test/a-v-ve.png', 'A v', false],
+    ['https://example.test/portrait.png?name=%C5%BDelva', 'Želva', true],
+    ['https://example.test/c%CC%8Cap.png', 'Čáp', true],
+    ['https://example.test/uk.png', 'UK', true],
+  ])('URL token check %s uses Unicode whole words without echoing private evidence', (url, answer, warns) => {
+    const result = runQuizPreflight(quiz([slide({ questionImage: url, correctAnswer: answer })]));
+    const hints = result.issues.filter(issue => issue.code === 'IMAGE_URL_ANSWER_HINT');
+    expect(hints.length > 0).toBe(warns);
+    expect(JSON.stringify(hints)).not.toContain(url);
+    if (warns) expect(JSON.stringify(hints)).not.toContain(answer);
+  });
+
+  test('resolves a choice letter to the answer option, and redacted answers cannot create hints', () => {
+    const value = slide({ kind: 'question', options: ['Želva', 'Čáp'], correctAnswer: 'B', questionImage: 'https://example.test/cap.png' });
+    expect(codes(runQuizPreflight(quiz([value])))).toContain('IMAGE_URL_ANSWER_HINT');
+    expect(codes(runQuizPreflight(quiz([{ ...value, correctAnswer: '' }])))).not.toContain('IMAGE_URL_ANSWER_HINT');
+  });
+
+  test('never mutates the source quiz while deriving advice', () => {
+    const value = quiz([slide({ questionImage: 'https://example.test/synthetic.png' })]);
+    const before = JSON.stringify(value);
+    runQuizPreflight(value, { imageWidths: new Map([[value.slides[0]!.questionImage, 100]]) });
+    expect(JSON.stringify(value)).toBe(before);
+  });
+});
+
+test('image advice follows effective inherited designs instead of counting overridden defaults', () => {
+  const old = 'https://example.test/unused.png', current = 'https://example.test/current.png';
+  const value = { ...quiz([slide({ design: { backgroundImage: current } })], false), defaultDesign: { backgroundImage: old } };
+  const result = runQuizPreflight(value);
+  expect(result.media).toMatchObject({ imageCount: 1, externalCount: 1 });
+});
+
+
+test('current answer authority hides previously loaded answer media and URL evidence', () => {
+  const source = quiz([slide({ questionImage: 'https://example.test/zelva.png', correctAnswer: 'Želva', answerImage: 'https://example.test/private.png',
+    answerDesign: { backgroundImage: 'https://example.test/answer-design.png' },
+    media: [{ role: 'answer', kind: 'image', source: 'https://example.test/answer-role.png' }] })], false);
+  const visible = preflightVisibleQuiz(source, false);
+  expect(visible.slides[0]?.answerImage).toBe('');
+  expect(visible.slides[0]?.answerDesign).toBeUndefined();
+  expect(visible.slides[0]?.media).toHaveLength(0);
+  expect(visible.slides[0]?.correctAnswer).toBe('');
+  expect(codes(runQuizPreflight(visible))).not.toContain('IMAGE_URL_ANSWER_HINT');
+  expect(runQuizPreflight(visible).media?.imageCount).toBe(1);
+  expect(source.slides[0]?.correctAnswer).toBe('Želva');
 });

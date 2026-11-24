@@ -10,13 +10,21 @@ function callable(name: string, timeout?: number) {
   return httpsCallable<Record<string, unknown>, EditorMutationResponse>(getFirebaseServices().functions, name, timeout === undefined ? undefined : { timeout });
 }
 
+function compatibleSlideDesign(design: SlideDesign): SlideDesign {
+  // D1 leaves the custom-build slide callables on c8c83c3. Quiz defaultDesign
+  // uses the updated metadata callable and must retain projectorAnimations.
+  const { projectorAnimations, ...compatible } = design;
+  void projectorAnimations;
+  return compatible;
+}
+
 function slidePayload(slide: EditorSlide) {
   return {
     kind: slide.kind,
     ...(slide.resetAppearance === true ? { resetAppearance: true } : {}),
     ...(slide.hidden === undefined ? {} : { hidden: slide.hidden }),
-    ...(slide.design === undefined ? {} : { design: slide.design }),
-    ...(slide.answerDesign === undefined ? {} : { answerDesign: slide.answerDesign }),
+    ...(slide.design === undefined ? {} : { design: compatibleSlideDesign(slide.design) }),
+    ...(slide.answerDesign === undefined ? {} : { answerDesign: compatibleSlideDesign(slide.answerDesign) }),
     ...(slide.automaticAgenda === undefined ? {} : { automaticAgenda: slide.automaticAgenda }),
     ...(slide.authoringStatus === undefined ? {} : { authoringStatus: slide.authoringStatus }),
     ...(slide.answerMode === undefined ? {} : { answerMode: slide.answerMode }),

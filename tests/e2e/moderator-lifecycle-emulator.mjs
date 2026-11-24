@@ -32,12 +32,16 @@ try {
   await f.db.doc('sessions/' + otherId).set({ ...session, sessionId: otherId });
   const before = await event(), publicBefore = (await publicEventRef.get()).data();
   await f.call('endLiveSession', { sessionId: f.sessionId, expectedRevision: session.revision });
-  assert.deepEqual(await event(), before); assert.deepEqual((await publicEventRef.get()).data(), publicBefore);
+  const endedEvent = await event();
+  assert.equal(endedEvent.lastEndedSessionId, f.sessionId);
+  assert.equal(endedEvent.liveSessionId, undefined); assert.equal(endedEvent.revision, before.revision + 1);
+  for (const key of ['lifecycleStatus', 'registrationStatus', 'registrationPublished', 'quizAssignment', 'scoring']) assert.deepEqual(endedEvent[key], before[key]);
+  assert.deepEqual((await publicEventRef.get()).data(), publicBefore);
   assert.equal((await f.db.doc('sessions/' + otherId).get()).get('status'), 'active');
   assert.equal((await f.rawPublic()).status, 'ended');
   assert.deepEqual((await versionRef.get()).data(), version);
   await f.score(0, 0, 21); // Ending one presentation leaves scoring operational.
-  const restarted = await f.admin.call('createEventLiveSession', { eventId: f.eventId, expectedRevision: before.revision });
+  const restarted = await f.admin.call('createEventLiveSession', { eventId: f.eventId, expectedRevision: (await event()).revision });
   assert.notEqual(restarted.sessionId, f.sessionId);
   await f.admin.call('goToSlide', { sessionId: restarted.sessionId, expectedRevision: 0, position: 1 });
   const restartedPreview = await f.admin.call('previewFinalResults', { eventId: f.eventId, sessionId: restarted.sessionId });
@@ -153,3 +157,27 @@ try {
   assert.equal((await cancelled.rawPublic()).finalReveal, undefined);
   console.log('PASS cancellation/trash/restore: outcome stays cancelled, confirmed private identity retained, live event pointer cleared, publication neutral and resume rejected.');
 } finally { await cancelled.close(); }
+
+// Reset must not reuse a previous generation's confirmed finals at later completion.
+const resetFinals = await finalFixture(2);
+try {
+  await resetFinals.startFinal(await resetFinals.previewFinal());
+  const confirmed = await resetFinals.session(), ref = resetFinals.db.doc('events/' + resetFinals.eventId);
+  const versionRef = resetFinals.db.doc('sessions/' + resetFinals.sessionId + '/finalVersions/' + confirmed.finalReveal.versionId);
+  const version = (await versionRef.get()).data();
+  await resetFinals.call('endLiveSession', { sessionId: resetFinals.sessionId, expectedRevision: confirmed.revision });
+  const ended = (await ref.get()).data();
+  assert.equal(ended.liveSessionId, undefined); assert.equal(ended.lastEndedSessionId, resetFinals.sessionId);
+  await ref.update({ lastEndedSessionId: 'synthetic-missing-ended-session' });
+  await denied(resetFinals.admin.call('completeEvent', { eventId: resetFinals.eventId, expectedRevision: ended.revision, requestId: randomUUID() }), 'failed-precondition');
+  assert.equal((await ref.get()).get('lifecycleStatus'), ended.lifecycleStatus);
+  await ref.set(ended);
+  await resetFinals.admin.call('resetEventScores', { eventId: resetFinals.eventId, expectedRevision: ended.revision, requestId: randomUUID(), confirm: 'SMAZAT' });
+  const reset = (await ref.get()).data();
+  assert.equal(reset.lastEndedSessionId, undefined); assert.equal(reset.liveSessionId, undefined); assert.equal(reset.scoring.epoch, 1);
+  const completed = await resetFinals.admin.call('completeEvent', { eventId: resetFinals.eventId, expectedRevision: reset.revision, requestId: randomUUID() });
+  assert.equal((await ref.get()).get('liveSessionId'), undefined);
+  await denied(resetFinals.admin.call('configurePublicEventResults', { eventId: resetFinals.eventId, expectedRevision: completed.revision, published: true }), 'failed-precondition');
+  assert.deepEqual((await versionRef.get()).data(), version);
+  console.log('PASS completion after reset: validated history hint, reset clears old final authority, old private version retained without resurrection.');
+} finally { await resetFinals.close(); }

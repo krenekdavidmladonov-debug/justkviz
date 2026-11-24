@@ -214,7 +214,7 @@ test('missing public location is marked, focused and scrolled into view at 375px
   expect(await page.evaluate(() => window.uxCalls)).toEqual([]);
   await expect(location).toBeFocused();
   await expect(location).toHaveAttribute('aria-invalid', 'true');
-  await expect(location.locator('..').getByRole('alert')).toHaveText('Vyplňte toto pole.');
+  await expect(location.locator('..').getByRole('alert')).toHaveText('Vyplňte upřesnění místa.');
   const bounds = await location.boundingBox();
   expect(bounds).not.toBeNull(); expect(bounds!.y).toBeGreaterThanOrEqual(0);
   expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(667);

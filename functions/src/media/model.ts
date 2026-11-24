@@ -39,6 +39,9 @@ export function mediaByteRange(header: string | undefined, size: number): { star
 // Exact current publication only: ordinary AUDIO has no public source; unrevealed answer is absent.
 export function publicMediaAllowed(publication: Record<string, unknown> | undefined, reference: string, kind?: string): boolean {
   if (!publication || publication.status !== 'active') return false;
+  if ((kind === undefined || kind === 'image') && publication.presentationMode === 'slide' && publication.answerRevealed !== true
+    && !publication.interimResults && !publication.finalReveal && Array.isArray(publication.upcomingImages)
+    && publication.upcomingImages.length <= 9 && publication.upcomingImages.includes(reference)) return true;
   const design = normalizeSlideDesign(publication.design);
   if ((kind === undefined || kind === 'image') && [design.backgroundImage, design.logoImage].includes(reference)) return true;
   if (publication.interimResults && publication.interimBackdrop && (kind === undefined || kind === 'image')) {

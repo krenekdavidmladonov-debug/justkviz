@@ -1,0 +1,65 @@
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { collection, doc, getDocFromServer, getDocsFromServer, setDoc } from 'firebase/firestore';
+import { finalFixture } from './final-reveal-fixture.mjs';
+
+const f = await finalFixture(4), publicPath = 'publicEventResults/' + f.eventId;
+const event = async () => (await f.db.doc('events/' + f.eventId).get()).data();
+const configure = async (published, client = f.admin, extra = {}) => client.call('configurePublicEventResults', { eventId:f.eventId, expectedRevision:(await event()).revision, published, ...extra });
+const denied = (promise, code) => assert.rejects(promise, error => error.code === 'functions/' + code);
+const noPublic = () => assert.rejects(getDocFromServer(doc(f.anonymous.store, publicPath)), error => error.code === 'permission-denied');
+try {
+  await noPublic();
+  await denied(configure(true, f.anonymous), 'unauthenticated');
+  await denied(configure(true, f.moderator), 'permission-denied');
+  await denied(configure(true), 'failed-precondition');
+  const member = f.db.doc('memberships/' + f.admin.uid), original = (await member.get()).data();
+  await member.update({ events:{ mode:'none', ids:[] } });
+  await denied(configure(true), 'permission-denied'); await member.set(original);
+  await member.update({ status:'suspended' }); await denied(configure(true), 'permission-denied'); await member.set(original);
+  for (let i=0;i<2;i++) for (let round=0;round<3;round++) await f.score(i, round, 22);
+  const preview = await f.previewFinal(); await f.startFinal(preview);
+  // Confirmed whole result is independent of what was actually revealed on the projector.
+  await f.command('reveal');
+  await denied(configure(true), 'failed-precondition');
+  await f.admin.call('completeEvent', { eventId:f.eventId, expectedRevision:(await event()).revision, requestId:randomUUID(), endLive:true });
+  await noPublic();
+  const confirmedReveal = (await f.session()).finalReveal;
+  await f.db.doc('sessions/' + f.sessionId).update({ finalReveal:null });
+  await denied(configure(true), 'failed-precondition'); await noPublic();
+  await f.db.doc('sessions/' + f.sessionId).update({ finalReveal:confirmedReveal });
+  const versionRef = f.db.doc(`sessions/${f.sessionId}/finalVersions/${confirmedReveal.versionId}`), confirmedVersion = (await versionRef.get()).data();
+  await versionRef.update({ snapshotId:'another-snapshot' });
+  await denied(configure(true), 'failed-precondition'); await noPublic(); await versionRef.set(confirmedVersion);
+  const revision = (await event()).revision;
+  await denied(configure(true, f.admin, { expectedRevision:revision-1 }), 'aborted');
+  await denied(configure(true, f.admin, { rows:preview.rows }), 'invalid-argument');
+  await configure(true);
+  const projection = (await getDocFromServer(doc(f.anonymous.store, publicPath))).data();
+  assert.deepEqual(projection.rows, preview.rows);
+  assert.deepEqual(projection.rows.slice(0,2).map(row => row.rank), [1,1]);
+  assert.deepEqual(Object.keys(projection).sort(), ['eventId','title','startsAt','timeZone','venueName','publicLocation','lifecycleStatus','rows'].sort());
+  for (const secret of ['PRIVATE', ...f.teamIds, f.snapshotId, f.sessionId]) assert(!JSON.stringify(projection).includes(secret));
+  await assert.rejects(getDocsFromServer(collection(f.anonymous.store, 'publicEventResults')), error => error.code === 'permission-denied');
+  await assert.rejects(setDoc(doc(f.anonymous.store, publicPath), projection), error => error.code === 'permission-denied');
+  for (const path of ['events/'+f.eventId, 'sessions/'+f.sessionId, `sessions/${f.sessionId}/finalVersions/${(await f.session()).finalReveal.versionId}`]) await assert.rejects(getDocFromServer(doc(f.anonymous.store, path)), error => error.code === 'permission-denied');
+  await f.db.doc(`events/${f.eventId}/registrations/${f.teamIds[0]}`).update({ teamName:'Later private rename' });
+  await configure(true); assert.deepEqual((await f.db.doc(publicPath).get()).data().rows, preview.rows);
+  await configure(false); await noPublic(); assert.equal((await f.db.doc(publicPath).get()).exists, false);
+  await configure(true);
+  await f.admin.call('configureEventRegistration', { eventId:f.eventId, expectedRevision:(await event()).revision, published:false });
+  await noPublic(); assert.equal((await f.db.doc(publicPath).get()).exists, false);
+  await configure(true);
+  await f.admin.call('archiveEvent', { eventId:f.eventId, expectedRevision:(await event()).revision, requestId:randomUUID() });
+  await noPublic(); await denied(configure(true), 'failed-precondition');
+  await f.admin.call('restoreEvent', { eventId:f.eventId, expectedRevision:(await event()).revision, action:'unarchive', requestId:randomUUID() });
+  await noPublic(); await configure(true);
+  await f.admin.call('trashEvent', { eventId:f.eventId, expectedRevision:(await event()).revision, requestId:randomUUID() });
+  await noPublic(); assert.equal((await f.db.doc(publicPath).get()).exists, false);
+  // A stale safe document injected only by this demo fixture must also be removed by permanent deletion.
+  await f.db.doc(publicPath).set({ ...projection, startsAt:(await f.db.doc('events/'+f.eventId).get()).get('startsAt') });
+  await f.admin.call('deleteEvent', { eventId:f.eventId, expectedRevision:(await event()).revision, confirmTitle:(await event()).title });
+  assert.equal((await f.db.doc(publicPath).get()).exists, false);
+  assert.equal((await f.db.doc('events/'+f.eventId).get()).exists, false);
+  console.log('PASS: explicit final publication, whole confirmed tied order, private-source denial, current membership/scope/revision and atomic hide/archive/trash invalidation.');
+} finally { await f.close(); }

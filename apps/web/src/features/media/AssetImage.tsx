@@ -1,3 +1,4 @@
+import { preflightImageObservationEpoch, recordPreflightImageWidth } from '../preflight/imageObservations';
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { SnapshotMediaContext } from './SnapshotMediaContext';
 import { isSafeHttpUrl, parseQuizAsset } from '@filmovy-kviz/quiz-domain';
@@ -47,6 +48,7 @@ export function AssetImage(props: AssetImageProps) {
 function ResolvedAssetImage({
   source, alt, sessionId, diagnosticGeneration, onDiagnostic, onDiagnosticResolved, onTiming, mediaRole, pilot,
 }: AssetImageProps & { pilot: ProjectorImagePilot | undefined }) {
+  const observationEpoch = useRef(preflightImageObservationEpoch());
   const snapshotId = useContext(SnapshotMediaContext);
   const offline = useContext(OfflineMediaContext);
   const imageState = pilot?.kind === 'multi-image' ? pilot.state : null;
@@ -155,6 +157,7 @@ function ResolvedAssetImage({
     data-role={mediaRole} data-local-media-source={mediaRole ? loaded?.mediaSource ?? 'online' : undefined}
     onLoad={() => {
       if (owned && (!request.current || request.current.signal.aborted)) return;
+      if (!sessionId && !offline && image.current) recordPreflightImageWidth(source, image.current.naturalWidth, observationEpoch.current);
       window.clearTimeout(slowTimer.current);
       resolveDiagnostic();
       onTiming?.('image-ready');

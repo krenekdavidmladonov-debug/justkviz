@@ -1,4 +1,6 @@
-import { eventDisposition, eventOperational, pragueDateTime } from '@filmovy-kviz/quiz-domain';
+import { EventQuizChangeDialog } from '../../features/events/EventQuizChangeDialog';
+import { ResetEventScoresAction } from '../../features/events/ResetEventScoresAction';
+import { eventQuizMutationProblem, eventDisposition, eventOperational, pragueDateTime } from '@filmovy-kviz/quiz-domain';
 import { EventActions, lifecycleLabels } from '../../features/events/EventActions';
 import { teamEmailEnabled } from '../../features/events/teamEmailCapability';
 import { EventLiveButton } from '../../features/leaderboard/EventLiveButton';
@@ -16,6 +18,7 @@ import {
 import { EventForm } from '../../features/events/EventForm';
 import { defaultEventPricing, eventPriceLabel } from '../../features/events/eventPricing';
 import { ManualTeamDialog } from '../../features/events/ManualTeamDialog';
+import { PublicEventResultsPublication } from '../../features/events/PublicEventResultsPublication';
 import { EventPublicationButton } from '../../features/events/EventPublicationButton';
 import { LocalEventMediaPanel } from '../../features/events/LocalEventMediaPanel';
 import { localEventMediaAvailable } from '../../features/events/localEventMediaApi';
@@ -86,6 +89,7 @@ function EventDetail({ eventId }: { eventId: string | undefined }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
   const [addingTeam, setAddingTeam] = useState(false);
+  const [changingQuiz, setChangingQuiz] = useState(false);
   const [addedTeam, setAddedTeam] = useState<{ id: string; name: string } | null>(null);
   const [libraryComparison, setLibraryComparison] = useState<{ eventId: string; quizId: string; revision: number } | null>(null);
   const [checkingLibrary, setCheckingLibrary] = useState(false);
@@ -93,8 +97,10 @@ function EventDetail({ eventId }: { eventId: string | undefined }) {
   const loadVersion = useRef(0);
   const actionBusy = useRef(false);
   const active = useRef(false);
-  const quizEditable = !loading && event?.id === eventId && event !== null && canChooseQuiz
-    && eventOperational(event) && !event.liveSessionId && !event.scoring.started;
+  const quizState = event?.quizChangeState ?? { hasActiveSession: !!event?.liveSessionId, hasPresentedQuestion: false, hasUnknownQuestionHistory: !!event?.liveSessionId, scoreDocumentCount: event?.scoring.started ? 1 : 0, snapshotRounds: [] };
+  const quizProblem = event ? eventQuizMutationProblem(event, quizState, 'version')
+    ?? (quizState.hasActiveSession && !can('event.live') ? 'Moderování je otevřené. Nejprve ho ukončete tlačítkem Ukončit kvíz.' : null) : null;
+  const quizEditable = !loading && event?.id === eventId && event !== null && canChooseQuiz && !quizProblem;
 
   useLayoutEffect(() => {
     active.current = true;
@@ -211,14 +217,14 @@ function EventDetail({ eventId }: { eventId: string | undefined }) {
   const registration = registrationPresentation(event, now), capacity = eventCapacity(event);
   const sourceRevision = locked && libraryComparison?.eventId === event.id && libraryComparison.quizId === locked.quizId
     ? libraryComparison.revision : selectedQuiz?.id === locked?.quizId ? selectedQuiz?.revision : undefined;
-  const lockDisabled = pending || quizLoading || !eventOperational(event) || Boolean(event.liveSessionId) || event.scoring.started || selectedQuiz === null || selectedQuiz.id !== selectedQuizId;
+  const lockDisabled = pending || quizLoading || !quizEditable || selectedQuiz === null || selectedQuiz.id !== selectedQuizId;
   return (
     <article className="event-detail-page">
       <Link className="back-link" to="/admin/events">← Zpět na akce</Link>
       <header className="event-page-heading event-form-heading">
         <div><h1>{admin ? 'Upravit akci' : 'Detail akce'}</h1><p className="lead">{event.title} · {event.venue.name}</p></div>
         <span className={`quiz-status status-${event.lifecycleStatus}`}>{lifecycleLabels[event.lifecycleStatus]}</span>
-        <EventActions event={event} onChanged={async (message, deleted, updated) => {
+        <EventActions event={event} showWarmup onChanged={async (message, deleted, updated) => {
           if (!active.current) return;
           if (deleted) { await navigate('/admin/events'); return; }
           if (updated) { setEvent(updated); setValues(formValues(updated)); }
@@ -246,7 +252,7 @@ function EventDetail({ eventId }: { eventId: string | undefined }) {
         {admin && !hidden && !['archived', 'cancelled', 'completed'].includes(event.lifecycleStatus) && <a className="secondary-link" href="#event-referee">Přístup pro rozhodčího</a>}
       </section>
 
-      {!hidden && <section className="event-section"><h2>Veřejná viditelnost</h2><p>Zveřejnění umožní přihlašování týmů do začátku akce podle volné kapacity. Připravenost kvízu se nastavuje samostatně.</p><EventPublicationButton event={event} disabled={pending} onChanged={updated => { setEvent(updated); setNow(Date.now()); setNotice(updated.registrationPublished ? updated.registrationStatus === 'full' ? "Akce je zveřejněná. Kapacita je naplněná; další tým se může přihlásit až po jejím uvolnění." : "Akce je zveřejněná a registrace jsou otevřené do začátku akce." : "Akce byla skryta z veřejného webu."); }} /></section>}
+      {!hidden && (event.lifecycleStatus !== 'completed' || event.registrationPublished) && <section className="event-section"><h2>Veřejná viditelnost</h2><p>Zveřejnění umožní přihlašování týmů do začátku akce podle volné kapacity. Připravenost kvízu se nastavuje samostatně.</p><EventPublicationButton event={event} disabled={pending} onChanged={updated => { setEvent(updated); setNow(Date.now()); setNotice(updated.registrationPublished ? updated.registrationStatus === 'full' ? "Akce je zveřejněná. Kapacita je naplněná; další tým se může přihlásit až po jejím uvolnění." : "Akce je zveřejněná a registrace jsou otevřené do začátku akce." : "Akce byla skryta z veřejného webu."); }} /></section>}
 
       {!hidden && can('event.export') && <section className="event-section" aria-labelledby="event-materials-title">
         <div className="event-section-heading"><div><p className="eyebrow">Dokumenty na večer</p><h2 id="event-materials-title">Tisk a materiály</h2></div>{locked && <span>Kvíz připraven</span>}</div>
@@ -263,6 +269,7 @@ function EventDetail({ eventId }: { eventId: string | undefined }) {
       {!hidden && can('event.read') && event.lifecycleStatus === 'completed' && <section className="event-section">
         <div className="event-section-heading"><div><p className="eyebrow">Dokončená akce</p><h2>Konečné výsledky</h2></div></div>
         <p className="event-muted">Potvrzené konečné pořadí této akce, pouze pro čtení.</p>
+        <PublicEventResultsPublication event={event} onChanged={revision => setEvent(current => current ? { ...current, revision } : current)} />
         <Link className="secondary-link" to={`/admin/events/${event.id}/results`}>Otevřít konečné výsledky</Link>
       </section>}
 
@@ -277,10 +284,11 @@ function EventDetail({ eventId }: { eventId: string | undefined }) {
         <div className="event-section-heading"><div><p className="eyebrow">Interní zápis</p><h2>Bodování</h2></div></div>
         <p className="event-muted">Rozhodčí zapisuje součet bodů týmu za každé kolo. V moderování pak načtete průběžné výsledky a zobrazíte je na projektoru.</p>
         {!hidden && <Link className="secondary-link" to={`/admin/events/${event.id}/scoring`}>Otevřít bodování</Link>}
+        {!hidden && can('event.manage') && can('event.score') && <ResetEventScoresAction event={event} onSaved={async () => { await load(); setNotice('Všechny body akce a jejich historie byly smazány.'); }} />}
       </section>
       {admin && !hidden && !['archived', 'cancelled', 'completed'].includes(event.lifecycleStatus) && <div id="event-referee">
         {(!locked || !['ready', 'live', 'finalizing'].includes(event.lifecycleStatus)) && <p className="event-muted">Před použitím odkazu rozhodčího nejprve <a href="#event-quiz">připravte kvíz ke hraní</a>.</p>}
-        <RefereeAccessPanel key={event.id} eventId={event.id} canIssue={can('event.score')} />
+        <RefereeAccessPanel key={event.id} eventId={event.id} canIssue={can('event.score')} startsAt={event.startsAt} timeZone={event.timeZone} />
         {can('event.export') && can('event.answers.read') && can('event.answers.export') && <p className="event-muted"><Link to={`/admin/events/${event.id}/print`}>Připravit správné odpovědi pro rozhodčího</Link> — v tiskovém centru zvolte organizační arch nebo klíč odpovědí.</p>}
       </div>}
       {admin && can('event.contacts') && EventTeamMessagePanel && <Suspense fallback={null}><EventTeamMessagePanel key={event.id + ':' + currentUser?.uid} eventId={event.id} actorId={currentUser!.uid} canCreate={['draft', 'scheduled', 'ready', 'live'].includes(event.lifecycleStatus)} /></Suspense>}
@@ -293,11 +301,12 @@ function EventDetail({ eventId }: { eventId: string | undefined }) {
       }} />}
 
       <section className="event-section" id="event-edit">
-        {admin ? <EventForm values={values} live={Boolean(event.liveSessionId)} pending={pending || conflict} submitLabel="Uložit změny" onChange={setValues} onSubmit={() => void runAction(() => updateEvent(event.id, event.revision, values), 'Změny akce byly uloženy.')} /> : (
+        {admin ? <EventForm values={values} live={quizState.hasActiveSession} pending={pending || conflict} submitLabel="Uložit změny" onChange={setValues} onSubmit={() => void runAction(() => updateEvent(event.id, event.revision, values), 'Změny akce byly uloženy.')} /> : (
           <dl className="event-readonly-grid"><div><dt>Místo</dt><dd>{event.venue.name}</dd></div><div><dt>Veřejná lokalita</dt><dd>{event.venue.publicLocation}</dd></div><div><dt>Cena akce</dt><dd>{eventPriceLabel(event.pricing)}</dd></div><div><dt>Kapacita týmů</dt><dd>{event.teamCapacity}</dd></div><div><dt>Velikost týmu</dt><dd>{event.teamSizeMin}–{event.teamSizeMax}</dd></div></dl>
         )}
       </section>
 
+      {changingQuiz && selectedQuizId && <EventQuizChangeDialog eventId={event.id} quizId={selectedQuizId} onClose={() => setChangingQuiz(false)} onSaved={async () => { await load(); setNotice('Kvíz pro akci byl aktualizován.'); }} />}
       <section className="event-section" id="event-quiz" data-testid="event-quiz-assignment">
         <div className="event-section-heading"><div><p className="eyebrow">Kvíz</p><h2>{locked ? 'Kvíz připraven' : 'Vybrat kvíz'}</h2></div>{locked && <span>Připravená verze {locked.quizRevision}</span>}</div>
         {locked && <div className="event-locked-quiz"><strong>{locked.quizTitle}</strong><span>{locked.roundCount} kol · {locked.questionCount} otázek</span><small>Hraje se připravená verze {locked.quizRevision}. Další úpravy v knihovně ji nezmění.</small>
@@ -328,9 +337,9 @@ function EventDetail({ eventId }: { eventId: string | undefined }) {
                 {preflight.issues.length > 0 ? <ul className="event-readiness-issues">{preflight.issues.map((issue, index) => <li key={`${issue.code}-${index}`}><strong>{issue.severity === 'BLOCKER' ? 'K prověření' : 'Doporučení'}{issue.reference.questionNumber !== undefined ? ` · ${issue.reference.roundPosition ?? '—'}. kolo, otázka ${issue.reference.questionNumber}` : ''}</strong><p>{issue.message}</p>{issue.fixTarget && <Link className="secondary-link" to={preflightFixUrl(selectedQuiz.id, issue.fixTarget)}>Opravit</Link>}</li>)}</ul> : <p>Kontrola nenašla žádné nedostatky.</p>}
               </details>
             </div>}
-            <button className="primary-button" type="button" disabled={lockDisabled} aria-busy={pending} onClick={() => void prepareQuiz()}>{pending ? 'Připravuji…' : locked ? 'Aktualizovat kvíz pro akci' : 'Připravit ke hraní'}</button>
+            <button className="primary-button" type="button" disabled={lockDisabled} aria-busy={pending} onClick={() => { if (quizState.scoreDocumentCount > 0 || quizState.hasActiveSession) setChangingQuiz(true); else void prepareQuiz(); }}>{pending ? 'Připravuji…' : locked ? 'Aktualizovat kvíz pro akci' : 'Připravit ke hraní'}</button>
           </div>
-        ) : <p className="event-muted">Výběr zdrojového kvízu vyžaduje správu akce a přístup ke kvízu včetně odpovědí a exportu.</p>}
+        ) : <p className="event-muted">{!canChooseQuiz ? 'Výběr zdrojového kvízu vyžaduje správu akce a přístup ke kvízu včetně odpovědí a exportu.' : quizProblem}</p>}
       </section>
 
     </article>

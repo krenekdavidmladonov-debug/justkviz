@@ -1,3 +1,4 @@
+import { hasUnsupportedEventText } from '@filmovy-kviz/quiz-domain';
 import { HttpsError } from 'firebase-functions/v2/https';
 
 import { validateEventConfiguration } from './model.js';
@@ -46,13 +47,7 @@ function boundedString(value: unknown, field: string, maximum: number, allowEmpt
   if (typeof value !== 'string' || value.length > maximum || (!allowEmpty && value.trim() === '')) {
     throw new HttpsError('invalid-argument', `${field} is invalid.`);
   }
-  const unsupportedCodePoint = [...value].some((character) => {
-    const codePoint = character.codePointAt(0)!;
-    return codePoint <= 31 || codePoint === 127
-      || (codePoint >= 0x202a && codePoint <= 0x202e)
-      || (codePoint >= 0x2066 && codePoint <= 0x2069);
-  });
-  if (unsupportedCodePoint) {
+  if (hasUnsupportedEventText(value)) {
     throw new HttpsError('invalid-argument', `${field} contains unsupported control characters.`);
   }
   return value.trim();
@@ -72,14 +67,23 @@ export function requestedEventConfiguration(data: unknown, options: { readonly a
   const venue = value.venue;
   if (!isObject(venue)) throw new HttpsError('invalid-argument', 'event venue is required.');
   const startsAtText = boundedString(value.startsAt, 'startsAt', 100);
+  // The browser sends an instant. Never let the server's local zone or Date's
+  // calendar rollover turn an invalid wall time into a different event.
+  const day = startsAtText.slice(0, 10);
+  const calendarDay = new Date(day + 'T00:00:00Z');
+  const startsAt = new Date(startsAtText);
+  if (!/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/u.test(startsAtText)
+      || !Number.isFinite(startsAt.getTime()) || !Number.isFinite(calendarDay.getTime()) || calendarDay.toISOString().slice(0, 10) !== day) {
+    throw new HttpsError('invalid-argument', 'Datum a čas akce musí být platné a obsahovat časový posun.');
+  }
   const configuration: EventConfigurationInput = {
     ...(Object.hasOwn(value, 'pricing') ? { pricing: (() => {
       try { return requestedEventPricing(value.pricing); }
       catch { throw new HttpsError('invalid-argument', 'pricing must contain a valid mode and amountCzk.'); }
     })() } : {}),
     title: boundedString(value.title, 'title', 300),
-    description: (() => { const description = value.description ?? ''; if (typeof description !== 'string' || description.length > 2000 || /[\p{Cf}]/u.test(description)) throw new HttpsError('invalid-argument', 'Popis je neplatný.'); return description.trim(); })(),
-    startsAt: new Date(startsAtText),
+    description: (() => { const description = value.description ?? ''; if (typeof description !== 'string' || description.length > 2000 || hasUnsupportedEventText(description, true)) throw new HttpsError('invalid-argument', 'Popis je neplatný.'); return description.trim(); })(),
+    startsAt,
     timeZone: boundedString(value.timeZone, 'timeZone', 100),
     venue: {
       name: boundedString(venue.name, 'venue.name', 300),

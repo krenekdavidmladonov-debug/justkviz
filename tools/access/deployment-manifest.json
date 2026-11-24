@@ -67,6 +67,8 @@
     "updateQuizSlide"
   ],
   "unchangedExcluded": {
+    "resetEventScores": "New N11 callable; outside historical access release. D1 transport/IAM binding requires separate explicit owner approval before any deployment.",
+    "configurePublicEventResults": "Prepared source only. Requires a separately approved concrete release; excluded from frozen release targets.",
     "duplicateQuiz": "Introduced by whole-quiz duplication; outside the historical access deployment scope.",
     "restoreQuiz": "Introduced by quiz library trash; outside the historical access deployment scope.",
     "trashQuiz": "Introduced by quiz library trash; outside the historical access deployment scope.",

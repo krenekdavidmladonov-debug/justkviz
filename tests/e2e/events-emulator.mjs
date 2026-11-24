@@ -222,6 +222,7 @@ async function run() {
   assert.equal(locked.revision, 3);
   assert.equal(locked.lifecycleStatus, 'ready');
   assert.equal(locked.preflight.status, 'READY');
+  assert.equal(locked.preflight.warningCount, 0);
   assert.equal((await getDocFromServer(eventRef)).data().registrationPublished, false);
   assert.equal((await adminDb.doc('publicEvents/' + created.eventId).get()).data().lifecycleStatus, 'ready');
   await assert.rejects(getDocFromServer(publicRef), /permission-denied/u);
@@ -233,6 +234,10 @@ async function run() {
   assert.equal((await getDoc(doc(db, 'quizSnapshots', firstSnapshotId, 'slides', 'slide-002'))).data().correctAnswer, 'Syntetická odpověď');
   await assert.rejects(updateDoc(firstSnapshotRef, { quizRevision: 999 }), /permission-denied/u);
   const firstSnapshotContents = await inspectSnapshot(firstSnapshotId);
+  const firstSlide = [...firstSnapshotContents.slides].sort((a, b) => a.data.position - b.data.position)[0].data;
+  assert.equal(firstSlide.kind, 'intro');
+  assert.equal(firstSlide.position, 1);
+  assert.equal(firstSlide.roundId, undefined);
 
   const relocked = await invoke('lockEventQuiz', {
     eventId: created.eventId, expectedRevision: 3, quizId: 'preflight-ready-e2e',

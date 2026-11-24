@@ -83,6 +83,7 @@ export function currentQuestionLabel(
   presentedSlide: LiveControlSlide | undefined,
   slides: readonly LiveControlSlide[],
 ): string {
+  if (session.finalReveal?.visible) return 'Finální vyhlášení';
   if (session.presentationMode === 'recap' && currentSlide) {
     const choices = recapQuestionChoices(currentSlide, slides);
     const selected = choices.find((choice) => choice.slide.id === presentedSlide?.id);

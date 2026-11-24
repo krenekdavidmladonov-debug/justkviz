@@ -4,7 +4,7 @@ import { emptyScore, parseRoundPoints, pointsText, scoreLabel, type Score, type 
 
 type Draft = { text: string; reason: string; clear: boolean; base: Score };
 interface Props {
-  eventId: string; snapshotId: string; roundId: string; roundTitle: string; questionCount?: number | undefined;
+  eventId: string; snapshotId: string; scoringEpoch?: number | undefined; roundId: string; roundTitle: string; questionCount?: number | undefined;
   teams: { id: string; name: string; accepted?: boolean }[]; scores: Record<string, Score>; disabled: boolean;
   onDirty: (dirty: boolean) => void; onPending: (pending: boolean) => void;
   transport?: { save: (request: RoundScoreRequest) => Promise<RoundScoreResponse>; history: typeof loadHistory };
@@ -18,7 +18,7 @@ function draftPoints(draft: Draft) {
   catch (error) { return { error: (error as Error).message }; }
 }
 
-export function RoundScoreForm({ eventId, snapshotId, roundId, roundTitle, questionCount, teams, scores, disabled, onDirty, onPending, transport }: Props) {
+export function RoundScoreForm({ eventId, snapshotId, scoringEpoch, roundId, roundTitle, questionCount, teams, scores, disabled, onDirty, onPending, transport }: Props) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const form = useRef<HTMLFormElement>(null);
@@ -28,6 +28,13 @@ export function RoundScoreForm({ eventId, snapshotId, roundId, roundTitle, quest
   const busy = useRef(false), retry = useRef<RoundScoreRequest | null>(null);
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
   const [histories, setHistories] = useState<Record<string, ScoreHistory[]>>({});
+  useEffect(() => {
+    const accepted = new Set(teams.filter(team => team.accepted !== false).map(team => team.id));
+    if (!Object.keys(drafts).some(id => !accepted.has(id))) return;
+    setDrafts(current => Object.fromEntries(Object.entries(current).filter(([id]) => accepted.has(id))));
+    retry.current = null;
+    setError('Soupiska se změnila. Rozepsané body vyřazených týmů byly odstraněny; ostatní zůstávají.');
+  }, [teams, drafts]);
   const dirty = Object.keys(drafts).length > 0;
   useEffect(() => { onDirty(dirty || pending); }, [dirty, pending, onDirty]);
   const current = (id: string) => [scores[id] ?? emptyScore, confirmed[id], conflicts[id]].reduce<Score>((latest, score) => score && score.revision > latest.revision ? score : latest, emptyScore);
@@ -76,7 +83,7 @@ export function RoundScoreForm({ eventId, snapshotId, roundId, roundTitle, quest
         if (changed.length > 200) throw new Error('Najednou lze uložit nejvýše 200 změněných týmů.');
         if (changed.some(score => score.halfPoints === null) && !window.confirm('Vrátit označené výsledky v tomto kole na nezadáno? Historie zůstane zachována.')) return;
         if (overLimit.length && !window.confirm(warning + '\n\n' + overLimit.join('\n'))) return;
-        request = { eventId, snapshotId, roundId, requestId: crypto.randomUUID(), scores: changed };
+        request = { eventId, snapshotId, ...(scoringEpoch === undefined ? {} : { scoringEpoch }), roundId, requestId: crypto.randomUUID(), scores: changed };
       }
     } catch (issue) { setError((issue as Error).message); return; }
     retry.current = request; busy.current = true; setPending(true); onPending(true); setError(''); setNotice('');
@@ -105,7 +112,7 @@ export function RoundScoreForm({ eventId, snapshotId, roundId, roundTitle, quest
     <p className="event-muted">Zadejte body za toto kolo všem týmům a uložte je společně. Nula je výsledek; prázdné pole je nezadáno.</p>
     <div className="round-score-table" role="table" aria-label="Body všech týmů">
       <div className="round-score-head" role="row"><span role="columnheader">Tým</span><span role="columnheader">Body</span></div>
-      {teams.map(team => {
+      {teams.filter(team => team.accepted !== false).map(team => {
         const score = current(team.id), draft = drafts[team.id], conflict = draft && draft.base.revision !== score.revision;
         const error = Object.hasOwn(fieldErrors, team.id) ? fieldErrors[team.id] : undefined;
         const units = draft && draftPoints(draft).halfPoints;

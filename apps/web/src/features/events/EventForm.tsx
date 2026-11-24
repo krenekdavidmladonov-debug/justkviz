@@ -1,9 +1,21 @@
 import { useId, useRef, useState, type FormEvent } from 'react';
 
+import { hasUnsupportedEventText } from '@filmovy-kviz/quiz-domain';
 import type { EventFormValues } from './types';
 import { eventPriceLabel } from './eventPricing';
 import { eventFormInstant } from './eventFormTime';
 import './event-form.css';
+
+const missingFieldMessages: Record<string, string> = {
+  title: 'Vyplňte název akce.',
+  startsAt: 'Vyplňte datum a čas.',
+  venueName: 'Vyplňte místo konání.',
+  publicLocation: 'Vyplňte upřesnění místa.',
+  pricingAmountCzk: 'Vyplňte cenu v Kč.',
+  teamCapacity: 'Vyplňte maximální počet týmů.',
+  teamSizeMin: 'Vyplňte minimální počet členů týmu.',
+  teamSizeMax: 'Vyplňte maximální počet členů týmu.',
+};
 
 interface EventFormProps {
   readonly values: EventFormValues;
@@ -22,6 +34,9 @@ export function EventForm({ values, pending, submitLabel, pendingLabel = 'Uklád
   const formId = useId();
   const [error, setError] = useState<{ field: string; message: string } | null>(null);
   const fieldId = (name: keyof EventFormValues) => formId + '-' + name;
+  const requiredLabel = (name: keyof EventFormValues, text: string) => (
+    <span><span id={fieldId(name) + '-label'}>{text}</span><span aria-hidden="true"> *</span></span>
+  );
   const fieldProps = (name: keyof EventFormValues) => ({
     name, id: fieldId(name), 'aria-labelledby': fieldId(name) + '-label',
     'aria-invalid': error?.field === name ? true : undefined,
@@ -48,17 +63,22 @@ export function EventForm({ values, pending, submitLabel, pendingLabel = 'Uklád
     event.preventDefault();
     if (pending) return;
     const fields = [...event.currentTarget.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select')];
-    const invalid = fields.find(field => field.willValidate && (!field.validity.valid || (field.required && !field.value.trim())));
-    if (invalid) {
-      let message = 'Zkontrolujte hodnotu tohoto pole.';
-      if (invalid.required && !invalid.value.trim()) message = invalid.name === 'startsAt' ? 'Vyplňte datum a čas.' : 'Vyplňte toto pole.';
-      else if (invalid instanceof HTMLInputElement) {
-        if (invalid.validity.rangeUnderflow) message = 'Zadejte alespoň ' + invalid.min + '.';
-        else if (invalid.validity.rangeOverflow) message = 'Zadejte nejvýše ' + invalid.max + '.';
-        else if (invalid.validity.stepMismatch) message = 'Zadejte celé číslo.';
+    for (const field of fields) {
+      if (!field.willValidate) continue;
+      let message: string | undefined;
+      if (field.required && !field.value.trim()) message = missingFieldMessages[field.name];
+      else if (field instanceof HTMLTextAreaElement || (field instanceof HTMLInputElement && field.type === 'text')) {
+        if (field.maxLength >= 0 && field.value.length > field.maxLength) message = 'Zadejte nejvýše ' + field.maxLength + ' znaků.';
+        else if (hasUnsupportedEventText(field.value, field instanceof HTMLTextAreaElement)) message = 'Odstraňte z textu nepodporované znaky.';
+      } else if (field instanceof HTMLInputElement) {
+        if (field.validity.rangeUnderflow) message = 'Zadejte alespoň ' + field.min + '.';
+        else if (field.validity.rangeOverflow) message = 'Zadejte nejvýše ' + field.max + '.';
+        else if (field.validity.stepMismatch) message = 'Zadejte celé číslo.';
       }
-      report(invalid, message);
-      return;
+      if (message || !field.validity.valid) {
+        report(field, message ?? 'Zkontrolujte hodnotu tohoto pole.');
+        return;
+      }
     }
     const dateField = form.current?.elements.namedItem('startsAt');
     if (dateField instanceof HTMLInputElement && dateField.willValidate) {
@@ -76,19 +96,19 @@ export function EventForm({ values, pending, submitLabel, pendingLabel = 'Uklád
       <legend>Základní údaje</legend>
       <div className="event-form-grid">
       <label className="form-field event-field-wide">
-        <span id={fieldId('title') + '-label'}>Název akce</span>
+        {requiredLabel('title', 'Název akce')}
         <input {...fieldProps('title')} required maxLength={300} value={values.title} onChange={(event) => update('title', event.target.value)} />{feedback('title')}
       </label>
       <label className="form-field">
-        <span id={fieldId('startsAt') + '-label'}>Datum a čas v Praze</span>
+        {requiredLabel('startsAt', 'Datum a čas v Praze')}
         <input {...fieldProps('startsAt')} required type="datetime-local" value={values.startsAt} onChange={(event) => update('startsAt', event.target.value)} />{feedback('startsAt')}
       </label>
       <label className="form-field">
-        <span id={fieldId('venueName') + '-label'}>Místo</span>
+        {requiredLabel('venueName', 'Místo')}
         <input {...fieldProps('venueName')} required maxLength={300} value={values.venueName} onChange={(event) => update('venueName', event.target.value)} />{feedback('venueName')}
       </label>
       <label className="form-field">
-        <span id={fieldId('publicLocation') + '-label'}>Veřejné upřesnění místa<span aria-hidden="true"> *</span></span>
+        {requiredLabel('publicLocation', 'Veřejné upřesnění místa')}
         <input {...fieldProps('publicLocation')} required maxLength={500} value={values.publicLocation} onChange={(event) => update('publicLocation', event.target.value)} />{feedback('publicLocation')}
       </label>
       <label className="form-field event-field-wide"><span id={fieldId('description') + '-label'}>Popis akce</span><textarea {...fieldProps('description')} maxLength={2000} value={values.description ?? ''} onChange={event => update('description', event.target.value)} />{feedback('description')}</label>
@@ -104,7 +124,7 @@ export function EventForm({ values, pending, submitLabel, pendingLabel = 'Uklád
               <option value="per-team">Za tým</option><option value="per-event">Za celou akci</option><option value="agreement">Dle dohody</option>
             </select>{feedback('pricingMode')}
           </label>
-          {values.pricingMode !== 'agreement' && <label className="form-field"><span id={fieldId('pricingAmountCzk') + '-label'}>Cena v Kč</span>
+          {values.pricingMode !== 'agreement' && <label className="form-field">{requiredLabel('pricingAmountCzk', 'Cena v Kč')}
             <input {...fieldProps('pricingAmountCzk')} required type="number" min={0} max={1_000_000} step={1} value={Number.isFinite(values.pricingAmountCzk) ? values.pricingAmountCzk : ''} onChange={event => update('pricingAmountCzk', event.target.valueAsNumber)} />{feedback('pricingAmountCzk')}
           </label>}
         </div>
@@ -115,16 +135,16 @@ export function EventForm({ values, pending, submitLabel, pendingLabel = 'Uklád
       <p className="event-muted" id="event-capacity-help">{live && 'Během živého běhu je kapacita uzamčená. '}Kapacitu určuje počet týmů. Každý tým může mít nejvýše 4 členy.</p>
       <div className="event-form-grid" aria-describedby="event-capacity-help">
       <label className="form-field">
-        <span id={fieldId('teamCapacity') + '-label'}>Maximální počet týmů</span>
-        <input required type="number" min={1} max={10_000} {...fieldProps('teamCapacity')} value={values.teamCapacity} onChange={(event) => update('teamCapacity', event.target.valueAsNumber)} />{feedback('teamCapacity')}
+        {requiredLabel('teamCapacity', 'Maximální počet týmů')}
+        <input required type="number" min={1} max={10_000} {...fieldProps('teamCapacity')} value={Number.isFinite(values.teamCapacity) ? values.teamCapacity : ''} onChange={(event) => update('teamCapacity', event.target.valueAsNumber)} />{feedback('teamCapacity')}
       </label>
       <label className="form-field">
-        <span id={fieldId('teamSizeMin') + '-label'}>Minimální počet členů týmu</span>
-        <input required type="number" min={1} max={Math.min(4, values.teamSizeMax || 4)} {...fieldProps('teamSizeMin')} value={values.teamSizeMin} onChange={(event) => update('teamSizeMin', event.target.valueAsNumber)} />{feedback('teamSizeMin')}
+        {requiredLabel('teamSizeMin', 'Minimální počet členů týmu')}
+        <input required type="number" min={1} max={Math.min(4, values.teamSizeMax || 4)} {...fieldProps('teamSizeMin')} value={Number.isFinite(values.teamSizeMin) ? values.teamSizeMin : ''} onChange={(event) => update('teamSizeMin', event.target.valueAsNumber)} />{feedback('teamSizeMin')}
       </label>
       <label className="form-field">
-        <span id={fieldId('teamSizeMax') + '-label'}>Maximální počet členů týmu</span>
-        <input required type="number" min={values.teamSizeMin || 1} max={4} {...fieldProps('teamSizeMax')} value={values.teamSizeMax} onChange={(event) => update('teamSizeMax', event.target.valueAsNumber)} />{feedback('teamSizeMax')}
+        {requiredLabel('teamSizeMax', 'Maximální počet členů týmu')}
+        <input required type="number" min={values.teamSizeMin || 1} max={4} {...fieldProps('teamSizeMax')} value={Number.isFinite(values.teamSizeMax) ? values.teamSizeMax : ''} onChange={(event) => update('teamSizeMax', event.target.valueAsNumber)} />{feedback('teamSizeMax')}
       </label>
       </div>
       </fieldset>

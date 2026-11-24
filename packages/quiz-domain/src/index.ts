@@ -16,3 +16,6 @@ export * from './event-management.js';
 export * from './local-image-backup.js';
 export * from './offline-event.js';
 export * from './scoring.js';
+export * from './media-readiness.js';
+
+export * from './event-quiz.js';

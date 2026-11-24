@@ -49,6 +49,7 @@ export interface LiveControlSlide {
   readonly isQuestion: boolean;
   readonly roundId?: string;
   readonly roundTitle?: string;
+  readonly roundNumber?: number;
   readonly questionNumber?: number;
   readonly questionCount?: number;
   readonly title: string;
@@ -76,11 +77,13 @@ export interface PublicMedia {
 }
 
 export interface PublicLiveState {
+  readonly upcomingImages?: readonly string[];
   readonly mediaPlaybackMode?: 'original';
   readonly showCue?: ShowCue;
   readonly interimBackdrop?: InterimBackdrop;
   readonly design?: SlideDesign;
   readonly roundTitle?: string;
+  readonly roundNumber?: number;
   readonly subtitle?: string;
   readonly finalReveal?: FinalRevealPage;
   readonly interimResults?: ResultPage;

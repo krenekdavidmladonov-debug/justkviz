@@ -261,7 +261,7 @@ it('identifies, focuses and scrolls to the first missing field without creating 
   expect(title.getAttribute('aria-invalid')).toBe('true');
   expect(document.activeElement).toBe(title);
   expect(scroll).toHaveBeenCalledWith({ block: 'center', behavior: 'auto' });
-  expect(host.querySelector('[role=alert]')?.textContent).toBe('Vyplňte toto pole.');
+  expect(host.querySelector('[role=alert]')?.textContent).toBe('Vyplňte název akce.');
 });
 
 it.each(['', '   '])('reports a missing public location %j next to the required field', async value => {
@@ -275,7 +275,35 @@ it.each(['', '   '])('reports a missing public location %j next to the required 
   expect(location.labels?.[0]?.textContent).toContain('*');
   expect(location.getAttribute('aria-invalid')).toBe('true');
   expect(document.activeElement).toBe(location);
-  expect(location.labels?.[0]?.querySelector('[role=alert]')?.textContent).toBe('Vyplňte toto pole.');
+  expect(location.labels?.[0]?.querySelector('[role=alert]')?.textContent).toBe('Vyplňte upřesnění místa.');
+});
+
+it.each([
+  ['Datum a čas v Praze', 'startsAt', 'Vyplňte datum a čas.'],
+  ['Místo', 'venueName', 'Vyplňte místo konání.'],
+  ['Cena v Kč', 'pricingAmountCzk', 'Vyplňte cenu v Kč.'],
+  ['Maximální počet týmů', 'teamCapacity', 'Vyplňte maximální počet týmů.'],
+  ['Minimální počet členů týmu', 'teamSizeMin', 'Vyplňte minimální počet členů týmu.'],
+  ['Maximální počet členů týmu', 'teamSizeMax', 'Vyplňte maximální počet členů týmu.'],
+])('marks and explains the missing field %s', async (label, name, message) => {
+  await render(); await fillForm(); await changeField(label, '');
+  const input = form().elements.namedItem(name) as HTMLInputElement;
+  input.scrollIntoView = vi.fn();
+  await act(async () => form().requestSubmit());
+  expect(input.labels?.[0]?.textContent).toContain('*');
+  expect(document.activeElement).toBe(input);
+  expect(document.getElementById(input.getAttribute('aria-describedby')!)?.textContent).toBe(message);
+  expect(createEvent).not.toHaveBeenCalled();
+});
+
+it.each([['Veřejné upřesnění místa', 'publicLocation'], ['Popis akce', 'description']])('explains unsupported pasted characters in %s', async (label, name) => {
+  await render(); await fillForm(); await changeField(label, 'Praha\u202e 1');
+  const field = form().elements.namedItem(name) as HTMLElement;
+  field.scrollIntoView = vi.fn();
+  await act(async () => form().requestSubmit());
+  expect(document.activeElement).toBe(field);
+  expect(host.querySelector('[role=alert]')?.textContent).toBe('Odstraňte z textu nepodporované znaky.');
+  expect(createEvent).not.toHaveBeenCalled();
 });
 
 it('reports an impossible Prague clock time directly at the date field', async () => {
@@ -291,6 +319,7 @@ it('reports an impossible Prague clock time directly at the date field', async (
 
 it('requires confirmation for a past date and leaves the draft editable after cancelling', async () => {
   await render(); await fillForm();
+  vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2020-01-01T18:01:00Z'));
   await changeField('Datum a čas v Praze', '2020-01-01T19:00');
   vi.mocked(createEvent).mockResolvedValue(created);
   const confirm = vi.fn(() => false);

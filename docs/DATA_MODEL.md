@@ -135,6 +135,8 @@ lost-response deduplication.
 
 Authoritative event record implemented by Events Foundation: `schemaVersion`, title/start/time zone, private venue configuration, team capacity, retained legacy people capacity, accepted team/people counters, per-event team-size bounds (up to four for new settings and new/edited registrations), registration window/publication/status, lifecycle status, nullable immutable quiz assignment, fixed-point scoring foundation (`unitScale: 2`, `rankingMode: dense`, server-owned `started`), monotonic revision, and trusted audit fields. Staff may read the root; every client write is denied and mutations use trusted Functions.
 
+Explicit event completion chosen by authorized staff in the moderator controls uses the existing completed lifecycle and completion/capability fields. The current bound session and all other event sessions end in the same transaction; registration publication closes and publicEvents is removed. The event, registrations, scores, snapshot and confirmed finalVersions remain available to authorized history/PDF reads. Bare presentation closure and standalone rehearsals retain their existing behavior.
+
 Event `pricing` is `{ mode: 'per-team' | 'per-event' | 'agreement', amountCzk, hidden? }`.
 Numeric modes require integer CZK from 0 to 1,000,000; agreement requires null.
 Absent historical pricing means 350 CZK per team. Creates persist that default;
@@ -193,6 +195,8 @@ Private live-control state. Required fields are `quizId`, safe display copy `qui
 
 Implemented internal per-team/per-snapshot-round half-point value and monotonic revision. The stable pair key, append-only history child collection, server-only scoreOperations receipts, null/zero distinction and atomic transaction are specified in [EVENT_SCORING.md](archive/EVENT_SCORING.md). All client writes are denied; staff-only reads. Score mutations do not publish totals or rankings; separate staff confirmation is required.
 
+Offline score sources are restricted to the accepted roster, queried in bounded groups of at most 30 team IDs. Canonical destinations for the current team/round matrix are also checked, so a malformed stored teamId cannot hide a cell that synchronization would overwrite. Cancelled-team history does not consume the current 200-cell budget or enter the baseline/export; its stored scores/history remain unchanged. Malformed active cells, noncanonical IDs and mismatched snapshots still fail closed and require explicit reconciliation.
+
 ### `quizzes/{quizId}/mediaAssets/{assetId}`
 
 Owned assets are implemented at quizzes/{quizId}/mediaAssets/{assetId}: private quiz/asset identity, kind/MIME/size, actor, request fingerprint, expiry and uploading/ready status; finalization records Storage generation and readyAt. Staff may read metadata; only server writes it. Immutable quiz-asset references remain in event snapshots. Objects have no client overwrite/delete path. MP4 finalization uses a private temporary upload and one server reservation (`finalizing` with source generation, SHA-256, MIME and size). Only its winner writes the canonical object; the temporary object is removed before the canonical generation becomes `ready`. No cleanup of existing ready assets is introduced. See [MEDIA_STORAGE.md](archive/MEDIA_STORAGE.md).
@@ -209,7 +213,36 @@ The server-only `events/{eventId}/registrationAbuse/{contactHash}` budget stores
 
 Implemented safe listing data: title, venue display/public location, start time/time zone, registration publication/status/window, team-size range, revision, and updated timestamp. Since the registration slice, `capacity.teams` and `capacity.people` each expose exact aggregate `accepted` and `maximum` counts; they do not identify individual teams or people. Quiz assignment/snapshot data, answers, organizer details, and contacts are excluded. Anonymous clients may read/query; all writes are server-only. The exact allowlist is covered by the public event projection test in `tests/events.test.ts`.
 
+### Explicit public completed-event results
+
+`publicEventResults/{eventId}` is a separate server-built, single-event allowlist.
+It contains only eventId, public title/date/time zone/venue/location, completed
+status and the whole confirmed final order of rank/teamName/halfPoints. Anonymous
+clients can get one explicitly published document; listing and every browser
+write are denied. It does not add historical events to the public event list.
+
+`configurePublicEventResults` requires fresh identity, current event.manage and
+scope on every transaction attempt, plus the current event revision. Publication
+is an explicit administrative action after completion, default absent for all
+existing events. It validates the ended canonical liveSessionId, event snapshot
+and immutable finalVersions document referenced by finalReveal.versionId. Mutable
+scores, draft previews, current reveal page, private IDs/contacts/answers and
+actor metadata never enter the projection. Dense shared places are preserved.
+Hide and lifecycle transitions remove the projection atomically; archival,
+trash/deletion and registration visibility hiding revoke it as well. Rules also
+reject a stale projection unless its authoritative event remains active and
+completed. No archive backfill or production activation is part of this source.
+
 ### `publicSessions/{sessionId}`
+
+Online publicSessions may include optional upcomingImages: at most nine owned
+image references for the next three visible prompt slides. This server-derived
+allowlist contains no source documents, answers, external URLs or clips, and
+excludes every reference also used in answer media/design anywhere in the source.
+Reveal/recap, result pages, waiting and ended publications omit it. It grants only
+exact image reads through the current-publication gateway, not private quiz access.
+No persistent asset identifier or collection path changes. HTTP image cache URLs
+add an access namespace and a representation hash, without changing stored media.
 
 Show Mode adds optional `presentationStyle` and `pageSize` to confirmed result
 versions and their private pointers: show/6 or classic/8. Public show payloads
@@ -314,4 +347,48 @@ optional fields remain compatible. See [EVENT_PUBLICATION.md](archive/EVENT_PUBL
 
 See [EVENT_MANAGEMENT.md](archive/EVENT_MANAGEMENT.md) for the independent disposition overlay, scoped permission mapping, shared transactional guards, capability revocation and exact server-side deletion ownership/allowlist. No content backfill or Storage cleanup is introduced. Cloud team email remains disabled.
 
-Manual completion uses existing events roots and eventOperations/eventAudit receipts. The optional private completion object contains trusted at/by/reason; capabilityVersion and revision advance together. Ending one sessions document does not mutate its event root. Existing scores/history and confirmed result versions remain intact after either presentation END or event completion.
+Manual completion uses existing events roots and eventOperations/eventAudit receipts. The optional private completion object contains trusted at/by/reason; capabilityVersion and revision advance together. A presentation-only END without `completeEvent: true` removes the active liveSessionId and advances the event revision in the same transaction, without completing the event; explicit privileged staff completion updates the bound event as described above. Existing scores/history and confirmed result versions remain intact after either presentation END or event completion.
+
+### Score generations and quiz-version changes
+
+Optional private events/{eventId}.scoring.epoch is a non-negative safe integer;
+missing means 0 for historical events and requests. resetEventScores and an
+explicit discard during lockEventQuiz delete all score parents and their history
+in one transaction, set started=false and increment epoch and the event revision.
+Server-only eventOperations keeps an actor/event/request-bound reset receipt;
+eventAudit stores actor/time and deleted score/history counts, without content.
+Old scoreOperations remain immutable, but a prior epoch cannot replay them.
+
+Compatible preservation compares the exact round ID set and question count of
+each old/new frozen round. It updates each existing score's snapshotId while
+retaining its points, revision and history. A new quizSnapshots tree is created;
+old snapshots are not rewritten. Ended sessions never block this operation.
+New private sessions record monotonic hasPresentedQuestion; intro-only navigation
+does not set it, while publishing a question or recap selection does. A legacy
+active session without evidence has unknown history and blocks relock until ended.
+
+Server-only offlineExports records pin scoringEpoch (legacy 0). Synchronization
+rejects a changed generation before preview, reconciliation or receipt replay;
+the generation also remains in the structural digest. No public projection or
+new client-write permission is added.
+
+Bare END also records private lastEndedSessionId. A later completeEvent without
+an active pointer may restore that ID only as completed-event history, after
+transactionally verifying the exact owned, ended session and current snapshot,
+with no active session remaining. The hint never authorizes moderation. Relock
+and score reset delete it; reset also clears any legacy ended active pointer,
+so a prior generation's confirmed final version cannot become the new outcome.
+The limited event view and all public projections omit this field.
+
+The limited editor read view adds optional scoringRounds derived from actual
+question slides plus all stored round IDs, including empty rounds. Version
+comparison uses that same shared derivation for old and new snapshots; stale
+numeric source round counters do not decide whether points can be preserved.
+New snapshots freeze the derived count without rewriting the source or any old
+snapshot.
+
+For an older active session without a question marker, absence remains unknown;
+the private change-state view reports hasUnknownQuestionHistory and a specific
+instruction to end that older run. It does not claim that a question was shown.
+An actual subsequent question sets true; a legacy unknown intro cannot turn the
+marker into false. Ended older runs remain non-blocking.

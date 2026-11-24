@@ -21,7 +21,7 @@ na pětisekundové načtení; starší rozpracované čtení ji nesmí přepsat.
 - Tým je přijatá kanonická `events/{eventId}/registrations/{teamId}`.
 - Kolo je existující `quizSnapshots/{snapshotId}/rounds/{roundId}` z aktuálního
   `event.quizAssignment.snapshotId`. První zápis nastaví `scoring.started = true`
-  a zvýší revizi akce. Existující ochrana relocku zakáže následnou změnu snapshotu.
+  a zvýší revizi akce. Změna verze po ukončené zkoušce vyžaduje výslovné ponechání kompatibilních bodů nebo jejich atomické zahození.
 - `events/{eventId}/scores/{scoreId}` zachovává SHA-256 JSON `[teamId, roundId]`
   a pole `teamId, roundId, snapshotId, halfPoints, revision, updatedAt` a aktéra.
 - `halfPoints` je bezpečné celé nezáporné číslo nebo `null` pro nezadáno. Nula
@@ -80,3 +80,27 @@ oprávnění před retry. Wrapper fail-closed vyžaduje demo-* a lokální endpo
 Po změně běží `pnpm check`, cílené testy a `pnpm test:rules`. Samotné testy nic
 nenasazují. Release vyžaduje jen existující `saveEventScore`, `saveRefereeScore`
 a Hosting; žádná nová invoker oprávnění. V1 zůstává mimo rozsah.
+
+## N11 / N8: změna verze po zkoušce a reset všech bodů
+
+Změna verze je povolená u provozní akce po ukončených zkouškách. Aktivní běh,
+který již zobrazil otázku, ji blokuje i po návratu na úvod. Dosud nehraný běh lze
+ukončit současně se změnou pouze po výslovném potvrzení a s event.live.
+Ponechat body lze jen při stejných ID kol a počtech otázek. Změní se vazba
+snapshotId skóre, nikoli jeho body, revize ani historie. Volba zahodit používá
+stejný atomický reset jako samostatné tlačítko Smazat všechny body.
+
+resetEventScores vyžaduje současné event.manage + event.score, rozsah akce,
+expectedRevision, requestId a přesné confirm: SMAZAT. Bez aktivního běhu a před
+dokončením smaže všechny score dokumenty včetně historie, také osiřelé historie,
+vrátí started=false, zvýší scoring.epoch a zapíše jeden audit s počty.
+Stejný reset requestId vrací původní potvrzení a nové body znovu nemaže.
+Generace chybějící na historickém eventu nebo požadavku znamená 0. Starý single,
+round, rozhodcovský i offline zápis se po resetu odmítne před účtenkou; nová
+generace se nikdy nepřipojí ke starému rozepsanému formuláři.
+
+Nasazení vyžaduje web a dotčené Functions včetně nového resetEventScores.
+**D1 pro transport/IAM nové funkce potřebuje samostatný výslovný souhlas.**
+Rules se nemění. Bezpečný rollback ponechá backend s generační ochranou a
+obnoví jen kompatibilní UI; návrat backendu bez epoch by otevřel staré zápisy.
+Žádná oprava ani migrace produkčních dat není součástí tohoto úkolu.

@@ -1,3 +1,5 @@
+import { eventScoringEpoch } from '@filmovy-kviz/quiz-domain';
+import { offlineMediaRecommendations } from './readiness.js';
 import { getFirestore, Timestamp, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { canonicalOfflineJson, countOfflineMedia, offlineEventLimits as limits, parseOfflineManifest, parseQuizAsset, readLocalImageDimensions, validOwnedMedia,
@@ -122,7 +124,8 @@ async function checkOfflineEvent(eventId: string, auth: Parameters<typeof readOf
     assertEventOperational(event);
     if (current.version !== source.member.version || event.revision !== source.event.revision) throw new HttpsError('aborted', 'Akce se změnila. Spusťte kontrolu znovu.');
   });
-  return { snapshotId: source.snapshotId, teamCount: source.teams.length, mediaCount: media.length,
+  const recommendations = offlineMediaRecommendations(source, media);
+  return { recommendations, snapshotId: source.snapshotId, teamCount: source.teams.length, mediaCount: media.length,
     mediaCounts: countOfflineMedia(verifiedKinds), mediaBytes: total, expiresAtMs, issues };
 }
 
@@ -182,7 +185,7 @@ export const prepareOfflineEvent = onCall(issuanceOptions, async (request): Prom
     const { slides: privateSlides, assets: descriptors, ...manifestSeed } = manifest; void privateSlides; void descriptors;
     tx.create(exportRef, { schemaVersion: 1, ...header, actorId: request.auth!.uid, membershipVersion: current.member.version, manifestSeed,
       baselineDigest: current.baselineDigest, structuralDigest: current.structuralDigest, manifestDigest, grant, assets, mediaPins: initial.media.map(item => ({ reference: item.reference, pin: pinnedMedia(item.record) })),
-      snapshotId: current.snapshotId, createdAt: Timestamp.now(), status: 'prepared' });
+      scoringEpoch: eventScoringEpoch(current.event.scoring), snapshotId: current.snapshotId, createdAt: Timestamp.now(), status: 'prepared' });
   });
   await freshIdentity(request.auth);
   return { ok: true, manifest, grant };
@@ -226,6 +229,7 @@ export const authorizeOfflineEvent = onCall(options, async request => {
     const source = await readOfflineSource(tx, eventId, request.auth);
     const record = (await tx.get(getFirestore().doc('events/' + eventId + '/offlineExports/' + exportId))).data();
     if (!record || record.actorId !== source.member.uid || record.membershipVersion !== source.member.version
+      || (record.scoringEpoch ?? 0) !== eventScoringEpoch(source.event.scoring)
       || record.baselineDigest !== source.baselineDigest || record.manifestDigest !== input.manifestDigest
       || !Number.isSafeInteger(record.expiresAtMs) || Number(record.expiresAtMs) <= Date.now() || source.activeOnline) throw offlineUnavailable();
     assertOfflineExportContext(record, scope, eventId);
