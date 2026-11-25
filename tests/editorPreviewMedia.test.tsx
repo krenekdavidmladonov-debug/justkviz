@@ -91,6 +91,7 @@ test('editor measures answers while question mode is visible and removes the war
   fit.tooLong = true;
   const large = measuredQuestion('Dlouhá soukromá odpověď');
   await act(async () => root.render(<EditorPreview slide={large} quizTitle="Měření" answersReadable showAnswer={false} onShowAnswer={() => {}} />));
+  expect(host.querySelectorAll('.round-editor-preview .slide-copy')).toHaveLength(1);
   await measurementFrame();
   expect([...host.querySelectorAll('[role=status]')].some(status => status.textContent === answerLengthWarning)).toBe(true);
   expect(host.querySelector('.answer-preview-toggle input')?.hasAttribute('checked')).toBe(false);
@@ -113,7 +114,7 @@ test('preflight measures an unopened question, reports only a recommendation, an
   await act(async () => root.render(<MemoryRouter><QuizPreflightPanel quizId={quiz.id} quiz={quiz} result={runQuizPreflight(quiz)} answersReadable={false} /></MemoryRouter>));
   await measurementFrame();
   expect(host.textContent).not.toContain(answerLengthWarning);
-  expect(host.textContent).not.toContain('PRIVATE_LENGTH_SECRET');
+  expect(document.body.textContent).not.toContain('PRIVATE_LENGTH_SECRET');
   expect(host.querySelector('[aria-hidden=true][inert]')).toBeNull();
 });
 
@@ -125,7 +126,7 @@ test('measurement requests no answer images or media and the inline warning rema
   await act(async () => root.render(<><AnswerLengthWarning slide={question} quizTitle="Měření" /><button onClick={save}>Uložit otázku</button></>));
   await measurementFrame();
   expect(host.textContent).toContain(answerLengthWarning);
-  expect(host.querySelectorAll('img[src],video,audio,iframe')).toHaveLength(0);
+  expect(document.querySelectorAll('img[src],video,audio,iframe')).toHaveLength(0);
   const button = host.querySelector('button')!;
   expect(button.disabled).toBe(false);
   await act(async () => button.click());
@@ -140,17 +141,18 @@ test('measurement releases completed batches and rechecks all questions when bro
   const measured = vi.fn<(result: AnswerLengthResult) => void>();
   try {
     await act(async () => root.render(<AnswerLengthMeasurement slides={slides} quizTitle="Měření" onMeasured={measured} />));
-    expect(host.querySelectorAll('.slide-renderer').length).toBeLessThanOrEqual(8);
+    expect(host.querySelector('.slide-renderer')).toBeNull();
+    expect(document.querySelectorAll('.slide-renderer')).toHaveLength(8);
     for (let index = 0; index < 3; index++) await measurementFrame();
     expect(measured).toHaveBeenCalledTimes(1);
     expect(measured.mock.calls[0]![0].tooLong.size).toBe(0);
-    expect(host.querySelectorAll('.slide-renderer')).toHaveLength(0);
+    expect(document.querySelectorAll('.slide-renderer')).toHaveLength(0);
     fit.tooLong = true;
     await act(async () => fonts.dispatchEvent(new Event('loadingdone')));
     for (let index = 0; index < 3; index++) await measurementFrame();
     expect(measured).toHaveBeenCalledTimes(2);
     expect([...measured.mock.calls[1]![0].tooLong]).toEqual(slides.map(slide => slide.id));
-    expect(host.querySelectorAll('.slide-renderer')).toHaveLength(0);
+    expect(document.querySelectorAll('.slide-renderer')).toHaveLength(0);
   } finally {
     if (previousFonts) Object.defineProperty(document, 'fonts', previousFonts);
     else Reflect.deleteProperty(document, 'fonts');

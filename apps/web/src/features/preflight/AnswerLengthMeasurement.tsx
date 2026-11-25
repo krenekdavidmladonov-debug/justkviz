@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { buildSemanticQuizModel, resolveLegacySlideAppearance, resolveSlideDesign, type EditorSlide, type EditorQuiz } from '@filmovy-kviz/quiz-domain';
 import { RecapMeasurementContext, SlideRenderer } from '../presentation/SlideRenderer';
@@ -58,14 +59,16 @@ export function AnswerLengthMeasurement({ slides, quizTitle, onMeasured }: {
     });
     return () => { cancelled = true; if (frame !== undefined) cancelAnimationFrame(frame); };
   }, [cursor, slides, quizTitle, results, fontEpoch, complete]);
-  return <div aria-hidden="true" inert style={{ position: 'fixed', left: '-20000px', top: 0, width: 960, visibility: 'hidden', pointerEvents: 'none' }}>
+  if (batch.length === 0) return null;
+  // Keep the measurement canvases outside the editor's interactive preview and dialog.
+  return createPortal(<div aria-hidden="true" inert style={{ position: 'fixed', left: '-20000px', top: 0, width: 960, visibility: 'hidden', pointerEvents: 'none' }}>
     <RecapMeasurementContext.Provider value={true}>
       {batch.flatMap(slide => [540, 720].map(height => <div key={slide.id + ':' + height} style={{ width: 960, height }}>
         <SlideRenderer slide={{ ...slide, revealedAnswer: slide.correctAnswer ?? '' }} mode="recap" quizTitle={quizTitle}
           mediaEnabled={false} liveEventsEnabled={false} onRecapFit={tooLong => { results.set(slide.id + ':' + height, tooLong); }} />
       </div>))}
     </RecapMeasurementContext.Provider>
-  </div>;
+  </div>, document.body);
 }
 
 export function AnswerLengthWarning({ slide, quizTitle }: { readonly slide: MeasuredAnswerSlide; readonly quizTitle: string }) {
