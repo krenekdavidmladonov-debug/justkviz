@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { Timestamp } from '../functions/node_modules/firebase-admin/lib/firestore/index.js';
 import { registrationOrder } from '../functions/src/registrations/order';
 import { registrationToPrintTeam } from '../functions/src/registrations/print-adapter';
-import { ColorTypes, PDFDocument, PDFPage, PDFName, PDFRawStream } from 'pdf-lib';
+import { createRequire } from 'node:module';
+const { ColorTypes, PDFDocument, PDFPage, PDFName, PDFRawStream } = createRequire(import.meta.url)('pdf-lib/dist/pdf-lib.min.js') as typeof import('pdf-lib');
 import { PNG } from 'pngjs';
 import { describe, expect, test, vi } from 'vitest';
 
@@ -15,6 +17,16 @@ import { assertCurrentPrintSource } from '../functions/src/print/source-guard';
 import { brandArtwork } from '../packages/quiz-domain/src/brand-artwork';
 
 describe('PDF Print Center renderer', () => {
+  test('preserves baseline PDF bytes across concurrent first renders', async () => {
+    // Captured independently from renderer revision 80098803 with this synthetic fixture.
+    const options = { artifactType: 'answer-key', disposition: 'inline' } as const;
+    const [first, second] = await Promise.all([
+      renderPrintArtifact(syntheticPrintEvent(), options), renderPrintArtifact(syntheticPrintEvent(), options),
+    ]);
+    expect(Buffer.from(first.bytes).equals(Buffer.from(second.bytes))).toBe(true);
+    expect(createHash('sha256').update(first.bytes).digest('hex')).toBe('a3101f214cd4157ad1815c5dd462a56211cc732edb11ac043116616e73086514');
+    expect(first.pageCount).toBe(3);
+  });
   test('prints score table rows in registration order, including legacy teams with no timestamp', async () => {
     const registrations = [
       { id: 'a', name: 'Tym Alfa', createdAt: new Timestamp(10, 500) },

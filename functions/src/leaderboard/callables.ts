@@ -78,12 +78,24 @@ export const createEventLiveSession = securedOnCall('createEventLiveSession', op
 });
 export async function previewIn(tx: Transaction, eventId: string, sessionId: string, throughRoundId: string | null, scope: 'selected' | 'current' = 'selected') {
     const { session } = await bound(tx, eventId, sessionId);
-    const rounds = await tx.get(db().collection(`quizSnapshots/${session.snapshotId}/rounds`));
-    const teams = await tx.get(db().collection(`events/${eventId}/registrations`).where('status', '==', 'accepted'));
-    const scores = await tx.get(db().collection(`events/${eventId}/scores`));
-    const roundValues = rounds.docs.map(d => ({ id: d.id, title: String(d.data().title), position: Number(d.data().position) }));
-    const teamValues = teams.docs.map(d => ({ id: d.id, name: String(d.data().teamName), revision: Number(d.data().revision ?? 0) }));
-    const scoreValues = scores.docs.filter(d => d.data().snapshotId === session.snapshotId).map(d => ({ teamId: String(d.data().teamId), roundId: String(d.data().roundId), halfPoints: d.data().halfPoints as number | null, revision: Number(d.data().revision) }));
+    const [rounds, teams, scores] = await Promise.all([
+        tx.get(db().collection(`quizSnapshots/${session.snapshotId}/rounds`).select('title', 'position')),
+        tx.get(db().collection(`events/${eventId}/registrations`).where('status', '==', 'accepted').select('teamName', 'revision')),
+        tx.get(db().collection(`events/${eventId}/scores`).where('snapshotId', '==', session.snapshotId)
+            .select('teamId', 'roundId', 'halfPoints', 'revision')),
+    ]);
+    const roundValues = rounds.docs.map(doc => {
+        const data = doc.data();
+        return { id: doc.id, title: String(data.title), position: Number(data.position) };
+    });
+    const teamValues = teams.docs.map(doc => {
+        const data = doc.data();
+        return { id: doc.id, name: String(data.teamName), revision: Number(data.revision ?? 0) };
+    });
+    const scoreValues = scores.docs.map(doc => {
+        const data = doc.data();
+        return { teamId: String(data.teamId), roundId: String(data.roundId), halfPoints: data.halfPoints as number | null, revision: Number(data.revision) };
+    });
     const result = scope === 'current' ? calculateCurrentResults(roundValues, teamValues, scoreValues)
         : throughRoundId === null ? calculateFinalResults(roundValues, teamValues, scoreValues) : calculateResults(roundValues, throughRoundId, teamValues, scoreValues);
     return { session, result: { ...result, sourceFingerprint: fingerprint([eventId, session.snapshotId, result.sourceFingerprint]) } };

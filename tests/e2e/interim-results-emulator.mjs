@@ -11,6 +11,12 @@ const cmd = (action, revision, extra = {}) => ({ eventId: f.eventId, sessionId: 
 const publish = async (p) => f.call('controlInterimResults', cmd('publish', p.sessionRevision, { throughRoundId: p.throughRoundId, sourceFingerprint: p.sourceFingerprint }));
 try {
     let p = await f.preview();
+    const scores = f.db.collection(`events/${f.eventId}/scores`);
+    const stale = { teamId: f.teamIds[0], roundId: f.roundIds[0], halfPoints: 9999, revision: 27 };
+    await scores.doc('zz-old-snapshot').set({ ...stale, snapshotId: f.snapshotId + '-previous' });
+    await scores.doc('zz-legacy-without-snapshot').set(stale);
+    assert.deepEqual(await f.preview(), p, 'scores outside the active snapshot must not change rows or fingerprint');
+    await Promise.all([scores.doc('zz-old-snapshot').delete(), scores.doc('zz-legacy-without-snapshot').delete()]);
     assert.deepEqual(p.rows.map(r => r.rank), [1, 2, 2, 3]);
     assert.deepEqual(p.rows.map(r => r.halfPoints), [40, 35, 35, 30]);
     assert(!p.rows.some(r => r.teamName.includes('Cancelled')));

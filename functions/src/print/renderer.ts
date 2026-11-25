@@ -1,14 +1,15 @@
-import fontkit from '@pdf-lib/fontkit';
 import { brand, brandArtwork } from '@filmovy-kviz/quiz-domain';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { PDFDocument, rgb, type PDFFont, type PDFPage, type PDFImage, type RGB } from 'pdf-lib';
+import type { PDFDocument, PDFFont, PDFPage, PDFImage, RGB } from 'pdf-lib';
 import { PrintCenterError } from './errors.js';
 import { PRINT_LIMITS } from './limits.js';
 import { answerDisplay } from './snapshot-mapper.js';
 import type { PrintEvent, PrintOptions, PrintQuestion, PrintTeam, RenderedPrintArtifact } from './types.js';
 
 const require = createRequire(import.meta.url);
+// The published bundle avoids loading hundreds of CommonJS files on the first PDF request.
+const { PDFDocument: PdfDocument, rgb } = require('pdf-lib/dist/pdf-lib.min.js') as typeof import('pdf-lib');
 const PAGE = { width: 595.28, height: 841.89 } as const;
 const MARGIN = 42;
 const INK = rgb(0.08, 0.08, 0.08);
@@ -619,9 +620,11 @@ export async function renderPrintArtifact(event: PrintEvent, options: PrintOptio
     ...(options.showLogo === undefined ? {} : { showLogo: options.showLogo }),
     instructions: options.showInstructions === false ? '' : event.quiz.printTemplate?.instructions || DEFAULT_INSTRUCTIONS,
   } } };
-  const doc = await PDFDocument.create();
+  const doc = await PdfDocument.create();
+  const [{ default: fontkit }, [regularBytes, regularExtendedBytes, boldBytes, boldExtendedBytes]] = await Promise.all([
+    import('@pdf-lib/fontkit'), loadFontBytes(),
+  ]);
   doc.registerFontkit(fontkit);
-  const [regularBytes, regularExtendedBytes, boldBytes, boldExtendedBytes] = await loadFontBytes();
   const fonts: Fonts = {
     regular: {
       base: await doc.embedFont(new Uint8Array(regularBytes), { subset: true }),
