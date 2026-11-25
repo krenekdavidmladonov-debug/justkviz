@@ -94,6 +94,19 @@ test('event-only moderator reads and authorizes the exact derived clip without s
   await expect(authorizePrivateMedia(auth, reference)).rejects.toMatchObject({ code: 'permission-denied' });
 });
 
+test('a matching moderator view rechecks its binding without reading slides or clip assets', async () => {
+  state.records['sessions/live'] = { eventId: 'event', quizId: 'quiz', snapshotId: 'frozen' };
+  acknowledgeFixtureChange();
+  const read = (knownVersion?: string) => readAccessData.run({ auth, data: {
+    operation: 'snapshotSlides', sessionId: 'live', snapshotId: 'frozen', knownVersion,
+  } } as unknown as Parameters<typeof readAccessData.run>[0]) as Promise<{ version: string; slides?: Data[] }>;
+  const initial = await read();
+  expect(initial.slides?.[0]).toMatchObject({ mediaSource: reference, correctAnswer: '' });
+  state.reads = [];
+  expect(await read(initial.version)).toEqual({ version: initial.version });
+  expect(state.reads.sort()).toEqual(['events', 'memberships/moderator', 'quizSnapshots/frozen', 'sessions/live']);
+});
+
 test('trusted live loader resolves the same clip while retaining the frozen question, answer, and original-video choice', async () => {
   const slide = await loadSlide(transaction as unknown as Parameters<typeof loadSlide>[0], 'quiz', 1, 'frozen');
   expect(slide).toMatchObject({ id: 'question', text: 'Frozen prompt', options: ['A', 'B'], correctAnswer: 'PRIVATE_ANSWER', mediaSource: reference,

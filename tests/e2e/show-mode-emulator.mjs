@@ -31,6 +31,15 @@ async function live(f, name, extra = {}) {
 
 const f = await finalFixture(13);
 try {
+  const request = { operation: 'snapshotSlides', sessionId: f.sessionId, snapshotId: f.snapshotId };
+  const view = await f.moderator.call('readAccessData', request);
+  assert(view.slides.some(slide => slide.correctAnswer === 'PRIVATE ANSWER SENTINEL'));
+  assert.deepEqual(await f.moderator.call('readAccessData', { ...request, knownVersion: view.version }), { version: view.version });
+  const unrevealed = await f.rawPublic();
+  assert.equal(unrevealed.answerRevealed, false);
+  assert(!JSON.stringify(unrevealed).includes('PRIVATE ANSWER SENTINEL'));
+  assert(!Object.hasOwn(unrevealed, 'revealedAnswer'));
+
   // Question reveal is captured privately; overlay never republishes answer/design/audio.
   await live(f, 'revealAnswer');
   const before = await f.session();

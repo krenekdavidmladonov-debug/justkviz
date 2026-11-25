@@ -122,6 +122,52 @@ try {
     await denied(() => moderator.call('readAccessData', { operation: 'snapshotSlides', snapshotId: eventB + '-snapshot' }));
     for (const name of ['updateEvent', 'cancelEvent', 'archiveEvent', 'configureEventRegistration', 'adminAddEventTeam', 'adminUpdateEventTeam', 'adminCancelEventRegistration', 'createEventLiveSession', 'previewInterimResults', 'controlInterimResults', 'previewFinalResults', 'controlFinalReveal', 'listRefereeAccess', 'issueRefereeAccess', 'changeRefereeAccess', 'previewEventTeamMessage', 'createEventTeamMessage', 'listEventTeamMessages', 'getEventTeamMessage']) await denied(() => moderator.call(name, { eventId: eventB }));
   });
+  await test('moderator validates the frozen view across navigation, permission, epoch and snapshot changes', async () => {
+    const sessionId = prefix + '-moderation', snapshotId = eventA + '-snapshot';
+    const sessionRef = db.doc('sessions/' + sessionId), eventRef = db.doc('events/' + eventA);
+    const membershipRef = db.doc('memberships/' + moderator.uid);
+    const member = (await membershipRef.get()).data();
+    const read = (knownVersion, extra = {}) => moderator.call('readAccessData', {
+      operation: 'snapshotSlides', sessionId, snapshotId, ...(knownVersion ? { knownVersion } : {}), ...extra,
+    });
+    await put(sessionRef.path, { eventId: eventA, quizId: quizA, snapshotId, revision: 1 });
+    const full = await read();
+    assert.equal(typeof full.version, 'string');
+    assert.deepEqual(full.slides, await moderator.call('readAccessData', { operation: 'snapshotSlides', snapshotId }));
+    assert.equal(full.slides[0].correctAnswer, 'ANSWER_PRIVATE_SENTINEL');
+    await sessionRef.update({ revision: 2, currentSlidePosition: 2, answerRevealed: true });
+    assert.deepEqual(await read(full.version), { version: full.version });
+    const current = (await eventRef.get()).data();
+    try {
+      await eventRef.update({ 'scoring.epoch': 1 });
+      const reset = await read(full.version);
+      assert.notEqual(reset.version, full.version);
+      assert.deepEqual(reset.slides, full.slides);
+      await membershipRef.update({ permissions: ['event.read', 'event.live'], version: member.version + 1 });
+      const redacted = await read(reset.version);
+      assert.notEqual(redacted.version, reset.version);
+      assert.equal(redacted.slides[0].correctAnswer, '');
+      assert.equal(redacted.slides[0].moderatorNote, '');
+      assert(!JSON.stringify(redacted).includes('PRIVATE_SENTINEL'));
+      await membershipRef.update({ permissions: ['event.read'] });
+      await denied(() => read(redacted.version));
+      await membershipRef.set(member);
+      await denied(() => read(full.version, { snapshotId: eventB + '-snapshot' }));
+      const replacement = snapshotId + '-new';
+      await put('quizSnapshots/' + replacement, { quizId: quizA, eventId: eventA });
+      await put('quizSnapshots/' + replacement + '/slides/new', { title: 'Replacement', kind: 'intro', position: 1 });
+      await eventRef.update({ 'quizAssignment.snapshotId': replacement });
+      await denied(() => read(full.version));
+      await denied(() => read(full.version, { snapshotId: replacement }));
+      await sessionRef.update({ snapshotId: replacement });
+      const changed = await read(full.version, { snapshotId: replacement });
+      assert.notEqual(changed.version, full.version);
+      assert.equal(changed.slides[0].title, 'Replacement');
+    } finally {
+      await membershipRef.set(member);
+      await eventRef.update({ scoring: current.scoring, quizAssignment: current.quizAssignment });
+    }
+  });
   await test('snapshot export cannot turn event-note access into forbidden source-note access', async () => {
     const exporter = await account('restricted-exporter', { role: 'manager', permissions: ['quiz.read', 'quiz.export', 'quiz.answers.read', 'event.read', 'event.manage', 'event.notes.read'], quizzes: selected([quizA]), events: selected([eventA]) });
     const before = (await db.doc(`events/${eventA}`).get()).get('quizAssignment');

@@ -210,8 +210,9 @@ function LiveSessionControl({ sessionId, routeSearch }: { readonly sessionId: st
       setSlides(value); setLoadedSlideSource(source);
     }, () => {
       if (!active) return;
+      active = false;
       setSlides([]); setLoadedSlideSource(null); setError(loadingError('slides'));
-    }, session.snapshotId);
+    }, session.snapshotId, session.sessionId);
     return () => { active = false; unsubscribe(); };
   }, [session?.sessionId, session?.quizId, session?.snapshotId, slideReadAttempt]);
 

@@ -34,13 +34,17 @@ export async function accessCall<T>(name: string, data: Record<string, unknown> 
 export const privateRead = <T,>(operation: string, data: Record<string, unknown> = {}) => accessCall<T>('readAccessData', { operation, ...data });
 export interface PrivateDocument { id: string; data: Record<string, unknown> }
 /** Bounded polling avoids downloading contact/answer documents to redact them in a browser. */
-export function watchPrivate<T>(operation: string, data: Record<string, unknown>, receive: (value: T) => void, fail: (error: Error) => void, interval = 2000) {
+export function watchPrivate<T>(operation: string, data: Record<string, unknown> | (() => Record<string, unknown>), receive: (value: T) => void, fail: (error: Error) => void, interval = 2000, onInvalidate?: () => void) {
   let stopped = false, timer: ReturnType<typeof setTimeout>;
-  const stop = () => { stopped = true; clearTimeout(timer); stops.delete(stop); };
-  stops.add(stop);
+  const stop = () => { stopped = true; clearTimeout(timer); stops.delete(invalidate); };
+  const invalidate = () => {
+    if (stopped) return;
+    stop(); onInvalidate?.();
+  };
+  stops.add(invalidate);
   const poll = async () => {
     try {
-      const result = await privateRead<T>(operation, data);
+      const result = await privateRead<T>(operation, typeof data === 'function' ? data() : data);
       if (!stopped) receive(result);
     } catch (error) {
       if (!stopped) { fail(error instanceof Error ? error : new Error('Obsah nelze načíst.')); stop(); }

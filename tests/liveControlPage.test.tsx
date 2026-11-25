@@ -171,3 +171,41 @@ test('event managers can still end only the quiz', async () => {
   await act(async () => end.click());
   expect(invoke).toHaveBeenCalledExactlyOnceWith('endLiveSession', { sessionId: 'A', expectedRevision: 10 });
 });
+
+test('snapshot changes hide private answers until the new scope is confirmed and ignore old slide callbacks', async () => {
+  records.set('A', { ...session('A'), snapshotId: 'snapshot-old' });
+  const reads: { snapshotId?: string; receive: (value: readonly LiveControlSlide[]) => void; fail: (error: Error) => void }[] = [];
+  vi.mocked(subscribeLiveControlSlides).mockImplementation((_quiz, receive, fail, snapshotId) => {
+    reads.push({ snapshotId, receive, fail });
+    return () => {};
+  });
+  let updateSession!: (value: LiveControlState) => void;
+  vi.mocked(subscribeLiveControl).mockImplementation((_id, receive) => { updateSession = receive; receive(records.get('A')!); return () => {}; });
+  await mount();
+  await act(async () => reads[0]!.receive(slides.map(slide => ({ ...slide, correctAnswer: 'OLD-PRIVATE-ANSWER' }))));
+  expect(host.textContent).toContain('OLD-PRIVATE-ANSWER');
+  await act(async () => updateSession({ ...records.get('A')!, snapshotId: 'snapshot-new', revision: 11 }));
+  expect(host.textContent).not.toContain('OLD-PRIVATE-ANSWER');
+  expect(host.querySelector('.live-control')).toBeNull();
+  await act(async () => reads[0]!.receive(slides.map(slide => ({ ...slide, correctAnswer: 'LATE-PRIVATE-ANSWER' }))));
+  expect(host.textContent).not.toContain('LATE-PRIVATE-ANSWER');
+  await act(async () => reads[1]!.receive(slides.map(slide => ({ ...slide, correctAnswer: 'NEW-PRIVATE-ANSWER' }))));
+  expect(host.textContent).toContain('NEW-PRIVATE-ANSWER');
+  expect(reads.map(read => read.snapshotId)).toEqual(['snapshot-old', 'snapshot-new']);
+  expect(vi.mocked(subscribeLiveControlSlides).mock.calls.at(-1)?.[4]).toBe('A');
+});
+
+test('a failed private slide read removes the private view and blocks late delivery until an explicit retry', async () => {
+  let receive!: (value: readonly LiveControlSlide[]) => void, fail!: (error: Error) => void;
+  vi.mocked(subscribeLiveControlSlides).mockImplementation((_quiz, value, error) => {
+    receive = value; fail = error; value(slides.map(slide => ({ ...slide, correctAnswer: 'PRIVATE-ANSWER' })));
+    return () => {};
+  });
+  await mount();
+  expect(host.textContent).toContain('PRIVATE-ANSWER');
+  await act(async () => fail(new Error('Permission revoked')));
+  expect(host.textContent).not.toContain('PRIVATE-ANSWER');
+  expect(host.querySelector('.live-control')).toBeNull();
+  await act(async () => receive(slides.map(slide => ({ ...slide, correctAnswer: 'LATE-PRIVATE-ANSWER' }))));
+  expect(host.textContent).not.toContain('LATE-PRIVATE-ANSWER');
+});

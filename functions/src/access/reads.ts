@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { loadEventQuizState } from '../events/quiz-state.js';
 import { scoringRoundsFromSlides, eventScoringEpoch, eventDisposition, hasPermission, normalizeSlideDesign, normalizeResultTemplates, normalizePrintTemplate } from '@filmovy-kviz/quiz-domain';
 import { assertEventReadable } from '../events/guards.js';
@@ -56,13 +57,17 @@ async function scopedList(tx: Transaction, kind: 'quiz' | 'event', member: Membe
   return result.docs;
 }
 /** An event authorizes only its assigned immutable snapshot, never the source quiz. */
-export async function snapshotResource(auth: AuthIdentity, snapshotId: string, tx: Transaction): Promise<Resource> {
+async function snapshotAccess(auth: AuthIdentity, snapshotId: string, tx: Transaction, moderator = false) {
   const matches = await tx.get(db().collection('events').where('quizAssignment.snapshotId', '==', snapshotId).limit(2));
   if (matches.size !== 1) throw new HttpsError('permission-denied', 'Připravený kvíz není dostupný.');
   const resource: Resource = { kind: 'event', id: matches.docs[0]!.id };
-  const member = await authorize(auth, ['event.read'], resource, tx);
-  assertEventReadable(matches.docs[0]!.data(), member);
-  return resource;
+  const member = await authorize(auth, moderator ? ['event.read', 'event.live'] : ['event.read'], resource, tx);
+  const event = matches.docs[0]!.data();
+  assertEventReadable(event, member);
+  return { resource, member, event };
+}
+export async function snapshotResource(auth: AuthIdentity, snapshotId: string, tx: Transaction): Promise<Resource> {
+  return (await snapshotAccess(auth, snapshotId, tx)).resource;
 }
 export const readAccessData = onCall({ region: 'europe-west1', cors: true, maxInstances: 20 }, async request => {
   await freshIdentity(request.auth);
@@ -121,19 +126,36 @@ export const readAccessData = onCall({ region: 'europe-west1', cors: true, maxIn
       return wire({ id: quizId, data: pick(root, quizFields), rounds: roundViews });
     }
     if (data.operation === 'snapshotRounds' || data.operation === 'snapshotSlides') {
-      const snapshotId = id(data.snapshotId), resource = await snapshotResource(request.auth, snapshotId, tx);
-      const member = await authorize(request.auth, ['event.read'], resource, tx);
+      const snapshotId = id(data.snapshotId);
+      const sessionId = data.operation === 'snapshotSlides' && data.sessionId !== undefined ? id(data.sessionId) : null;
+      const { resource, member, event } = await snapshotAccess(request.auth, snapshotId, tx, sessionId !== null);
       const ref = db().doc(`quizSnapshots/${snapshotId}`);
-      const rows = await tx.get(ref.collection(data.operation === 'snapshotRounds' ? 'rounds' : 'slides').orderBy('position').limit(401));
-      if (rows.size > 400) throw new HttpsError('resource-exhausted', 'Kvíz je příliš velký.');
       if (data.operation === 'snapshotRounds') {
+        const rows = await tx.get(ref.collection('rounds').orderBy('position').limit(401));
+        if (rows.size > 400) throw new HttpsError('resource-exhausted', 'Kvíz je příliš velký.');
         const counts = await snapshotRoundQuestionCounts(tx, ref.collection('slides'), rows.docs);
         return wire(rows.docs.map(d => ({ id: d.id, data: { ...pick(d.data(), roundFields), questionCount: counts.get(d.id) } })));
       }
       const root = stored(await tx.get(ref));
       const quizId = id(root.quizId);
+      const answers = member.permissions.includes('event.answers.read'), notes = member.permissions.includes('event.notes.read');
+      let version: string | undefined;
+      if (sessionId) {
+        const session = (await tx.get(db().doc(`sessions/${sessionId}`))).data();
+        if (!session || session.eventId !== resource.id || session.snapshotId !== snapshotId || session.quizId !== quizId
+          || (root.eventId !== undefined && root.eventId !== resource.id)) {
+          throw new HttpsError('permission-denied', 'Připravený kvíz není dostupný pro toto moderování.');
+        }
+        // This validator covers the private view only. Session navigation revisions never invalidate frozen slides.
+        version = createHash('sha256').update(JSON.stringify(['moderator-slides-v1', member.uid, member.version,
+          resource.id, sessionId, snapshotId, eventScoringEpoch(event.scoring), answers, notes])).digest('base64url');
+        if (data.knownVersion === version) return { version };
+      }
+      const rows = await tx.get(ref.collection('slides').orderBy('position').limit(401));
+      if (rows.size > 400) throw new HttpsError('resource-exhausted', 'Kvíz je příliš velký.');
       const assets = await loadSnapshotClipAssets(tx, db(), quizId, rows.docs.map(d => d.data()));
-      return wire(rows.docs.map(d => slideView(d.id, resolveSnapshotClip(quizId, d.data(), assets), member.permissions.includes('event.answers.read'), member.permissions.includes('event.notes.read'))));
+      const slides = rows.docs.map(d => slideView(d.id, resolveSnapshotClip(quizId, d.data(), assets), answers, notes));
+      return wire(version ? { version, slides } : slides);
     }
     if (['event', 'registrations', 'roster', 'eventManagement'].includes(String(data.operation))) {
       const eventId = id(data.eventId), resource: Resource = { kind: 'event', id: eventId };
