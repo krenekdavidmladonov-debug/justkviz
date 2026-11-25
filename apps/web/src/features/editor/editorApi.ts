@@ -122,4 +122,4 @@ export const removeQuizRound = (
   targetRoundId?: string,
 ) => invoke('removeQuizRound', { quizId, roundId, mode, expectedRevision: revision, ...(targetRoundId ? { targetRoundId } : {}) });
 
-export const createQuizRound = (quizId: string, revision: number, title: string) => invoke('createQuizRound', { quizId, expectedRevision: revision, title });
+export const createQuizRound = (quizId: string, revision: number, title: string, position?: number) => invoke('createQuizRound', { quizId, expectedRevision: revision, title, ...(position === undefined ? {} : { position }) });

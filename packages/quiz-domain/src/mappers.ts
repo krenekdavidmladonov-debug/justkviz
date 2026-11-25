@@ -117,6 +117,8 @@ export function mapEditorSlide(id: string, data: DocumentData): EditorSlide {
     storedKind,
     kind: (kindSet.has(storedKind) ? storedKind : 'legacy') as EditableSlideKind,
     isQuestion: data.isQuestion === true,
+    ...(data.generatedAgendaSlide === true ? { generatedAgendaSlide: true } : {}),
+    ...(data.customRoundHeading === true ? { customRoundHeading: true } : {}),
     ...(data.automaticAgenda === true ? { automaticAgenda: true } : {}),
     ...(typeof data.roundId === 'string' ? { roundId: data.roundId } : {}),
     ...(typeof data.roundTitle === 'string' ? { roundTitle: data.roundTitle } : {}),

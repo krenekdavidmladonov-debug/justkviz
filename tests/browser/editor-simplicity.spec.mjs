@@ -21,8 +21,8 @@ test('A–E real browser workflows and larger synthetic quiz comparison', async 
   async function scenario(name, action) { current={steps:[]}; const start=clock.now(); await action(); metrics.scenarios[name]={ interactions:current.steps.length, elapsedMs:clock.now()-start, waitsOver300ms:current.steps.filter(s=>s.ms>300).length, steps:current.steps }; }
   async function save() { await step('Uložit',async()=>{await page.getByRole('button',{name:'Uložit vše',exact:true}).click();await expect(page.locator('.save-state')).toHaveText('Uloženo');}); }
   async function addQuestion(index) {
-    await step('Přidat otázku',async()=>{await round(page,index).getByRole('button',{name:/^\+?\s*Přidat otázku$/,exact:false}).click();});
-    if(phase==='baseline') await step('Vybrat volnou odpověď',async()=>page.getByRole('dialog',{name:/Typ otázky/}).getByRole('button',{name:'Volná odpověď',exact:true}).click());
+    await step('Přidat otázku',async()=>{if(phase==='baseline')await round(page,index).getByRole('button',{name:/^\+?\s*Přidat otázku$/,exact:false}).click();else await round(page,index).locator('.outline-insert').last().click();});
+    await step('Vybrat volnou odpověď',async()=>page.getByRole('dialog',{name:phase==='baseline'?/Typ otázky/:/Přidat do osnovy/}).getByRole('button',{name:'Volná odpověď',exact:true}).click());
     await expect(prompt(page)).toBeVisible();
   }
   await mkdir(out,{recursive:true});
@@ -71,7 +71,7 @@ test('A–E real browser workflows and larger synthetic quiz comparison', async 
       await expect(round(page,1)).toContainText('Bonusové kolo');
       await step('Vybrat otázku',async()=>{await page.locator('.outline-question').first().click();await expect(prompt(page)).toHaveValue('Kdo režíroval film Amadeus?');});
       if(phase==='baseline') await step('Přesunout otázku do jiného kola',()=>page.getByLabel('Přesunout do kola').selectOption({label:'2. kolo – Bonusové kolo'}));
-      else await step('Přetáhnout otázku do jiného kola',async()=>{await page.locator('li[data-question-id]').first().getByRole('button',{name:/^Přetáhnout otázku/}).dragTo(round(page,1).locator('.outline-round-header'),{targetPosition:{x:80,y:30}});await expect(round(page,1).locator('.outline-question')).toContainText('Kdo režíroval film Amadeus?');await expect(page.locator('.editor-outline')).toHaveAttribute('aria-busy','false');});
+      else await step('Přetáhnout otázku do jiného kola',async()=>{await page.locator('[data-question-id]').first().getByRole('button',{name:/^Přetáhnout otázku/}).dragTo(round(page,1).locator('.outline-round-header'),{targetPosition:{x:80,y:30}});await expect(round(page,1).locator('.outline-question')).toContainText('Kdo režíroval film Amadeus?');await expect(page.locator('.editor-outline')).toHaveAttribute('aria-busy','false');});
       await expect(round(page,1)).toContainText('Kdo režíroval film Amadeus?');
       await page.screenshot({path:out+'/C-outline.png',fullPage:true});
     });
@@ -104,7 +104,7 @@ test('A–E real browser workflows and larger synthetic quiz comparison', async 
       batch.set(ref.collection('slides').doc('recap'+r),{...mediaSlide('recap'),position:r*12+12,roundId:rid,isQuestion:false});
     }await batch.commit();
     const navigation=[],selection=[],typing=[],saving=[];
-    for(let i=0;i<5;i++){const t=clock.now();await page.goto('/admin/quizzes/'+largeId+'/edit');await expect(page.locator('.outline-round')).toHaveCount(6);if(phase==='current')for(let r=0;r<6;r++){const toggle=round(page,r).locator('.outline-collapse');if(await toggle.getAttribute('aria-expanded')==='false')await toggle.click();}await expect(page.locator('.outline-question')).toHaveCount(60);navigation.push(clock.now()-t);}
+    for(let i=0;i<5;i++){const t=clock.now();await page.goto('/admin/quizzes/'+largeId+'/edit');await expect(page.locator('.outline-round')).toHaveCount(6);await expect(page.locator('.outline-question')).toHaveCount(60);navigation.push(clock.now()-t);}
     metrics.largeQuizMethod='All six rounds explicitly expanded for original all-expanded comparison; navigation includes expansion interactions where required. Separate performance-default-round.json measures the compact default workflow.';
     for(let i=0;i<24;i++){
       const index=i*17%60,t=clock.now();await page.locator('.outline-question').nth(index).click();await expect(prompt(page)).toHaveValue('Filmová otázka '+(index+1));selection.push(clock.now()-t);
@@ -176,11 +176,11 @@ test('focused default active round responsiveness on 60 question fixture',async(
     if(phase==='current')await round(page,0).locator('.outline-round-select').click();else await round(page,0).getByRole('button',{name:'Úvod a vzhled kola',exact:true}).click();
     await expect(round(page,0).locator('.outline-question')).toHaveCount(10);const openRoundMs=clock.now()-openStart,editingRows=await page.locator('.outline-question').count();
     for(let i=0;i<24;i++){
-      const index=i*7%10,label=labels.get(index)||'Filmová otázka '+(index+1),t=clock.now();await page.locator('li[data-question-id="q'+index+'"] .outline-question').click();await expect(prompt(page)).toHaveValue(label);selection.push(clock.now()-t);
+      const index=i*7%10,label=labels.get(index)||'Filmová otázka '+(index+1),t=clock.now();await page.locator('[data-question-id="q'+index+'"] .outline-question').click();await expect(prompt(page)).toHaveValue(label);selection.push(clock.now()-t);
       const revised=label+' upravena',inputStart=clock.now();await prompt(page).fill(revised);await expect(prompt(page)).toHaveValue(revised);typing.push(clock.now()-inputStart);
       const saveStart=clock.now();await page.getByRole('button',{name:'Uložit vše',exact:true}).click();await expect(page.locator('.save-state')).toHaveText('Uloženo');saving.push(clock.now()-saveStart);labels.set(index,revised);
     }
-    const result={phase,status:'PASS',browser:browser.version(),method:'Same 60-question/6-round fixture. Five warmed navigations, then one measured round selection in each version. Twenty-four question selection/input/save samples within that already active first round. Baseline default has all 60 rows rendered; current default renders only active round 10 rows. Original all-expanded benchmark remains in measurements-all-expanded.json; this is a separate default-workflow comparison.',initialRows,editingRows,openRoundMs,navigation:summary(navigation),selection:summary(selection),typing:summary(typing),save:summary(saving),samples:{navigation,selection,typing,saving}};
+    const result={phase,status:'PASS',browser:browser.version(),method:'Same 60-question/6-round fixture. Five warmed navigations, then one measured round selection in each version. Twenty-four question selection/input/save samples within that already active first round. The evening outline displays all 60 questions. Original all-expanded benchmark remains in measurements-all-expanded.json; this is a separate default-workflow comparison.',initialRows,editingRows,openRoundMs,navigation:summary(navigation),selection:summary(selection),typing:summary(typing),save:summary(saving),samples:{navigation,selection,typing,saving}};
     await writeFile(out+'/performance-default-round.json',JSON.stringify(result,null,2));
     if(phase==='current')await expect(page.locator('.readiness-chip')).toHaveText('Připraveno');await page.screenshot({path:out+'/large-quiz-default-round.png',fullPage:true});
   }finally{await identity.db.recursiveDelete(ref);await identity.dispose();}

@@ -150,6 +150,8 @@ export function RoundSettingsForm({
     <section className="editor-form-stack">
       <header className="content-form-heading"><span>{round.position}. kolo</span><h2>Nastavení kola</h2><p>{round.questions.length} otázek</p></header>
       <label className="form-field" data-preflight-field="roundTitle">Název kola *<input disabled={disabled || round.id === 'roundless'} value={title} onChange={(event) => onTitle(event.target.value)} /></label>
+      {slide && !round.settingsSlide && <p className="field-help">Kolo zatím nemá úvodní snímek. Přidáte ho úpravou nadpisu, textu nebo vzhledu úvodu.</p>}
+      {slide && <label className="form-field">Nadpis úvodu kola<input disabled={disabled} maxLength={500} value={!slide.customRoundHeading && slide.title === round.title ? title : slide.title} onChange={event => onChange({ ...slide, title: event.target.value, customRoundHeading: event.target.value !== title })} /></label>}
       {slide && <label className="form-field">Doprovodný text úvodu kola<textarea disabled={disabled} value={slide.text} onChange={event => onChange({ ...slide, text: event.target.value })} /></label>}
       {!slide && <p className="field-help">Toto kolo nemá samostatnou úvodní obrazovku. Název kola lze přesto bezpečně upravit.</p>}
     </section>

@@ -339,7 +339,7 @@ export function parseOfflineManifest(value: unknown): OfflineEventManifest {
     }
     const slides = array(data.slides, offlineEventLimits.slides).map(value => {
         const slide = record(value);
-        const allowed = ['id', 'position', 'storedKind', 'kind', 'isQuestion', 'roundId', 'roundTitle', 'title', 'text', 'moderatorNote', 'options', 'correctAnswer', 'media', 'presentation', 'questionNumber', 'questionCount', 'backgroundImage', 'questionImage', 'answerImage', 'mediaSource', 'originalMediaSource', 'backgroundOverlay', 'clipStartSeconds', 'clipEndSeconds', 'hasLegacyData', 'hidden', 'design', 'answerDesign', 'automaticAgenda', 'authoringStatus', 'answerMode', 'imageLayout', 'answerExplanation'];
+        const allowed = ['id', 'position', 'storedKind', 'kind', 'isQuestion', 'roundId', 'roundTitle', 'title', 'text', 'moderatorNote', 'options', 'correctAnswer', 'media', 'presentation', 'questionNumber', 'questionCount', 'backgroundImage', 'questionImage', 'answerImage', 'mediaSource', 'originalMediaSource', 'backgroundOverlay', 'clipStartSeconds', 'clipEndSeconds', 'hasLegacyData', 'hidden', 'design', 'answerDesign', 'customRoundHeading', 'generatedAgendaSlide', 'automaticAgenda', 'authoringStatus', 'answerMode', 'imageLayout', 'answerExplanation'];
         if (Object.keys(slide).some(key => !allowed.includes(key))) {
             fail();
         }

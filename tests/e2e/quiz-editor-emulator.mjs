@@ -575,7 +575,7 @@ async function run() {
   const thankYou = await invoke('createQuizSlide', {
     quizId: createdQuizId, expectedRevision: 4, position: 1, scope: 'quiz', slide: thankYouSlide,
   });
-  const savedThankYou = (await newQuizProgram()).docs.at(-1);
+  const savedThankYou = (await newQuizProgram()).docs[0];
   assert.equal(savedThankYou.id, thankYou.selectedSlideId);
   assert.equal(savedThankYou.data().roundId, undefined);
   assert.equal(savedThankYou.data().isQuestion, false);
@@ -588,18 +588,18 @@ async function run() {
     quizId: createdQuizId, expectedRevision: thankYou.revision, position: thankYou.slideCount + 1, scope: 'quiz',
     slide: { ...thankYouSlide, kind: 'info', title: 'Organizační sdělení' },
   });
-  assert.deepEqual((await newQuizProgram()).docs.slice(-2).map(slide => slide.id), [info.selectedSlideId, thankYou.selectedSlideId]);
+  assert.equal((await newQuizProgram()).docs.at(-1).id, info.selectedSlideId);
   const closing = await invoke('createQuizSlide', {
     quizId: createdQuizId, expectedRevision: info.revision, position: info.slideCount + 1, scope: 'quiz',
     slide: { ...thankYouSlide, kind: 'end', title: 'Závěr' },
   });
-  assert.deepEqual((await newQuizProgram()).docs.slice(-3).map(slide => slide.id), [info.selectedSlideId, thankYou.selectedSlideId, closing.selectedSlideId]);
+  assert.deepEqual((await newQuizProgram()).docs.slice(-2).map(slide => slide.id), [info.selectedSlideId, closing.selectedSlideId]);
   const lastRound = await invoke('createQuizRound', {
-    quizId: createdQuizId, expectedRevision: closing.revision, title: 'Kolo před vyhlášením',
+    quizId: createdQuizId, expectedRevision: closing.revision, position: closing.slideCount, title: 'Kolo před vyhlášením',
   });
   const program = (await newQuizProgram()).docs;
-  assert.deepEqual(program.slice(-4).map(slide => slide.data().kind), ['round', 'recap', 'thank-you', 'end']);
-  assert.equal(program.at(-4).id, lastRound.selectedSlideId);
+  assert.deepEqual(program.slice(-4).map(slide => slide.data().kind), ['info', 'round', 'recap', 'end']);
+  assert.equal(program.at(-3).id, lastRound.selectedSlideId);
 
   const sourceBeforeCopy = (await getDoc(createdQuizRef)).data();
   const sourceProgramBefore = program.map(slide => ({ id: slide.id, data: slide.data() }));
@@ -651,6 +651,47 @@ async function run() {
     await memberRef.set({ ...copyMembership, version: copyMembership.version + 2 });
   }
 
+  // Use the independent copy to exercise explicit gaps without changing the source or its snapshot.
+  const copyProgram = async () => (await getDocs(query(collection(copyRef, 'slides'), orderBy('position')))).docs;
+  let copyRevision = (await getDoc(copyRef)).data().revision;
+  const added = await invoke('createQuizRound', { quizId: copy.quizId, expectedRevision: copyRevision, position: 1, title: 'Výchozí jméno' });
+  copyRevision = added.revision;
+  const introduced = (await copyProgram()).find(slide => slide.id === added.selectedSlideId);
+  const editedRoundId = introduced.data().roundId;
+  const recap = (await copyProgram()).find(slide => slide.data().roundId === editedRoundId && slide.data().kind === 'recap');
+  const rename = async title => { copyRevision = (await invoke('updateQuizRound', { quizId: copy.quizId, expectedRevision: copyRevision, roundId: editedRoundId, title })).revision; };
+  await rename('Nový název');
+  for (const slide of [introduced, recap]) assert.equal((await getDoc(slide.ref)).data().title, 'Nový název');
+  for (const [slide, title] of [[introduced, 'Program pro diváky'], [recap, 'Vzpomínáte si?']]) {
+    copyRevision = (await invoke('updateQuizSlide', { quizId: copy.quizId, expectedRevision: copyRevision, slideId: slide.id,
+      slide: editorSlide({ kind: slide.data().kind, title, options: [], text: '', correctAnswer: '' }) })).revision;
+  }
+  await rename('Poslední název');
+  assert.equal((await getDoc(introduced.ref)).data().title, 'Program pro diváky');
+  assert.equal((await getDoc(recap.ref)).data().title, 'Vzpomínáte si?');
+  for (const slide of [introduced, recap]) {
+    const data = (await getDoc(slide.ref)).data();
+    assert.equal(data.roundId, editedRoundId); assert.equal(data.roundTitle, 'Poslední název');
+    await expectFunctionError(() => invoke('deleteQuizSlide', { quizId: copy.quizId, expectedRevision: copyRevision, slideId: slide.id }), 'functions/failed-precondition');
+  }
+  const questionInput = editorSlide({ kind: 'free', title: 'Nová otázka', correctAnswer: 'Odpověď', options: [] });
+  for (const gap of ['first', 'middle', 'last']) {
+    const before = await copyProgram();
+    const index = gap === 'first' ? 0 : gap === 'last' ? before.length : before.findIndex(slide => slide.id === recap.id);
+    const target = before.slice(0, index).reverse().find(slide => slide.data().roundId) ?? before.slice(index).find(slide => slide.data().roundId);
+    const roundId = target.data().roundId;
+    const request = { quizId: copy.quizId, expectedRevision: copyRevision, position: index + 1, roundId, slide: questionInput };
+    await expectFunctionError(() => invoke('createQuizSlide', { ...request, roundId: 'neexistujici-kolo' }), 'functions/failed-precondition');
+    const result = await invoke('createQuizSlide', request); copyRevision = result.revision;
+    const expected = before.map(slide => slide.id); expected.splice(index, 0, result.selectedSlideId);
+    const after = await copyProgram();
+    assert.deepEqual(after.map(slide => slide.id), expected);
+    assert.equal(after[index].data().roundId, roundId);
+    const members = after.filter(slide => slide.data().roundId === roundId && slide.data().isQuestion);
+    assert.deepEqual(members.map(slide => slide.data().questionNumber), members.map((_, offset) => offset + 1));
+    assert(members.every(slide => slide.data().questionCount === members.length));
+  }
+
   const sourceAssetFixture = adminDb.doc(`quizzes/${createdQuizId}/slides/${savedThankYou.id}`);
   await sourceAssetFixture.update({ backgroundImage: `quiz-asset:${createdQuizId}/${'a'.repeat(64)}` });
   const assetCopyRequest = { ...copyRequest, requestId: 'editor-e2e-duplicate-owned', title: 'Neúplná kopie nesmí vzniknout' };
@@ -673,7 +714,7 @@ async function run() {
     importedZeroTimingRoundTripVerified: true, importedPrivateFieldsPreserved: true,
     createQuizAuthorizationAndIdempotenceVerified: true, newQuizRoundQuestionSaveReloadVerified: true,
     newQuizConflictVerified: true, historicalSnapshotUntouched: true,
-    thankYouOutsideRoundsAndBeforeClosingVerified: true,
+    thankYouAtRequestedPositionVerified: true,
     wholeQuizCopyIsolationAndRetryVerified: true, missingMediaCannotCreatePartialCopy: true,
   }, null, 2));
 }

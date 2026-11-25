@@ -272,6 +272,7 @@ export function validateSlideInput(value: unknown): EditorSlideInput {
   if (!Array.isArray(value.options) || value.options.length > 30) {
     throw new QuizEditorError('invalid-argument', 'options must contain at most 30 values.');
   }
+  if (value.automaticAgenda !== undefined && (typeof value.automaticAgenda !== 'boolean' || value.kind !== 'agenda')) throw new QuizEditorError('invalid-argument', 'Automatic content requires an agenda.');
   if (value.hidden !== undefined && typeof value.hidden !== 'boolean') throw new QuizEditorError('invalid-argument', 'hidden is invalid.');
   if (value.resetAppearance !== undefined && value.resetAppearance !== true) throw new QuizEditorError('invalid-argument', 'Appearance reset is invalid.');
   const options = value.options.map((option) => boundedString(option, 'option', 1_000));
@@ -290,6 +291,7 @@ export function validateSlideInput(value: unknown): EditorSlideInput {
   }
   return {
     ...(value.resetAppearance === true ? { resetAppearance: true as const } : {}),
+    ...(value.automaticAgenda === undefined ? {} : { automaticAgenda: value.automaticAgenda }),
     ...(value.hidden === undefined ? {} : { hidden: value.hidden }),
     ...(value.design === undefined ? {} : { design: validateSlideDesign(value.design) }),
     ...(value.answerDesign === undefined ? {} : { answerDesign: validateSlideDesign(value.answerDesign) }),

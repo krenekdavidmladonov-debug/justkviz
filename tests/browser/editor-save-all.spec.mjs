@@ -22,7 +22,7 @@ async function fixture(page) {
   await page.context().route('**/*', r => ['127.0.0.1','localhost'].includes(new URL(r.request().url()).hostname) ? r.continue() : r.abort());
   await page.goto('/admin/login'); await page.getByLabel('E-mail').fill(identity.email); await page.getByLabel('Heslo').fill(identity.password);
   await page.getByRole('button', { name: 'Přihlásit se', exact: true }).click(); await page.locator('.admin-dashboard').waitFor();
-  await page.goto('/admin/quizzes/' + id + '/edit'); await page.getByRole('button', {name:'Rozbalit kolo Kolo', exact:true}).click(); await page.locator('.outline-question').nth(1).waitFor();
+  await page.goto('/admin/quizzes/' + id + '/edit'); await page.locator('.outline-question').nth(1).waitFor();
   const dispose = identity.dispose; identity.dispose = async () => { await identity.db.recursiveDelete(root); await dispose(); };
   return { identity, root };
   } catch (error) { await identity.db.recursiveDelete(root); await identity.dispose(); throw error; }
@@ -310,7 +310,8 @@ test('quiz metadata and round title survive selection, and invalid inactive cont
 test('discarding a new question from the header removes the temporary draft', async ({ page }) => {
   const f = await fixture(page);
   try {
-    await page.getByRole('button', { name: '+ Přidat otázku', exact: true }).click();
+    await page.locator('.outline-round').first().locator('.outline-insert').last().click();
+    await page.getByRole('dialog', { name: 'Přidat do osnovy' }).getByRole('button', { name: 'Volná odpověď' }).click();
     await prompt(page).fill('Temporary question');
     await page.getByRole('button', { name: 'Zahodit změny…', exact: true }).click();
     await page.getByRole('button', { name: 'Pokračovat bez uložení' }).click();

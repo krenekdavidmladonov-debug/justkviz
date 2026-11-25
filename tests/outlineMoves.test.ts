@@ -66,8 +66,8 @@ async function mountOutline(patch: Partial<ComponentProps<typeof EditorOutline>>
   const host = document.createElement('div'); document.body.append(host);
   const root = createRoot(host); mounted.push({ root, host });
   const props: ComponentProps<typeof EditorOutline> = {
-    model: buildSemanticQuizModel(quiz), selectedKey: 'round:r1', activeDraft: null, disabled: false, pickerRoundId: null,
-    onSelect: vi.fn(), onOpenPicker: vi.fn(), onClosePicker: vi.fn(), onCreateQuestion: vi.fn(), onAddRound: vi.fn(),
+    model: buildSemanticQuizModel(quiz), selectedKey: 'round:r1', activeDraft: null, disabled: false,
+    onSelect: vi.fn(), onInsert: vi.fn(), onAddRound: vi.fn(),
     onMove: vi.fn().mockResolvedValue(true), onMoveRound: vi.fn().mockResolvedValue(true), ...patch,
   };
   await update(() => root.render(createElement(EditorOutline, props)));
@@ -79,46 +79,39 @@ async function click(button: Element | null | undefined) {
   expect(button).toBeTruthy();
   await update(() => button!.dispatchEvent(new MouseEvent('click', { bubbles: true })));
 }
-it('separates round collapse from selection and creates a basic question in one click', async () => {
+it('shows every stored slide once, even when another round is selected', async () => {
+  const { host, render } = await mountOutline();
+  const ids = () => [...host.querySelectorAll<HTMLElement>('[data-slide-id]')].map(row => row.dataset.slideId);
+  expect(ids()).toEqual(['a','b','c','d']);
+  await render({ selectedKey: 'slide:c' });
+  expect(ids()).toEqual(['a','b','c','d']);
+  expect(host.textContent).not.toContain('Automatický');
+  expect(host.textContent?.match(/Spouští moderátor/g)).toHaveLength(2);
+});
+it('distinguishes existing generated slides from manual content and selects the actual recap', async () => {
+  const model = buildSemanticQuizModel({ ...quiz, slides: [
+    { ...quiz.slides[0]!, id: 'recap-a', kind: 'recap', storedKind: 'recap', isQuestion: false, position: 4 },
+    { ...quiz.slides[0]!, id: 'agenda', kind: 'agenda', storedKind: 'agenda', isQuestion: false, roundId: undefined, position: 1, automaticAgenda: true },
+    { ...quiz.slides[0]!, id: 'r', kind: 'round', storedKind: 'round', isQuestion: false, position: 2 },
+    { ...quiz.slides[0]!, position: 3 },
+    { ...quiz.slides[0]!, id: 'pause', kind: 'info', storedKind: 'info', isQuestion: false, roundId: undefined, position: 5 },
+  ] });
+  const { host, props } = await mountOutline({ model });
+  const rows = [...host.querySelectorAll<HTMLElement>('[data-slide-id]')];
+  expect(rows.map(row => row.dataset.slideId)).toEqual(['agenda','r','a','recap-a','pause']);
+  expect(rows.filter(row => row.textContent?.includes('Automatický')).map(row => row.dataset.slideId)).toEqual(['agenda','r','recap-a']);
+  await click(host.querySelector('[data-slide-id="recap-a"] .outline-system-item'));
+  expect(props.onSelect).toHaveBeenCalledWith('slide:recap-a');
+});
+it('offers all question and screen types before every slide and at the end', async () => {
   const { host, props } = await mountOutline();
-  const round = host.querySelector('[data-round-id="r1"]')!;
-  expect(round.querySelectorAll('[data-question-id]')).toHaveLength(2);
-  await click(round.querySelector('.outline-collapse'));
-  expect(round.querySelectorAll('[data-question-id]')).toHaveLength(0);
-  expect(props.onSelect).not.toHaveBeenCalled();
-  await click(round.querySelector('.outline-collapse'));
-  expect(round.querySelectorAll('[data-question-id]')).toHaveLength(2);
-  await click(round.querySelector('.add-question-button'));
-  expect(props.onCreateQuestion).toHaveBeenCalledWith(expect.objectContaining({ id: 'r1' }), 'free');
-  expect(props.onOpenPicker).not.toHaveBeenCalled();
-  expect(host.querySelector('.presentation-outline')).toBeNull();
-});
-it('starts with existing rounds collapsed in the overview and reveals a linked question', async () => {
-  const { host, render } = await mountOutline({ selectedKey: 'quiz' });
-  expect(host.querySelectorAll('[data-question-id]')).toHaveLength(0);
-  expect(host.querySelectorAll('.outline-round')).toHaveLength(2);
-  await render({ selectedKey: 'slide:c' });
-  expect(host.querySelector('[data-question-id="c"]')).not.toBeNull();
-  expect(host.querySelector('[data-question-id="a"]')).toBeNull();
-});
-it('keeps the initial active round open and preserves explicit toggles during typing', async () => {
-  const { host, render } = await mountOutline({ selectedKey: 'slide:c' });
-  expect(host.querySelector('[data-question-id="c"]')).not.toBeNull();
-  expect(host.querySelector('[data-question-id="a"]')).toBeNull();
-  await click(host.querySelector('[data-round-id="r2"] .outline-collapse'));
-  await render({ selectedKey: 'slide:c', activeDraft: { ...quiz.slides[2]!, text: 'Rozepsaná změna' } });
-  expect(host.querySelector('[data-question-id="c"]')).toBeNull();
-  await click(host.querySelector('[data-round-id="r1"] .outline-collapse'));
-  await render({ selectedKey: 'slide:c' });
-  expect(host.querySelector('[data-question-id="a"]')).not.toBeNull();
-});
-it('opens a newly added round without reopening existing collapsed rounds', async () => {
-  const { host, render } = await mountOutline({ selectedKey: 'quiz' });
-  const added = { ...quiz, slides: [...quiz.slides, { ...quiz.slides[0]!, id: 'new-question', roundId: 'r3', position: 5 }] };
-  await render({ model: buildSemanticQuizModel(added) });
-  expect(host.querySelector('[data-question-id="new-question"]')).not.toBeNull();
-  expect(host.querySelector('[data-question-id="a"]')).toBeNull();
-  expect(host.querySelector('[data-question-id="c"]')).toBeNull();
+  for (const id of ['a','b','c','d','']) {
+    await click(host.querySelector(`[data-before="${id}"] .outline-insert`));
+    const buttons = [...host.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')];
+    expect(buttons.map(button => button.textContent)).toEqual(['Výběr z možností (ABCD)', 'Volná odpověď', 'Otázka s obrázkem', 'Otázka se zvukem', 'Otázka s videem', 'Úvodní obrazovka', 'Pravidla', 'Harmonogram', 'Kolo s úvodem a rekapitulací', 'Rekapitulace kola', 'Titulní snímek', 'Informační snímek', 'Přestávka', 'Poděkování', 'Závěr kvízu', 'Zrušit']);
+    await click(buttons.find(button => button.textContent === 'Přestávka'));
+    expect(props.onInsert).toHaveBeenLastCalledWith(id || null, 'pause');
+  }
 });
 it('moves questions with keyboard and cross-round menu while selecting remains independent', async () => {
   const { host, props } = await mountOutline();

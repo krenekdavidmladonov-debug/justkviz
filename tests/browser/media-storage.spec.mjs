@@ -299,8 +299,8 @@ test('owned MP4 and MP3 upload, snapshot, projector video playback and offline m
     }
 
     const videoPrompt = 'QA vlastní MP4 otázka';
-    await page.locator('.outline-round').first().getByRole('button', { name: /Další typy otázek pro kolo/u }).click();
-    await page.getByRole('dialog', { name: /Typ otázky/u }).getByRole('button', { name: 'Otázka s videem', exact: true }).click();
+    await page.locator('.outline-round').first().locator('.outline-insert').last().click();
+    await page.getByRole('dialog', { name: /Přidat do osnovy/u }).getByRole('button', { name: 'Otázka s videem', exact: true }).click();
     await page.locator('[data-preflight-field="prompt"] textarea').fill(videoPrompt);
     await page.locator('[data-preflight-field="correctAnswer"] textarea').fill('Syntetická soukromá odpověď QA');
     await expect(picker.getByLabel('Zdroj ukázky — soubor', { exact: true })).toHaveAttribute('accept', /video\/mp4/u);

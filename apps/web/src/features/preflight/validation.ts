@@ -1,4 +1,4 @@
-import { runQuizPreflight } from '@filmovy-kviz/quiz-domain';
+import { buildSemanticQuizModel, runQuizPreflight } from '@filmovy-kviz/quiz-domain';
 import type { EditorQuiz, EditorSlide } from '../editor/types';
 import type { PreflightFixTarget } from './types';
 
@@ -38,8 +38,9 @@ export function quizWithDraft(
     }
   }
   if (values.roundId !== undefined && values.roundTitle !== undefined) {
+    const round = buildSemanticQuizModel(quiz).rounds.find(item => item.id === values.roundId);
     slides = slides.map((slide) => slide.roundId === values.roundId
-      ? { ...slide, roundTitle: values.roundTitle, ...(slide.id === values.draft?.id ? { title: values.roundTitle } : {}) }
+      ? { ...slide, roundTitle: values.roundTitle, ...((slide.id === round?.settingsSlide?.id || slide.kind === 'recap') && !slide.customRoundHeading && (!slide.title || slide.title === round?.title) ? { title: values.roundTitle } : {}) }
       : slide);
   }
   slides.sort((left, right) => left.position - right.position);

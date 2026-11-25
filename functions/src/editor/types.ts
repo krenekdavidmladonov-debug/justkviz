@@ -50,6 +50,7 @@ export interface EditorPresentationInput {
 export interface EditorSlideInput {
   readonly resetAppearance?: true;
   readonly hidden?: boolean;
+  readonly automaticAgenda?: boolean;
   readonly design?: SlideDesign;
   readonly answerDesign?: SlideDesign;
   readonly authoringStatus?: 'draft' | 'ready';

@@ -156,7 +156,8 @@ test('library CTA creates an empty quiz and carries its first round and free que
 
     await waitForCallable(page, 'createQuizRound', () => page.getByRole('button', { name: '+ Přidat kolo' }).click());
     await expect(page.locator('.outline-round')).toHaveCount(1);
-    await page.getByRole('button', { name: '+ Přidat otázku' }).click();
+    await page.locator('.outline-round').first().locator('.outline-insert').last().click();
+    await page.getByRole('dialog', { name: 'Přidat do osnovy' }).getByRole('button', { name: 'Volná odpověď' }).click();
     await page.getByLabel('Otázka *').fill(question);
     await page.getByLabel('Správná odpověď *').fill(answer);
     await waitForCallable(page, 'createQuizSlide', () => page.getByRole('button', { name: 'Uložit vše', exact: true }).click());
