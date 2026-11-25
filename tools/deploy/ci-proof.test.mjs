@@ -8,7 +8,7 @@ const pr = { number: 81, state: 'closed', merged_at: '2026-11-25T10:00:00Z', mer
   head: { sha: head, repo: { full_name: repository } }, base: { ref: 'main', repo: { full_name: repository } } };
 const run = { id: 30, run_attempt: 2, status: 'completed', conclusion: 'success', event: 'pull_request', head_sha: head,
   path: '.github/workflows/ci.yml', repository: { full_name: repository }, head_repository: { full_name: repository },
-  referenced_workflows: [{ path: repository + '/.github/workflows/ci-quick.yml@refs/pull/81/merge', sha: merge }] };
+  referenced_workflows: [{ path: repository + '/.github/workflows/ci-quick.yml@' + merge, ref: 'refs/pull/81/merge', sha: merge }] };
 const push = { ...run, id: 90, event: 'push', head_sha: main };
 const step = name => ({ name, status: 'completed', conclusion: 'success' });
 
@@ -48,6 +48,8 @@ const variants = [
   ['wrong tested parent', s => { s.tested.parents[1].sha = main; }],
   ['wrong commit from API', s => { s.tested.sha = head; }],
   ['missing GitHub workflow SHA', s => { s.run.referenced_workflows = []; }],
+  ['reusable workflow from a branch', s => { s.run.referenced_workflows[0].ref = 'refs/heads/main'; }],
+  ['reusable workflow pinned to a different commit', s => { s.run.referenced_workflows[0].path = repository + '/.github/workflows/ci-quick.yml@' + head; }],
   ['incorrect PR marker', s => { s.jobs.at(-1).steps = [step('Full PR 82 at ' + merge)]; }],
   ['closed but unmerged PR', s => { s.pr.merged_at = null; }],
   ['another base branch', s => { s.pr.base.ref = 'stage'; }],

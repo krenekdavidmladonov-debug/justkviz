@@ -54,6 +54,8 @@ export function verifiedPrTree(api, pr, tree) {
   const refs = (run.referenced_workflows ?? []).filter(ref => ref.path.split('@')[0] === quickWorkflow);
   assert(refs.length === 1 && shaPattern.test(refs[0].sha), 'GitHub nepotvrdil commit spuštěného workflow PR.');
   const tested = refs[0].sha;
+  assert(refs[0].ref === 'refs/pull/' + pr.number + '/merge' && refs[0].path === quickWorkflow + '@' + tested,
+    'Rychlé workflow nepochází z testovacího sloučení tohoto PR.');
   const commit = api('git/commits/' + tested);
   assert(commit.sha === tested && commit.tree?.sha === tree && commit.parents?.length === 2
     && commit.parents[1].sha === pr.head.sha, 'Testovaný strom nebo rodič zkušebního sloučení PR se liší.');
