@@ -41,7 +41,7 @@ function preparedOutput(source: DriveImportSource, prepared: PreparedDriveMedia)
 /** Pure orchestration over transaction/provider ports. No callables, cloud activation or public projection writes. */
 export class DriveImportService {
   constructor(private readonly ownerUid: string, private readonly store: DriveImportStore,
-    private readonly processor: DriveImportProcessor, private readonly files: DriveImportFiles,
+    private readonly processor: DriveImportProcessor | null, private readonly files: DriveImportFiles,
     private readonly now: () => number = Date.now, private readonly leaseMillis = 900_000) {
     if (!Number.isSafeInteger(leaseMillis) || leaseMillis < 1000 || leaseMillis > 1_800_000) throw new Error('Invalid media lease configuration.');
   }
@@ -180,6 +180,11 @@ export class DriveImportService {
     });
   }
 
+  private prepare(source: DriveImportSource, target: DriveImportTarget): Promise<PreparedDriveMedia> {
+    if (!this.processor) throw new Error('Media processor is unavailable in request/status service.');
+    return this.processor.prepare(source, target);
+  }
+
   run(input: unknown): Promise<DriveImportStatus> { return this.process(input); }
   completeLocal(input: unknown, leaseId: string, prepared: PreparedDriveMedia): Promise<DriveImportStatus> {
     return this.process(input, { leaseId, prepared });
@@ -214,7 +219,7 @@ export class DriveImportService {
     let job = claimed.job;
     try {
       await this.checkpoint(job);
-      const prepared = local?.prepared ?? await this.processor.prepare(job.source, target), output = preparedOutput(job.source, prepared);
+      const prepared = local?.prepared ?? await this.prepare(job.source, target), output = preparedOutput(job.source, prepared);
       job = await this.checkpoint(job, current => {
         if (current.output && importDigest(current.output) !== importDigest(output)) throw new InvalidOutput('artifact-changed');
         return { ...current, output, updatedAt: this.now() };

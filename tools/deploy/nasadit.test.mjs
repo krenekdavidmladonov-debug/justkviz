@@ -378,7 +378,7 @@ test('options 1, 3, 4 and Hosting rollback bypass selection against backend hist
   for (const option of ['1', '3', '4', undefined]) assert.equal(chooseFunctionPlan(option, ordinary, head, assert.fail, assert.fail), ordinary);
   assert.equal(menuAction('1'), 'hosting');
   assert.equal(menuAction('3'), 'hosting');
-  assert.equal(menuAction('4'), 'lockEventQuiz');
+  assert.equal(menuAction('4'), 'd2');
   assert.equal(menuAction(undefined, { mode: '--rollback' }), 'hosting');
 });
 

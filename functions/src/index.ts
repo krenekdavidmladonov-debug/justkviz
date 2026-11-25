@@ -93,7 +93,8 @@ export { completeEvent, trashEvent, restoreEvent } from './events/management.js'
 export { deleteEvent } from './events/deletion.js';
 export { trashQuiz, restoreQuiz } from './quizzes/management.js';
 export { readDriveConnection, beginDriveConnection, completeDriveConnection, getDriveFolderPicker, selectDriveFolder, createDriveMediaFolder, disconnectDriveConnection } from './drive/callables.js';
-export { requestDriveMediaImport, readDriveMediaImport, processDriveMediaImport } from './drive/import-callables.js';
+export { requestDriveMediaImport, readDriveMediaImport } from './drive/import-callables.js';
+export { processDriveMediaImport } from './drive/import-worker.js';
 export { configureDriveMediaCompanion, driveMediaCompanion } from './drive/local-companion.js';
 export { prepareOfflineEvent, readOfflineTrust, authorizeOfflineEvent } from './offline/prepare.js';
 export { previewOfflineSync, commitOfflineSync } from './offline/sync.js';
