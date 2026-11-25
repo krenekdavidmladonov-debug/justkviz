@@ -81,7 +81,8 @@ vi.mock('../functions/src/drive/runtime', () => ({ driveRuntimeSecrets: [],
     });
   },
 }));
-const { requestDriveMediaImport, readDriveMediaImport, processDriveMediaImport } = await import('../functions/src/drive/import-callables');
+const { requestDriveMediaImport, readDriveMediaImport } = await import('../functions/src/drive/import-callables');
+const { processDriveMediaImport } = await import('../functions/src/drive/import-worker');
 const { beginQuizMediaUpload } = await import('../functions/src/media/callables');
 const target = { quizId: 'quiz', slideId: 'slide', field: 'mediaSource' as const };
 const permissions = ['users.manage', 'quiz.media.upload', 'quiz.media.attach', 'quiz.edit', 'quiz.read', 'quiz.answers.read'] as const;
