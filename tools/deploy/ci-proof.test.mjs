@@ -88,11 +88,27 @@ test('a successful gate cannot cover missing fresh jobs, a skipped full test or 
     jobs.at(-1).steps.push(step('Full main suite'));
     assert.throws(() => verifyMainSuite(setup().api, push, jobs, tree));
   }
-  const jobs = jobsFor(push, 'full');
-  jobs.find(j => j.name === 'Quality core').conclusion = 'skipped';
-  assert.throws(() => verifyMainSuite(setup().api, push, jobs, tree));
+  for (const name of longJobs) {
+    const full = jobsFor(push, 'full');
+    full.find(job => job.name === name).conclusion = 'skipped';
+    assert.throws(() => verifyMainSuite(setup().api, push, full, tree));
+    const reuse = jobsFor(push, 'reuse');
+    reuse.find(job => job.name === name).conclusion = 'success';
+    assert.throws(() => verifyMainSuite(setup().api, push, reuse, tree));
+  }
   const reused = jobsFor(push, 'reuse');
   reused.at(-1).steps = [step('Reused PR 81 run 30 attempt 1')];
   assert.throws(() => verifyMainSuite(setup().api, push, reused, tree));
   assert.throws(() => attemptJobs(() => ({}), push));
+});
+
+test('a full PR needs each new job from the same attempt to qualify for main reuse', () => {
+  for (const name of ['Quality access and editor', 'Quality live and registration', 'Quality scoring and results']) {
+    for (const conclusion of ['failure', 'skipped', 'cancelled']) {
+      const fixture = setup();
+      fixture.jobs.find(job => job.name === name).conclusion = conclusion;
+      assert.deepEqual(planMain(fixture.api, main, tree, () => {}), { mode: 'full', evidence: '' });
+      assert.throws(() => verifyMainSuite(fixture.api, push, jobsFor(push, 'reuse'), tree));
+    }
+  }
 });

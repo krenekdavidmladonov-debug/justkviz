@@ -57,10 +57,10 @@ jobs:
     name: Quick checks
     uses: ./.github/workflows/ci-quick.yml
 
-  quality-core:
+  quality-access-editor:
     needs: ci-plan
     if: needs.ci-plan.outputs.mode == 'full'
-    name: Quality core
+    name: Quality access and editor
     runs-on: ubuntu-latest
     timeout-minutes: 40
     env:
@@ -134,6 +134,49 @@ jobs:
           pnpm exec firebase emulators:exec --only auth,firestore,functions --project demo-filmovy-kviz-v2 "pnpm seed:auth && pnpm test:e2e:editor-core-empty-browser"
           pnpm exec firebase emulators:exec --only auth,firestore,functions --project demo-filmovy-kviz-v2 "pnpm seed:auth && pnpm seed:quizzes && pnpm test:e2e:editor-core-browser && node tools/local-emulator-environment.mjs full node_modules/@playwright/test/cli.js test --config tests/browser/editor-outline-dnd.config.ts && node tools/local-emulator-environment.mjs full node_modules/@playwright/test/cli.js test --config tests/browser/editor-save-all.config.ts"
 
+  quality-live-registration:
+    needs: ci-plan
+    if: needs.ci-plan.outputs.mode == 'full'
+    name: Quality live and registration
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      VITE_FIREBASE_API_KEY: demo-api-key
+      VITE_FIREBASE_AUTH_DOMAIN: demo-filmovy-kviz-v2.firebaseapp.com
+      VITE_FIREBASE_PROJECT_ID: demo-filmovy-kviz-v2
+      VITE_FIREBASE_STORAGE_BUCKET: demo-filmovy-kviz-v2.appspot.com
+      VITE_FIREBASE_MESSAGING_SENDER_ID: "123456789"
+      VITE_FIREBASE_APP_ID: 1:123456789:web:demo
+      VITE_FIREBASE_USE_EMULATORS: "true"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install pnpm from packageManager
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build prerequisites for emulator and browser tests
+        run: pnpm build
+
+      - name: Install Playwright Chromium for browser E2E
+        run: pnpm exec playwright install chromium
+
       - name: Live Auth, Firestore, and Functions emulator E2E
         run: >-
           pnpm exec firebase emulators:exec
@@ -155,6 +198,56 @@ jobs:
           --project demo-filmovy-kviz-v2
           "pnpm seed:auth && pnpm seed:quizzes && pnpm test:e2e:registrations-browser && pnpm exec playwright test --config tests/browser/event-team-tools.config.ts && node tools/local-emulator-environment.mjs full node_modules/@playwright/test/cli.js test --config tests/browser/mobile-event-layout.config.ts"
 
+      - name: Registration email, Gmail worker contracts and fake browser E2E (local emulators only)
+        run: >-
+          pnpm exec firebase emulators:exec
+          --only auth,firestore,functions
+          --project demo-filmovy-kviz-v2
+          "pnpm test:e2e:registration-email && node tools/local-emulator-environment.mjs full tests/e2e/email-activation-emulator.mjs && pnpm test:e2e:gmail-delivery && pnpm test:e2e:registration-email-browser && pnpm test:e2e:event-team-email && pnpm test:e2e:event-team-email-browser"
+
+  quality-scoring-results:
+    needs: ci-plan
+    if: needs.ci-plan.outputs.mode == 'full'
+    name: Quality scoring and results
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      VITE_FIREBASE_API_KEY: demo-api-key
+      VITE_FIREBASE_AUTH_DOMAIN: demo-filmovy-kviz-v2.firebaseapp.com
+      VITE_FIREBASE_PROJECT_ID: demo-filmovy-kviz-v2
+      VITE_FIREBASE_STORAGE_BUCKET: demo-filmovy-kviz-v2.appspot.com
+      VITE_FIREBASE_MESSAGING_SENDER_ID: "123456789"
+      VITE_FIREBASE_APP_ID: 1:123456789:web:demo
+      VITE_FIREBASE_USE_EMULATORS: "true"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Install pnpm from packageManager
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build prerequisites for emulator and browser tests
+        run: pnpm build
+
+      - name: Install Playwright Chromium for browser E2E
+        run: pnpm exec playwright install chromium
+
       - name: Referee access contracts and browser E2E (local emulators only)
         run: >-
           pnpm exec firebase emulators:exec
@@ -166,13 +259,6 @@ jobs:
         run: >-
           pnpm exec firebase emulators:exec --only auth,firestore,functions,storage --project demo-filmovy-kviz-v2
           "pnpm test:e2e:quiz-reset && node tools/local-emulator-environment.mjs full node_modules/@playwright/test/cli.js test --config tests/browser/event-quiz-reset.config.ts"
-
-      - name: Registration email, Gmail worker contracts and fake browser E2E (local emulators only)
-        run: >-
-          pnpm exec firebase emulators:exec
-          --only auth,firestore,functions
-          --project demo-filmovy-kviz-v2
-          "pnpm test:e2e:registration-email && node tools/local-emulator-environment.mjs full tests/e2e/email-activation-emulator.mjs && pnpm test:e2e:gmail-delivery && pnpm test:e2e:registration-email-browser && pnpm test:e2e:event-team-email && pnpm test:e2e:event-team-email-browser"
 
       - name: Interim leaderboard contracts and browser E2E (local emulators only)
         run: >-
@@ -295,7 +381,7 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [ci-plan, quick-checks, quality-core, editor-media-acceptance, show-mode-acceptance, oauth-windows, restart-recovery-acceptance, dependency-security, d2-lock]
+    needs: [ci-plan, quick-checks, quality-access-editor, quality-live-registration, quality-scoring-results, editor-media-acceptance, show-mode-acceptance, oauth-windows, restart-recovery-acceptance, dependency-security, d2-lock]
     if: ${{ always() }}
     steps:
       - name: Require the selected suite and all fresh checks
@@ -307,7 +393,9 @@ jobs:
           OAUTH: ${{ needs.oauth-windows.result }}
           SECURITY: ${{ needs.dependency-security.result }}
           D2: ${{ needs.d2-lock.result }}
-          CORE: ${{ needs.quality-core.result }}
+          ACCESS_EDITOR: ${{ needs.quality-access-editor.result }}
+          LIVE_REGISTRATION: ${{ needs.quality-live-registration.result }}
+          SCORING_RESULTS: ${{ needs.quality-scoring-results.result }}
           EDITOR: ${{ needs.editor-media-acceptance.result }}
           SHOW: ${{ needs.show-mode-acceptance.result }}
           RECOVERY: ${{ needs.restart-recovery-acceptance.result }}
@@ -322,7 +410,7 @@ jobs:
               expected=skipped ;;
             *) exit 1 ;;
           esac
-          for result in "$CORE" "$EDITOR" "$SHOW" "$RECOVERY"; do test "$result" = "$expected"; done
+          for result in "$ACCESS_EDITOR" "$LIVE_REGISTRATION" "$SCORING_RESULTS" "$EDITOR" "$SHOW" "$RECOVERY"; do test "$result" = "$expected"; done
       - name: Full PR ${{ github.event.number }} at ${{ github.sha }}
         if: github.event_name == 'pull_request'
         run: echo "The full suite passed on the PR merge commit."
