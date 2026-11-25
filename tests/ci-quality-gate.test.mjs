@@ -13,7 +13,7 @@ test('quality gate waits for every independently meaningful acceptance job',()=>
   assert(gate.includes('push/reuse)'));
   assert(gate.includes('expected=skipped'));
   assert(source.includes("github.event_name == 'pull_request' && 'full'"));
-  const fullJobs = [...source.matchAll(/^  ([\w-]+):\n    needs: ci-plan\n    if: needs.ci-plan.outputs.mode == 'full'\n    name: (.+)$/gmu)];
+  const fullJobs = [...source.matchAll(/^ {2}([\w-]+):\n {4}needs: ci-plan\n {4}if: needs.ci-plan.outputs.mode == 'full'\n {4}name: (.+)$/gmu)];
   assert.deepEqual(fullJobs.map(match => match[2]).sort(), [...longJobs].sort());
   for (const job of ['quality-access-editor','quality-live-registration','quality-scoring-results', 'editor-media-acceptance', 'show-mode-acceptance', 'restart-recovery-acceptance']) {
     assert(source.includes('  ' + job + ":\n    needs: ci-plan\n    if: needs.ci-plan.outputs.mode == 'full'"));
