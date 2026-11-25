@@ -3,12 +3,11 @@ import { assertEventReadable } from '../events/guards.js';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
-import { logger } from 'firebase-functions';
+import * as logger from 'firebase-functions/logger';
 import { HttpsError, onRequest } from 'firebase-functions/v2/https';
 import { authorize, freshIdentity } from '../access/authorization.js';
 import { PrintCenterError } from './errors.js';
 import { PRINT_LIMITS } from './limits.js';
-import { renderPrintArtifact } from './renderer.js';
 import { mapSnapshotToPrintEvent } from './snapshot-mapper.js';
 import { registrationOrder } from '../registrations/order.js';
 import { registrationToPrintTeam } from '../registrations/print-adapter.js';
@@ -169,6 +168,7 @@ export const generatePrintArtifact = onRequest(
         if (bytes.length !== descriptor.size || !mediaSignature(bytes, descriptor.contentType)) throw new PrintCenterError(422, 'invalid-logo', 'Soubor loga neodpovídá ověřenému médiu.');
         printEvent.logo = { bytes, contentType: descriptor.contentType };
       }
+      const { renderPrintArtifact } = await import('./renderer.js');
       const artifact = await renderPrintArtifact(printEvent, options);
       const currentEvent = await assertAccess();
       assertCurrentPrintSource(assignment, currentEvent?.quizAssignment, (await snapshotRef.get()).data(), eventId);

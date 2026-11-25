@@ -98,7 +98,7 @@ jobs:
         run: pnpm build
 
       - name: Actual dependency API and CLI compatibility contracts
-        run: node --test tools/dependencies/security-compat.test.mjs
+        run: node --test tools/dependencies/security-compat.test.mjs tests/functions-cold-import.test.mjs
 
       - name: Staging guards, release inventory and synthetic email activation contracts (no cloud access)
         run: |

@@ -6,14 +6,20 @@ interface Fixture { records: Record<string, Record<string, unknown>>; writes: st
 const state = vi.hoisted((): Fixture => ({ records: {}, writes: [], user: { uid: 'moderator', emailVerified: true, disabled: false } }));
 type Ref = { path: string; get: () => Promise<ReturnType<typeof snapshot>>; collection: (name: string) => Query };
 type Query = { path: string; doc: (id: string) => Ref; where: (key: string, op: string, value: unknown) => Query; limit: (count: number) => Query;
+  select: (...fields: string[]) => Query;
   read: () => { docs: ReturnType<typeof snapshot>[]; size: number } };
-function snapshot(path: string) { return { id: path.split('/').at(-1)!, exists: !!state.records[path], data: () => state.records[path] }; }
+function snapshot(path: string, fields?: string[]) {
+  const record = state.records[path];
+  const data = record && fields ? Object.fromEntries(Object.entries(record).filter(([key]) => fields.includes(key))) : record;
+  return { id: path.split('/').at(-1)!, exists: !!record, data: () => data };
+}
 function document(path: string): Ref { return { path, get: () => Promise.resolve(snapshot(path)), collection: name => collection(path + '/' + name) }; }
-function collection(path: string, predicates: [string, unknown][] = [], limit = Infinity): Query {
-  return { path, doc: id => document(path + '/' + id), where: (key, _op, value) => collection(path, [...predicates, [key, value]], limit),
-    limit: count => collection(path, predicates, count), read: () => {
+function collection(path: string, predicates: [string, unknown][] = [], limit = Infinity, fields?: string[]): Query {
+  return { path, doc: id => document(path + '/' + id), where: (key, _op, value) => collection(path, [...predicates, [key, value]], limit, fields),
+    limit: count => collection(path, predicates, count, fields), select: (...selected) => collection(path, predicates, limit, selected),
+    read: () => {
       const docs = Object.keys(state.records).filter(key => key.startsWith(path + '/') && !key.slice(path.length + 1).includes('/'))
-        .filter(key => predicates.every(([field, value]) => state.records[key]![field] === value)).slice(0, limit).map(snapshot);
+        .filter(key => predicates.every(([field, value]) => state.records[key]![field] === value)).slice(0, limit).map(key => snapshot(key, fields));
       return { docs, size: docs.length };
     } };
 }
