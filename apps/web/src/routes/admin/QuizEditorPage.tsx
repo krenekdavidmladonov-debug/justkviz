@@ -112,7 +112,7 @@ function newQuestionDraft(type: CreatableQuestionType, round: SemanticRound | un
   const questionNumber = questions.filter(question => question.slide.position < position).length + 1;
   return localDraft(kind, position, {
     id: `local-question-${type}`,
-    ...(round ? { roundId: round.id, roundTitle: round.title } : {}),
+    ...(round && round.id !== 'roundless' ? { roundId: round.id, roundTitle: round.title } : {}),
     questionNumber,
     questionCount: questions.length + 1,
     authoringStatus: 'ready', answerMode: type === 'choice' ? 'choice' : 'open',
@@ -264,9 +264,9 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const uploadPending = useRef(false);
   const onUploadPending = useCallback((pending: boolean) => { uploadPending.current = pending; setUploading(pending); }, []);
   const [saveFailed, setSaveFailed] = useState(false);
-  const [refreshFailure, setRefreshFailure] = useState<'content' | 'announcement' | 'unconfirmed-announcement' | null>(null);
-  const announcementRefreshPending = refreshFailure !== null && refreshFailure !== 'content';
-  const editingDisabled = readOnly || announcementRefreshPending;
+  const [refreshFailure, setRefreshFailure] = useState<'content' | 'structure' | 'unconfirmed-announcement' | null>(null);
+  const structureRefreshPending = refreshFailure !== null && refreshFailure !== 'content';
+  const editingDisabled = readOnly || structureRefreshPending;
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   useEffect(() => { setLastSavedAt(null); }, [quizId, readOnly]);
   const [error, setError] = useState<string | null>(null);
@@ -580,13 +580,13 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
       const refreshed = await reload(key, pendingCreate?.semanticKey.startsWith('system:') ? undefined : createdId);
       if (refreshed === null && result.acknowledged > 0) {
         setError(null);
-        setRefreshFailure('content');
+        setRefreshFailure(result.quiz.slides.length === result.quiz.slideCount ? 'content' : 'structure');
       }
       // A partial save retains acknowledged slides for the next successful retry;
       // background attachment must not add revision conflicts to a failed save.
       driveImports.queueSavedSlides([...deferredDriveSlides.current.values()]);
       deferredDriveSlides.current.clear();
-      return refreshed ?? result.quiz;
+      return refreshed ?? (result.quiz.slides.length === result.quiz.slideCount ? result.quiz : null);
     } catch (saveError) {
       setSaveFailed(true); setError(safeErrorMessage(saveError)); return null;
     } finally { savePending.current = false; setSaving(false); }
@@ -707,7 +707,10 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
     setError(null);
     try {
       const result = await action(current);
-      return await reload(preferredKey ?? selectedKey, result.selectedSlideId) !== null;
+      if (await reload(preferredKey ?? selectedKey, result.selectedSlideId) !== null) return true;
+      setError(null);
+      setRefreshFailure('structure');
+      return false;
     } catch (mutationError) {
       setError(safeErrorMessage(mutationError));
       requestAnimationFrame(() => errorRef.current?.focus());
@@ -742,7 +745,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
       if (type === 'recap') {
         const roundId = roundAtPosition(current, position);
         const round = buildSemanticQuizModel(current).rounds.find(item => item.id === roundId);
-        return createQuizSlide(current.id, current.revision, position, localDraft('recap', position, { title: round?.title ?? '1. kolo' }), undefined, roundId);
+        return createQuizSlide(current.id, current.revision, position, localDraft('recap', position, { title: round?.title ?? '1. kolo' }), roundId ? undefined : 'first-round', roundId);
       }
       const titles = { title: 'Titulní snímek', info: 'Organizační sdělení', pause: 'Přestávka', intro: 'Vítejte', rules: 'Pravidla', agenda: 'Harmonogram', 'thank-you': 'Děkujeme, že jste hráli!', end: 'Děkujeme za hru' };
       const slide = localDraft(type === 'pause' ? 'info' : type, position, { title: titles[type], ...(type === 'rules' ? { options: [...defaultRules] } : {}) });
@@ -817,7 +820,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
       if (await reload(key) === null) {
         setSelectedKey(key);
         setError(null);
-        setRefreshFailure('announcement');
+        setRefreshFailure('structure');
       }
       return true;
     } catch (moveError) {
@@ -868,11 +871,11 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const saveLabel = uploading ? 'Nejdřív dokončete nahrávání média.' : editorSaveLabels[editorSaveStatus(dirty, saving, saveFailed)];
   const structuralDisabled = editingDisabled || saving || dirty || uploading;
   const deletionDisabled = structuralDisabled || !can('quiz.delete');
-  const deletionReason = readOnly || !can('quiz.delete') ? 'Smazání vyžaduje oprávnění upravovat a mazat obsah kvízu.' : announcementRefreshPending ? 'Nejprve načtěte aktuální pořadí.' : dirty ? 'Nejprve uložte nebo zahoďte rozepsané změny.' : uploading ? 'Nejprve dokončete nahrávání média.' : saving ? 'Právě probíhá změna kvízu.' : undefined;
+  const deletionReason = readOnly || !can('quiz.delete') ? 'Smazání vyžaduje oprávnění upravovat a mazat obsah kvízu.' : structureRefreshPending ? 'Nejprve načtěte aktuální pořadí.' : dirty ? 'Nejprve uložte nebo zahoďte rozepsané změny.' : uploading ? 'Nejprve dokončete nahrávání média.' : saving ? 'Právě probíhá změna kvízu.' : undefined;
   const navigationAsDraft = draft?.isQuestion === true && (draft.authoringStatus === 'draft' || hasSaveBlockingIssues(draft, quiz.slides.find(slide => slide.id === draft.id), !can('quiz.answers.read')));
 
   return (
-    <MediaAuthoringContext.Provider value={{ quizId: quiz.id, onPending: onUploadPending, canUpload: !announcementRefreshPending && can('quiz.media.upload'), canAttach: !announcementRefreshPending && can('quiz.media.attach') }}><article ref={editorRef} className="round-first-editor">
+    <MediaAuthoringContext.Provider value={{ quizId: quiz.id, onPending: onUploadPending, canUpload: !structureRefreshPending && can('quiz.media.upload'), canAttach: !structureRefreshPending && can('quiz.media.attach') }}><article ref={editorRef} className="round-first-editor">
       {(pendingSelection !== null || blocker.state === 'blocked') && (
         <UnsavedChangesDialog
           saveLabel={navigationAsDraft ? "Uložit koncept a pokračovat" : "Uložit a pokračovat"}
@@ -916,7 +919,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
         </div>
         <div className="round-editor-save">
           {readOnly && <span className="read-only-badge">Pouze pro čtení</span>}
-          <QuizStatusControl quiz={quiz} disabled={announcementRefreshPending || dirty || saving || uploading} onChanged={() => reload()} runChange={runStatusChange} />
+          <QuizStatusControl quiz={quiz} disabled={structureRefreshPending || dirty || saving || uploading} onChanged={() => reload()} runChange={runStatusChange} />
           <span className={`save-state ${dirty ? 'dirty' : ''} ${saveFailed ? 'failed' : ''}`} role="status" aria-live="polite">{saveLabel}</span>
           {!dirty && !saving && !saveFailed && lastSavedAt && <time className="working-copy-count" dateTime={lastSavedAt.toISOString()}>Vše uloženo v {lastSavedAt.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}</time>}
           {dirty && <span className="working-copy-count">Rozpracované položky: {new Set([...Object.keys(parked), ...(dirtySlide || dirtyRound ? [selectedKey] : []), ...(dirtyQuiz ? ['quiz'] : [])]).size}</span>}
@@ -933,7 +936,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
         <div className="human-error" role="status">
           <div>
             <strong>{refreshFailure === 'unconfirmed-announcement' ? 'Přesun se nepodařilo ověřit.' : 'Změny jsou uložené.'}</strong>
-            {announcementRefreshPending ? <p>Načtěte aktuální pořadí, abyste mohli pokračovat v úpravách.</p>
+            {structureRefreshPending ? <p>Načtěte aktuální pořadí, abyste mohli pokračovat v úpravách.</p>
               : <p>Nový náhled se nepodařilo načíst.{dirty ? ' Znovu ho můžete načíst po uložení rozepsaných změn.' : ''}</p>}
           </div>
           <button type="button" className="secondary-button" disabled={dirty || saving || uploading} onClick={() => void retrySavedRefresh()}>Zkusit načíst znovu</button>
@@ -966,7 +969,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
           activeDraft={selectedKey !== 'draft' || isLocalQuestion ? draft : null}
           disabled={structuralDisabled}
           creationDisabled={editingDisabled || saving || uploading}
-          disabledReason={readOnly ? 'Máte oprávnění pouze ke čtení.' : announcementRefreshPending ? 'Nejprve načtěte aktuální pořadí.' : uploading ? 'Nejdříve dokončete nahrávání média.' : saving ? 'Právě ukládám změny…' : 'Pro přesouvání nejprve uložte nebo zahoďte rozepsané změny.'}
+          disabledReason={readOnly ? 'Máte oprávnění pouze ke čtení.' : structureRefreshPending ? 'Nejprve načtěte aktuální pořadí.' : uploading ? 'Nejdříve dokončete nahrávání média.' : saving ? 'Právě ukládám změny…' : 'Pro přesouvání nejprve uložte nebo zahoďte rozepsané změny.'}
           onMove={moveInOutline}
           onMoveRound={moveRoundInOutline}
           onMoveSlide={moveAnnouncementInOutline}
@@ -1050,7 +1053,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
               )}
               {isLocalQuestion && <button type="button" disabled={saving || uploading} className="text-button" onClick={() => {
                 if (savePending.current || uploadPending.current) return;
-                discardDraft(); setSelectedKey(`round:${selectedRound?.id ?? ''}`);
+                discardDraft(); setSelectedKey(selectedRound ? `round:${selectedRound.id}` : 'quiz');
               }}>Zrušit novou otázku</button>}
             </>
           )}

@@ -281,7 +281,7 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
   }
   const draftAt = selectedKey === 'draft' && activeDraft?.isQuestion ? activeDraft.position : undefined;
   function draftRow() {
-    return activeDraft && <button type="button" className="outline-question selected" onClick={() => onSelect('draft')}>
+    return activeDraft && <button id={`outline-question-${activeDraft.id}`} type="button" aria-current="true" className="outline-question selected" onClick={() => onSelect('draft')}>
       <strong>{questionSummary(activeDraft)}</strong><small>Je potřeba doplnit</small></button>;
   }
   return <aside ref={outlineRef} className={`editor-outline editor-panel-structure quiz-outline ${dragging ? 'is-dragging' : ''}`} aria-label="Osnova kvízu" aria-busy={moving}
@@ -293,6 +293,7 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
     }}>
     <header className="outline-heading"><div><span>Osnova kvízu</span><strong>{rounds.length} kol · {questionCount} otázek</strong></div>
       <button type="button" className={`outline-root-button ${selected('quiz')}`} aria-current={selectedKey === 'quiz' ? 'true' : undefined} onClick={() => onSelect('quiz')}>Název a nastavení kvízu</button>
+      <button type="button" className="secondary-button add-round-button" disabled={createLocked} onClick={onAddRound}>+ Přidat kolo</button>
     </header>
     <span className="outline-move-status" role="status" aria-live="polite">{announcement}</span>
         {selectedAnnouncement && <label className="outline-announcement-target">
@@ -322,7 +323,6 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
       <li className="outline-order-end" onDragOver={event => allowAnnouncementDrop(event, lastDestination, 'order-end')}
         onDrop={event => dropAnnouncement(event, lastDestination)}>{draftAt !== undefined && draftAt > presentationSlides.length && draftRow()}{resultCues(lastDestination + 1)}{gap(null)}</li>
     </ol>
-    <button type="button" className="secondary-button add-round-button" disabled={createLocked} onClick={onAddRound}>+ Přidat kolo</button>
     {locked && !moving && <p className="field-help outline-disabled-reason">{lockedReason}</p>}
   </aside>;
 }

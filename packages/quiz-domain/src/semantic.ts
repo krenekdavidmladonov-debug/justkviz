@@ -84,9 +84,10 @@ export interface SemanticQuizModel {
 function roundTitle(slides: readonly EditorSlide[], position: number): string {
   const explicit = slides.find((slide) => (
     roundKinds.has(slide.storedKind.toLowerCase()) && slide.title.trim() !== ''
-  ))?.title;
+  ));
   const stored = slides.find((slide) => slide.roundTitle?.trim())?.roundTitle;
-  return stored?.trim() || explicit?.trim() || `${position}. kolo`;
+  if (explicit && !explicit.customRoundHeading) return explicit.title.trim();
+  return stored?.trim() || explicit?.title.trim() || `${position}. kolo`;
 }
 
 /** A gap before a question or recap belongs to its round. Else use the preceding round, or the first upcoming one. */

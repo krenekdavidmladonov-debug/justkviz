@@ -122,6 +122,67 @@ test('entire quiz from empty library through normal UI, private drafts, structur
 });
 
 // Regression: never visit/save the optional opening, rules or ending sections.
+test('first question creates one complete round and its automatic screens remain editable after reload', async ({ page, context }) => {
+  const identity = await editorIdentity();
+  let quizId;
+  await context.route('**/*', route => ['localhost', '127.0.0.1'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
+  try {
+    const quiz = await identity.call('createQuiz', { title: 'Začátek otázkou', requestId: 'first-question-' + Date.now() });
+    quizId = quiz.quizId;
+    await page.goto('/admin/login');
+    await page.getByLabel('E-mail').fill(identity.email);
+    await page.getByLabel('Heslo').fill(identity.password);
+    await page.getByRole('button', { name: 'Přihlásit se' }).click();
+    await expect(page).toHaveURL(/\/admin$/);
+    await page.goto('/admin/quizzes/' + quizId + '/edit');
+    await page.getByRole('button', { name: 'Přidat sem', exact: true }).click();
+    await page.getByRole('dialog').getByRole('button', { name: 'Volná odpověď' }).click();
+    await prompt(page).fill('Které město je hlavní?');
+    await page.getByLabel('Správná odpověď *', { exact: true }).fill('Praha');
+    let interruptRefresh = true;
+    await page.route('**/readAccessData', route => {
+      if (interruptRefresh && route.request().method() === 'POST' && route.request().postDataJSON().data.operation === 'editor') return route.abort();
+      return route.continue();
+    });
+    await save(page);
+    await expect(page.getByRole('status').filter({ hasText: 'Načtěte aktuální pořadí' })).toBeVisible();
+    await expect(page.locator('.outline-insert').first()).toBeDisabled();
+    interruptRefresh = false;
+    await page.getByRole('button', { name: 'Zkusit načíst znovu' }).click();
+    const recap = page.locator('[data-slide-kind="recap"] .outline-system-item');
+    const header = page.locator('.outline-round-select');
+    await expect.poll(() => page.locator('[data-slide-kind]').evaluateAll(rows => rows.map(row => row.dataset.slideKind))).toEqual(['agenda', 'round', 'free', 'recap']);
+    await header.click();
+    await page.getByLabel('Nadpis úvodu kola').fill('Začínáme');
+    await expand(page, 'Vzhled celého kola');
+    await page.getByLabel(/^Barva pozadí/).fill('#123456');
+    await expect(page.getByLabel(/Skrýt při moderování/)).toHaveCount(0);
+    await save(page);
+    await recap.click();
+    await page.getByLabel('Text', { exact: true }).fill('Projdeme si řešení.');
+    await expand(page, 'Vzhled otázky nebo slidu');
+    await page.getByLabel(/^Barva pozadí/).fill('#654321');
+    await expect(page.getByLabel(/Skrýt při moderování/)).toHaveCount(0);
+    await save(page);
+    await header.click();
+    await page.getByLabel('Název kola *').fill('Zeměpis');
+    await save(page);
+    await page.reload();
+    await header.click();
+    await expect(page.getByLabel('Nadpis úvodu kola')).toHaveValue('Začínáme');
+    await expand(page, 'Vzhled celého kola');
+    await expect(page.getByLabel(/^Barva pozadí/)).toHaveValue('#123456');
+    await recap.click();
+    await expect(page.getByLabel('Titulek', { exact: true })).toHaveValue('Zeměpis');
+    await expect(page.getByRole('textbox', { name: 'Text', exact: true })).toHaveValue('Projdeme si řešení.');
+    await expand(page, 'Vzhled otázky nebo slidu');
+    await expect(page.getByLabel(/^Barva pozadí/)).toHaveValue('#654321');
+  } finally {
+    if (quizId) await identity.db.recursiveDelete(identity.db.doc('quizzes/' + quizId));
+    await identity.dispose();
+  }
+});
+
 test('minimal quiz authored through UI rehearses exactly the persisted live stream', async ({ page, context }) => {
   const identity = await editorIdentity();
   let quizId, sessionId;

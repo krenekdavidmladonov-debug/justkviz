@@ -343,6 +343,9 @@ export function parseOfflineManifest(value: unknown): OfflineEventManifest {
         if (Object.keys(slide).some(key => !allowed.includes(key))) {
             fail();
         }
+        for (const flag of ['customRoundHeading', 'generatedAgendaSlide']) {
+            if (slide[flag] !== undefined && typeof slide[flag] !== 'boolean') fail();
+        }
         id(slide.id);
         integer(slide.position, 400, 1);
         text(slide.kind, 50);

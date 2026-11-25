@@ -33,7 +33,7 @@ export function overlayEntries(quiz: EditorQuiz, entries: EditorEntries): Editor
 
 interface SaveOperations {
   updateSlide(quizId: string, revision: number, slide: EditorSlide): Promise<EditorMutationResponse>;
-  createSlide(quizId: string, revision: number, position: number, slide: EditorSlide, scope?: 'quiz', roundId?: string): Promise<EditorMutationResponse>;
+  createSlide(quizId: string, revision: number, position: number, slide: EditorSlide, scope?: 'quiz' | 'first-round', roundId?: string): Promise<EditorMutationResponse>;
   updateRound(quizId: string, revision: number, roundId: string, title: string): Promise<EditorMutationResponse>;
   updateMetadata(quizId: string, revision: number, title: string, description: string, appearance: EditorAppearance, defaultDesign?: SlideDesign, resultTemplates?: ResultTemplates, printTemplate?: PrintTemplate): Promise<EditorMutationResponse>;
 }
@@ -49,9 +49,12 @@ export async function saveEditorEntries(base: EditorQuiz, pending: EditorEntries
     for (const [key, original] of Object.entries(pending)) {
       let entry = original;
       if (entry.dirtySlide && entry.draft !== null) {
+        const roundId = entry.pendingCreate?.semanticKey.startsWith('round:') ? entry.roundId : entry.draft.roundId;
+        const scope = entry.pendingCreate?.semanticKey.startsWith('system:') ? 'quiz'
+          : entry.draft.isQuestion && !roundId && quiz.roundCount === 0 ? 'first-round' : undefined;
         const result = entry.pendingCreate === null
           ? await operations.updateSlide(quiz.id, quiz.revision, entry.draft)
-          : await operations.createSlide(quiz.id, quiz.revision, entry.pendingCreate.position, entry.draft, entry.pendingCreate.semanticKey.startsWith('system:') ? 'quiz' : undefined, entry.pendingCreate.semanticKey.startsWith('round:') ? entry.roundId : entry.draft.isQuestion ? entry.draft.roundId : undefined);
+          : await operations.createSlide(quiz.id, quiz.revision, entry.pendingCreate.position, entry.draft, scope, roundId);
         const slide = { ...entry.draft, id: result.selectedSlideId ?? entry.draft.id };
         quiz = { ...overlayEntries(quiz, { [key]: { ...entry, draft: slide, dirtyRound: false } }), ...result, id: quiz.id };
         if (entry.pendingCreate !== null) created[key] = slide.id;

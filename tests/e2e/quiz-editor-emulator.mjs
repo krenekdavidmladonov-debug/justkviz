@@ -674,6 +674,10 @@ async function run() {
     assert.equal(data.roundId, editedRoundId); assert.equal(data.roundTitle, 'Poslední název');
     await expectFunctionError(() => invoke('deleteQuizSlide', { quizId: copy.quizId, expectedRevision: copyRevision, slideId: slide.id }), 'functions/failed-precondition');
   }
+  copyRevision = (await invoke('updateQuizSlide', { quizId: copy.quizId, expectedRevision: copyRevision,
+    slideId: recap.id, slide: editorSlide({ kind: 'recap', title: '', text: 'Pouze doprovodný text', options: [], correctAnswer: '' }) })).revision;
+  await rename('Název bez změny prázdného nadpisu');
+  assert.equal((await getDoc(recap.ref)).data().title, '');
   const questionInput = editorSlide({ kind: 'free', title: 'Nová otázka', correctAnswer: 'Odpověď', options: [] });
   for (const gap of ['first', 'middle', 'last']) {
     const before = await copyProgram();
@@ -691,6 +695,41 @@ async function run() {
     assert.deepEqual(members.map(slide => slide.data().questionNumber), members.map((_, offset) => offset + 1));
     assert(members.every(slide => slide.data().questionCount === members.length));
   }
+
+  // Split an existing round immediately before its last question. The gap before
+  // the inserted header belongs to the preceding round, and the gap following
+  // its recap belongs to the next question even though that recap is nearer.
+  const lastQuestion = (await copyProgram()).at(-1);
+  const lastRoundId = lastQuestion.data().roundId;
+  const inner = await invoke('createQuizRound', { quizId: copy.quizId, expectedRevision: copyRevision,
+    position: lastQuestion.data().position, title: 'Vložené kolo' });
+  copyRevision = inner.revision;
+  for (const beforeId of [inner.selectedSlideId, lastQuestion.id]) {
+    const stream = await copyProgram();
+    const index = stream.findIndex(slide => slide.id === beforeId);
+    const precedingId = stream.slice(0, index).reverse().find(slide => slide.data().roundId).data().roundId;
+    const roundId = beforeId === lastQuestion.id ? lastRoundId : precedingId;
+    if (beforeId === lastQuestion.id) assert.notEqual(precedingId, roundId);
+    const result = await invoke('createQuizSlide', { quizId: copy.quizId, expectedRevision: copyRevision,
+      position: index + 1, roundId, slide: questionInput });
+    copyRevision = result.revision;
+    const updated = await copyProgram();
+    assert.equal(updated[index].id, result.selectedSlideId);
+    assert.equal(updated[index].data().roundId, roundId);
+    assert.equal(updated[index + 1].id, beforeId);
+  }
+
+  const recapQuiz = await invoke('createQuiz', { title: 'Začátek rekapitulací', requestId: 'recap-' + createRequestId });
+  const firstRecap = { quizId: recapQuiz.quizId, expectedRevision: recapQuiz.revision, position: 1, scope: 'first-round',
+    slide: editorSlide({ kind: 'recap', title: '1. kolo', text: '', options: [], correctAnswer: '' }) };
+  const firstResult = await invoke('createQuizSlide', firstRecap);
+  assert.equal(firstResult.roundCount, 1);
+  assert.equal(firstResult.questionCount, 0);
+  const firstSlides = (await getDocs(query(collection(db, 'quizzes', recapQuiz.quizId, 'slides'), orderBy('position')))).docs;
+  assert.deepEqual(firstSlides.map(slide => slide.data().kind), ['agenda', 'round', 'recap']);
+  assert.equal(firstSlides[2].id, firstResult.selectedSlideId);
+  assert.equal(firstSlides[1].data().roundId, firstSlides[2].data().roundId);
+  await expectFunctionError(() => invoke('createQuizSlide', { ...firstRecap, expectedRevision: firstResult.revision }), 'functions/failed-precondition');
 
   const sourceAssetFixture = adminDb.doc(`quizzes/${createdQuizId}/slides/${savedThankYou.id}`);
   await sourceAssetFixture.update({ backgroundImage: `quiz-asset:${createdQuizId}/${'a'.repeat(64)}` });

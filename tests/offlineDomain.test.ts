@@ -25,6 +25,13 @@ describe('offline manifest trust input', () => {
     expect(parsed.baseScores.every(score => score.halfPoints === null)).toBe(true);
   });
 
+  it.each(['customRoundHeading', 'generatedAgendaSlide'])('accepts only boolean values for optional %s', field => {
+    const manifest = offlineManifest();
+    const withFlag = (value: unknown) => ({ ...manifest, slides: manifest.slides.map(slide => ({ ...slide, [field]: value })) });
+    expect(parseOfflineManifest(withFlag(true)).slides[0]).toHaveProperty(field, true);
+    expect(() => parseOfflineManifest(withFlag('true'))).toThrow();
+  });
+
   it.each(['title', 'text', 'correctAnswer', 'moderatorNote', 'options'])('rejects nested private data in the nominal %s field', field => {
     const manifest = offlineManifest();
     const injected = { privateContact: 'PRIVATE_CONTACT_MUST_NOT_BE_STRINGIFIED' };

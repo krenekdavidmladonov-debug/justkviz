@@ -103,6 +103,13 @@ it('distinguishes existing generated slides from manual content and selects the 
   await click(host.querySelector('[data-slide-id="recap-a"] .outline-system-item'));
   expect(props.onSelect).toHaveBeenCalledWith('slide:recap-a');
 });
+it('keeps a legacy round header as its name until the author sets a separate heading', () => {
+  const header = { ...quiz.slides[0]!, kind: 'round' as const, storedKind: 'round', isQuestion: false,
+    title: 'Původní název', roundTitle: 'Jiné uložené jméno' };
+  const roundName = (slide: EditorQuiz['slides'][number]) => buildSemanticQuizModel({ ...quiz, slides: [slide] }).rounds[0]?.title;
+  expect(roundName(header)).toBe('Původní název');
+  expect(roundName({ ...header, customRoundHeading: true })).toBe('Jiné uložené jméno');
+});
 it('offers all question and screen types before every slide and at the end', async () => {
   const { host, props } = await mountOutline();
   for (const id of ['a','b','c','d','']) {
