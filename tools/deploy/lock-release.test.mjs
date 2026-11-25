@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { linuxProof, publishLock, LOCK, REGION_PATH } from './lock-release.mjs';
+import { linuxProof, publishD2, LOCK, REGION_PATH } from './lock-release.mjs';
 import { createPrivateReset, deployFunctionPlan, functionTargets, menuAction } from './nasadit.mjs';
 
 const head = 'a'.repeat(40), bytes = Buffer.from('verified ZIP');
 const record = { sha: head, size: bytes.length, digest: createHash('sha256').update(bytes).digest('hex') };
-const job = { id: 71, name: 'D2 Linux lockEventQuiz', head_sha: head, status: 'completed', conclusion: 'success' };
-const line = '2026-11-25T10:00:00.0000000Z D2_VERIFIED ' + head + ' ' + record.digest + ' ' + record.size;
+const job = { id: 71, name: 'D2 Linux packages', head_sha: head, status: 'completed', conclusion: 'success' };
+const line = '2026-11-25T10:00:00.0000000Z D2_VERIFIED lockEventQuiz ' + head + ' ' + record.digest + ' ' + record.size;
 
 test('release needs unique successful Linux job, selected SHA and unambiguous bounded evidence', () => {
   assert.deepEqual(linuxProof(head, [job], id => { assert.equal(id, 71); return line; }), record);
@@ -18,7 +18,7 @@ test('release needs unique successful Linux job, selected SHA and unambiguous bo
 });
 
 test('only menu option 4 selects lockEventQuiz and it refuses Hosting parameters', () => {
-  assert.equal(menuAction('4'), 'lockEventQuiz');
+  assert.equal(menuAction('4'), 'd2');
   for (const selection of ['1', '2', '3']) assert.equal(menuAction(selection), 'hosting');
   for (const mode of ['--previous', '--rollback']) assert.throws(() => menuAction('4', { mode }));
   assert.throws(() => menuAction(undefined));
@@ -42,7 +42,7 @@ function scenario() {
   after.updateTime = '2026-11-25T10:01:00Z'; after.serviceConfig.revision = 'lockeventquiz-002-test';
   after.buildConfig.source.storageSource = source;
   const calls = [];
-  const options = { head, bytes, log() {}, verifyCI: () => record, confirm: phrase => phrase,
+  const options = { name: 'lockEventQuiz', savePrevious() {}, head, bytes, log() {}, verifyCI: () => record, confirm: phrase => phrase,
     client: {
       get(name) { assert.equal(name, LOCK); return { body: calls.includes('patch') ? after : before }; },
       patch(name, body, query) {
@@ -58,7 +58,7 @@ function scenario() {
 }
 test('D2 updates exactly one existing resource, then verifies its actual revision', async () => {
   const { options, calls } = scenario();
-  await publishLock(options);
+  await publishD2(options);
   assert.deepEqual(calls, ['upload', 'patch', 'wait']);
 });
 test('no upload or PATCH on wrong confirmation, different ZIP, wrong service or build configuration', async () => {
@@ -71,15 +71,15 @@ test('no upload or PATCH on wrong confirmation, different ZIP, wrong service or 
     s => { s.options.confirm = phrase => { s.before.updateTime = '2026-11-25T10:01:01Z'; return phrase; }; },
   ];
   for (const change of variants) {
-    const s = scenario(); change(s); await assert.rejects(publishLock(s.options)); assert.deepEqual(s.calls, []);
+    const s = scenario(); change(s); await assert.rejects(publishD2(s.options)); assert.deepEqual(s.calls, []);
   }
 });
 test('drift during upload prevents patch, unverifiable completion fails', async () => {
   const s = scenario();
   s.options.upload = () => { s.before.serviceConfig.revision += 'x'; return source; };
-  await assert.rejects(publishLock(s.options)); assert.deepEqual(s.calls, []);
+  await assert.rejects(publishD2(s.options)); assert.deepEqual(s.calls, []);
   const t = scenario(); t.options.wait = () => t.before;
-  await assert.rejects(publishLock(t.options)); assert.deepEqual(t.calls, ['upload', 'patch']);
+  await assert.rejects(publishD2(t.options)); assert.deepEqual(t.calls, ['upload', 'patch']);
 });
 test('D1 updates the protected writers before creating the new reset without IAM', async () => {
   const existing = ['saveEventScore','saveRefereeScore','commitOfflineSync','authorizeOfflineEvent','prepareOfflineEvent','previewOfflineSync'].map(entryPoint => ({ entryPoint }));

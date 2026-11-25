@@ -11,7 +11,9 @@ import { analyzeFunctionImpact } from './function-impact.mjs';
 import { functionIdentity, updatedFunctionIdentity, readFunctionOrigin, recordFunctionOrigin } from './function-origin.mjs';
 import { attemptJobs, checkedRun, verifyMainSuite } from './ci-proof.mjs';
 import { buildLockZip } from './lock-bundle.mjs';
-import { linuxProof, publishLock } from './lock-release.mjs';
+import { releaseHistory, historyDirectory, releaseSelection } from './d2-selection.mjs';
+import { d2Names, exceptions } from './d2-functions.mjs';
+import { linuxProof } from './lock-release.mjs';
 import { prepareArtifact, prepareFunctionCreation, removeArtifact } from './artefakt.mjs';
 
 const SITE = 'justkviz-v2';
@@ -163,16 +165,10 @@ export async function functionTargets(client, entryPoints) {
   return { existing, missing, extra, special };
 }
 
-// These twelve exports use separate artifacts. A missing marker is inventory drift,
-// never evidence that an ordinary D1 artifact should create or update one of them.
-const d2Names = new Set(['readQuizMedia', 'driveMediaCompanion', 'beginQuizMediaUpload', 'readDriveMediaImport',
-  'readDriveConnection', 'updateQuizSlide', 'configureDriveMediaCompanion', 'processDriveMediaImport',
-  'createQuizSlide', 'createDriveMediaFolder', 'lockEventQuiz', 'requestDriveMediaImport']);
-
 export function chooseFunctionPlan(selection, inventory, head, origin = readFunctionOrigin, analyze = analyzeFunctionImpact) {
   if (selection !== '2') return inventory;
   const names = inventory.existing.map(fn => fn.entryPoint);
-  const unsafe = [...names, ...inventory.missing].find(name => d2Names.has(name));
+  const unsafe = [...names, ...inventory.missing].find(name => d2Names.includes(name));
   if (unsafe) throw new Error('Inventář D2 neodpovídá očekávání pro ' + unsafe + '. Připravte nový náhled.');
   const proof = origin(gh, inventory.existing);
   let reason = proof.reason ?? (!shaPattern.test(proof.commit) ? 'Chybí ověřené SHA živého backendu.' : undefined);
@@ -322,7 +318,7 @@ function checklist() {
 
 export function menuAction(selection, options = {}) {
   if (options.mode === '--rollback' && selection === undefined) return 'hosting';
-  if (selection === '4' && !options.mode) return 'lockEventQuiz';
+  if (selection === '4' && !options.mode) return 'd2';
   if (['1', '2', '3'].includes(selection)) return 'hosting';
   throw new Error('Neplatná kombinace volby a parametrů nasazení.');
 }
@@ -335,21 +331,24 @@ async function run() {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
     const selection = options.mode === '--rollback' ? undefined : await rl.question(
-      'PRODUKCE ' + LIVE_URL + '\n1) Jen web\n2) Web + Functions\n3) Web + Functions + Rules\n4) D2 – pouze lockEventQuiz\nVolba: ');
-    if (menuAction(selection, options) === 'lockEventQuiz') {
-      const proof = () => {
+      'PRODUKCE ' + LIVE_URL + '\n1) Jen web\n2) Web + Functions\n3) Web + Functions + Rules\n4) Speciální funkce D2\nVolba: ');
+    if (menuAction(selection, options) === 'd2') {
+      console.log(d2Names.map(name => name + (exceptions[name] ? ' — ' + exceptions[name] : '')).join('\n'));
+      const choice = (await rl.question('Zadejte název jedné funkce nebo „vše“ pro všechny změněné D2: ')).trim();
+      if (choice !== 'vše' && !d2Names.includes(choice)) throw new Error('Neplatný výběr D2.');
+      if (exceptions[choice]) throw new Error(exceptions[choice]);
+      const proof = name => {
         let record;
         const currentHead = verifyMain(git, gh, (sha, jobs) => {
           record = linuxProof(sha, jobs, id => execFileSync('gh',
             ['api', '--hostname', 'github.com', '--allow-escape-sequences', 'repos/' + REPO + '/actions/jobs/' + id + '/logs'],
-            { cwd: ROOT, encoding: 'utf8', windowsHide: true, timeout: 45_000, maxBuffer: 8 * 1024 * 1024 }));
+            { cwd: ROOT, encoding: 'utf8', windowsHide: true, timeout: 45_000, maxBuffer: 8 * 1024 * 1024 }), name);
         });
         if (currentHead !== head) throw new Error('Main se změnil.');
         return record;
       };
-      const { bytes } = await buildLockZip(head);
       const client = await stagingClient(functionsOrigin, 'v2');
-      return await publishLock({ head, bytes, verifyCI: proof, client, upload: (api, data) => uploadSource(api, data, true),
+      return await releaseSelection({ choice, root: ROOT, head, build: buildLockZip, proof, client, history: releaseHistory(historyDirectory()), upload: (api, data) => uploadSource(api, data, true),
         wait: waitForBuild, confirm: phrase => rl.question('Pro změnu jediné produkční funkce napište ' + phrase + ': ') });
     }
     const hosting = await stagingClient('https://firebasehosting.googleapis.com', 'v1beta1');

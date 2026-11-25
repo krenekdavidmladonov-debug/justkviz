@@ -11,7 +11,7 @@ const positiveId = n => Number.isSafeInteger(n) && n > 0;
 const green = item => item?.status === 'completed' && item.conclusion === 'success';
 
 export const fastJobs = ['CI plan', 'Quick checks / Build and unit tests', 'Dependency security',
-  'D2 Linux lockEventQuiz', 'Synthetic email Windows protection and compiler environment'];
+  'D2 Linux packages', 'Synthetic email Windows protection and compiler environment'];
 export const longJobs = ['Quality access and editor', 'Quality live and registration', 'Quality scoring and results',
   'Editor, owned media and event lifecycle acceptance',
   'SHOW MODE and whole evening acceptance', 'Isolated Windows persistence and recovery acceptance'];
