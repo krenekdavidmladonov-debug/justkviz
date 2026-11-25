@@ -92,6 +92,7 @@ test('entire quiz from empty library through normal UI, private drafts, structur
       await panel(page,'Obsah');await expect(prompt(page)).toBeVisible();
     }
     await page.setViewportSize({width:1366,height:768});
+    const outlineIds = await page.locator('.presentation-outline [data-slide-id]').evaluateAll(rows => rows.map(row => row.dataset.slideId));
     await page.getByRole('button',{name:'Zkontrolovat kvíz',exact:true}).click();await expect(page.getByRole('button',{name:'Soukromá zkouška',exact:true})).toBeEnabled();await page.getByRole('button',{name:'Soukromá zkouška',exact:true}).click();const practice=page.getByRole('dialog',{name:'Soukromá zkouška kvízu'});let steps=0;const visited=[],rehearsedMedia=new Set();
     while(await practice.getByRole('button',{name:'Další',exact:true}).isEnabled()){
       const current=await practice.locator('.practice-stage').getAttribute('data-slide-id');expect(visited).not.toContain(current);visited.push(current);
@@ -102,7 +103,6 @@ test('entire quiz from empty library through normal UI, private drafts, structur
       await practice.getByRole('button',{name:'Další',exact:true}).click();await expect(practice.locator('.practice-stage')).not.toHaveAttribute('data-slide-id',current);steps++;
     }
     visited.push(await practice.locator('.practice-stage').getAttribute('data-slide-id'));
-    const outlineIds = await page.locator('.presentation-outline [data-slide-id]').evaluateAll(rows => rows.map(row => row.dataset.slideId));
     expect(visited).toEqual(outlineIds);
     expect(steps).toBeGreaterThan(22);expect([...rehearsedMedia].sort()).toEqual(['audio','video']);await practice.getByRole('button',{name:'Zavřít zkoušku'}).click();expect((await identity.db.collection('publicSessions').get()).size).toBe(0);
     // Content above is exclusively authored through UI. Event setup below is a separate boundary check.
@@ -178,7 +178,7 @@ test('minimal quiz authored through UI rehearses exactly the persisted live stre
     await save(page);
     await page.reload();
     const stored = (await identity.db.collection('quizzes/' + quizId + '/slides').get()).docs.map(d => ({ ...d.data(), id: d.id })).sort((a, b) => a.position - b.position);
-    expect(await page.locator('.presentation-outline [data-slide-id]').evaluateAll(rows => rows.map(row => row.dataset.slideId))).toEqual(stored.map(slide => slide.id));
+    await expect.poll(() => page.locator('.presentation-outline [data-slide-id]').evaluateAll(rows => rows.map(row => row.dataset.slideId))).toEqual(stored.map(slide => slide.id));
     expect(stored.map(s => s.kind)).toEqual(['agenda', 'round', 'free', 'recap']);
     expect(stored.find(slide => slide.kind === 'free')).toMatchObject({ text: 'Jediná syntetická otázka', correctAnswer: 'Syntetická odpověď' });
     await page.getByRole('button', { name: 'Soukromá zkouška', exact: true }).click();
