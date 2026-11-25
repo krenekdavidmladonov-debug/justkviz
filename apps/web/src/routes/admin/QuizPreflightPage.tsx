@@ -4,12 +4,14 @@ import { Link, useParams } from 'react-router-dom';
 import { getEditorQuiz } from '../../features/editor/editorRepository';
 import type { EditorQuiz } from '../../features/editor/types';
 import { LiveStartButton } from '../../features/live/LiveStartButton';
+import { useAuth } from '../../auth/AuthProvider';
 import { QuizPreflightPanel } from '../../features/preflight/QuizPreflightPanel';
 import { runQuizPreflight } from '../../features/preflight/validation';
 import { QuizErrorState } from '../../features/quizzes/QuizErrorState';
 import { QuizLoading } from '../../features/quizzes/QuizLoading';
 
 export function QuizPreflightPage() {
+  const { can } = useAuth();
   const { quizId } = useParams<{ quizId: string }>();
   const [quiz, setQuiz] = useState<EditorQuiz | null>(null);
   const [loading, setLoading] = useState(true);
@@ -35,7 +37,7 @@ export function QuizPreflightPage() {
 
   return <article className="quiz-preflight-page">
     <Link className="back-link" to={`/admin/quizzes/${encodeURIComponent(quiz.id)}`}>← Detail kvízu</Link>
-    <QuizPreflightPanel answersReadable quiz={quiz} quizId={quiz.id} result={result} onRecheck={() => void load()} />
+    <QuizPreflightPanel answersReadable={can('quiz.answers.read')} quiz={quiz} quizId={quiz.id} result={result} onRecheck={() => void load()} />
     <section className="preflight-start-card" aria-label="Spuštění kvízu">
       <strong>Kontrola je dobrovolná.</strong>
       <p>Nalezené položky si můžete projít a opravit. Spuštění nevyžaduje dokončení kontroly ani potvrzení doporučení.</p>
