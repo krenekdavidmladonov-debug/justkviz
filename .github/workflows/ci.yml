@@ -29,7 +29,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  ci-plan:
+    name: CI plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      mode: ${{ github.event_name == 'pull_request' && 'full' || steps.plan.outputs.mode }}
+      evidence: ${{ steps.plan.outputs.evidence }}
+    steps:
+      - if: github.event_name == 'pull_request'
+        run: echo "Pull requests always run the full suite."
+      - if: github.event_name == 'push'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - if: github.event_name == 'push'
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/deploy/ci-proof.mjs
+
+  quick-checks:
+    name: Quick checks
+    uses: ./.github/workflows/ci-quick.yml
+
   quality-core:
+    needs: ci-plan
+    if: needs.ci-plan.outputs.mode == 'full'
     name: Quality core
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -64,8 +94,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Typecheck, lint, and production build
-        run: pnpm check
+      - name: Build prerequisites for emulator and browser tests
+        run: pnpm build
 
       - name: Actual dependency API and CLI compatibility contracts
         run: node --test tools/dependencies/security-compat.test.mjs
@@ -74,9 +104,6 @@ jobs:
         run: |
           node -e "require('node:fs').mkdirSync('.local-data', { recursive: true })"
             node --test tools/deploy/nasadit.test.mjs tests/ci-quality-gate.test.mjs tests/staging-guard.test.mjs tests/restart-release-manifest.test.mjs tests/restart-build.test.mjs tools/email/oauth-connect.test.mjs tools/email/build-activation.test.mjs tests/restart-deploy-guard.test.mjs tests/restart-qa.test.mjs tests/access/pause-collaboration.test.mjs tests/access/enable-collaboration.test.mjs tests/access/p1-hotfix-policy.test.mjs tools/email/activation-plan.test.mjs tools/email/activation-execution-policy.test.mjs tools/email/function-deployment-policy.test.mjs tools/event-night/restart-acceptance.test.mjs
-
-      - name: Unit and synthetic migration regression tests
-        run: pnpm test:unit
 
       - name: Migration create-only and existing emulator regression (synthetic only)
         run: >-
@@ -174,6 +201,8 @@ jobs:
           "node tools/local-emulator-environment.mjs full node_modules/@playwright/test/cli.js test --config tests/browser/restart-event-acceptance.config.ts"
 
   editor-media-acceptance:
+    needs: ci-plan
+    if: needs.ci-plan.outputs.mode == 'full'
     name: Editor, owned media and event lifecycle acceptance
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -266,28 +295,47 @@ jobs:
   quality-gate:
     name: Quality gate
     runs-on: ubuntu-latest
-    needs: [quality-core, editor-media-acceptance, show-mode-acceptance, oauth-windows, restart-recovery-acceptance, dependency-security, d2-lock]
+    needs: [ci-plan, quick-checks, quality-core, editor-media-acceptance, show-mode-acceptance, oauth-windows, restart-recovery-acceptance, dependency-security, d2-lock]
     if: ${{ always() }}
     steps:
-      - name: Require every acceptance job to succeed
+      - name: Require the selected suite and all fresh checks
         env:
-          CORE_RESULT: ${{ needs.quality-core.result }}
-          EDITOR_RESULT: ${{ needs.editor-media-acceptance.result }}
-          SHOW_RESULT: ${{ needs.show-mode-acceptance.result }}
-          OAUTH_RESULT: ${{ needs.oauth-windows.result }}
-          RECOVERY_RESULT: ${{ needs.restart-recovery-acceptance.result }}
-          D2_RESULT: ${{ needs.d2-lock.result }}
-          SECURITY_RESULT: ${{ needs.dependency-security.result }}
+          PLAN: ${{ needs.ci-plan.result }}
+          MODE: ${{ needs.ci-plan.outputs.mode }}
+          EVIDENCE: ${{ needs.ci-plan.outputs.evidence }}
+          QUICK: ${{ needs.quick-checks.result }}
+          OAUTH: ${{ needs.oauth-windows.result }}
+          SECURITY: ${{ needs.dependency-security.result }}
+          D2: ${{ needs.d2-lock.result }}
+          CORE: ${{ needs.quality-core.result }}
+          EDITOR: ${{ needs.editor-media-acceptance.result }}
+          SHOW: ${{ needs.show-mode-acceptance.result }}
+          RECOVERY: ${{ needs.restart-recovery-acceptance.result }}
         run: |
-          test "$CORE_RESULT" = success
-          test "$EDITOR_RESULT" = success
-          test "$SHOW_RESULT" = success
-          test "$OAUTH_RESULT" = success
-          test "$RECOVERY_RESULT" = success
-          test "$SECURITY_RESULT" = success
-          test "$D2_RESULT" = success
+          set -euo pipefail
+          for result in "$PLAN" "$QUICK" "$OAUTH" "$SECURITY" "$D2"; do test "$result" = success; done
+          case "$GITHUB_EVENT_NAME/$MODE" in
+            pull_request/full|push/full) expected=success ;;
+            push/reuse)
+              test "$GITHUB_REF" = refs/heads/main
+              [[ "$EVIDENCE" =~ ^PR\ [1-9][0-9]*\ run\ [1-9][0-9]*\ attempt\ [1-9][0-9]*$ ]]
+              expected=skipped ;;
+            *) exit 1 ;;
+          esac
+          for result in "$CORE" "$EDITOR" "$SHOW" "$RECOVERY"; do test "$result" = "$expected"; done
+      - name: Full PR ${{ github.event.number }} at ${{ github.sha }}
+        if: github.event_name == 'pull_request'
+        run: echo "The full suite passed on the PR merge commit."
+      - name: Full main suite
+        if: github.event_name == 'push' && needs.ci-plan.outputs.mode == 'full'
+        run: echo "The full suite passed on the main commit."
+      - name: Reused ${{ needs.ci-plan.outputs.evidence }}
+        if: github.event_name == 'push' && needs.ci-plan.outputs.mode == 'reuse'
+        run: echo "Fresh checks passed and the full PR suite tested the same tree."
 
   show-mode-acceptance:
+    needs: ci-plan
+    if: needs.ci-plan.outputs.mode == 'full'
     name: SHOW MODE and whole evening acceptance
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -378,6 +426,8 @@ jobs:
           node --test tests/windows-preview-cleanup.test.mjs tests/event-night-long-path.test.mjs
 
   restart-recovery-acceptance:
+    needs: ci-plan
+    if: needs.ci-plan.outputs.mode == 'full'
     name: Isolated Windows persistence and recovery acceptance
     runs-on: windows-latest
     timeout-minutes: 20

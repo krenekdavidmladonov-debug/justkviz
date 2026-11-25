@@ -12,6 +12,13 @@
 10. Pokud některá část vydání selže, ověř, které části se skutečně změnily, a zastav další pokusy do vyjasnění stavu. Návrat Functions nebo Rules vyžaduje zvláštní schválený postup. Výsledek zapiš stručně do popisu PR.
 
 
+## Jak se ověřuje CI pro nasazení
+
+Každý PR projde plnou sadou na zkušebním sloučení, včetně emulátorů a prohlížečů. Každý push do `main` znovu provede typecheck, lint, build, unit testy, audit závislostí, krátké kontroly Windows a Linuxové sestavení ZIPu pro přesný commit `main`.
+Čtyři nejdelší joby může CI na `main` převzít z dokončeného PR do této větve. GitHub musí potvrdit přesný commit sdíleného workflow, Git strom testovaného sloučení se musí shodovat se stromem na `main` a všechny povinné joby stejného pokusu PR musí uspět. Samotné SHA větve PR pro porovnání nestačí. Při přímém pushi, změně stromu nebo chybějících údajích se automaticky spustí plná sada na `main`.
+U shodného stromu počítejte orientačně se 3–5 minutami včetně sestavení a unit testů, podle dostupnosti runnerů. Plné běhy na main v posledních třech měřeních trvaly 18–23 minut. Výsledek staršího PR bez těchto důkazů použít nelze.
+Výsledek nese původní povinná kontrola **Quality gate**. V rychlém běhu uvádí číslo PR, běhu a pokusu. NASADIT přes GitHub znovu ověří právě tento důkaz před schváleným vydáním. Při neúplném či nedostupném výsledku nasazení zastaví. Pokud se doklad PR mezitím změnil nebo chybí joby po částečném opakování, spusťte z GitHub Actions znovu **všechny joby CI pro aktuální push na main** a vyčkejte na Quality gate. Volba 2 dál používá plán běžných Functions a Hostingu. Volba 4 vždy znovu porovnává místní ZIP s Linux jobem konkrétního commitu `main` a vyžaduje potvrzení pro jedinou funkci.
+
 ## Vydání N11 před akcí 3. 12. 2026
 
 Cílit na 1. 12., mimo živou akci. David schválí přesný zelený commit po merge na `main`, čtecí náhledy, projekt `filmovy-kviz-v2-staging`, region `europe-west1`, Hosting `justkviz-v2` a níže uvedené rozsahy. Použít samostatný čistý release checkout a ponechat lokální `main` se dvěma SETUP commity na místě. Po celou dobu musí nasazovat jediný operátor. Mezi posledním čtením a GCF PATCH není serverový zámek. Před zahájením uložit identitu/verzi předchozího Hostingu, generace zdrojů a READY revize dotčených Functions. Uložená revize nebo zdroj musejí být dostupné i pro návrat. Při odchylce inventáře nebo rozběhnuté operaci zastavit vydání.

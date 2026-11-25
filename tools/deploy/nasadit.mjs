@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { stagingClient, stagingWebConfig } from '../staging/cloud.mjs';
 import { STAGING_PROJECT as PROJECT } from '../staging/guard.mjs';
+import { attemptJobs, checkedRun, verifyMainSuite } from './ci-proof.mjs';
 import { buildLockZip } from './lock-bundle.mjs';
 import { linuxProof, publishLock } from './lock-release.mjs';
 import { prepareArtifact, prepareFunctionCreation, removeArtifact } from './artefakt.mjs';
@@ -46,14 +47,15 @@ export function verifyMain(readGit, readGitHub, checkJobs) {
     throw new Error('HEAD, origin/main a main na GitHubu se musí shodovat.');
   }
   const run = readGitHub('actions/workflows/ci.yml/runs?branch=main&event=push&head_sha=' + head + '&per_page=1').workflow_runs?.[0];
-  if (run?.head_sha !== head || run.head_branch !== 'main' || run.event !== 'push' ||
-      run.status !== 'completed' || run.conclusion !== 'success' ||
-      !Number.isSafeInteger(run.id) || !Number.isSafeInteger(run.run_attempt)) {
+  if (!checkedRun(run, 'push', head) || run.head_branch !== 'main') {
     throw new Error('CI pro přesný push na main nemá výsledek success.');
   }
-  const jobs = readGitHub('actions/runs/' + run.id + '/attempts/' + run.run_attempt + '/jobs?per_page=100').jobs;
-  if (!jobs?.some(job => job.name === 'Quality gate' && job.status === 'completed' && job.conclusion === 'success')) {
-    throw new Error('Quality gate pro aktuální běh CI není zelená.');
+  let jobs;
+  try {
+    jobs = attemptJobs(readGitHub, run);
+    verifyMainSuite(readGitHub, run, jobs, readGit(['rev-parse', 'HEAD^{tree}']).trim());
+  } catch (error) {
+    throw new Error('Nasazení zastaveno: nelze doložit zelené kontroly pro aktuální main. ' + error.message, { cause: error });
   }
   checkJobs?.(head, jobs);
   return head;

@@ -5,8 +5,16 @@ const source=readFileSync(new URL('../.github/workflows/ci.yml',import.meta.url)
 const gate=source.split('  quality-gate:')[1]?.split('\n  show-mode-acceptance:')[0]??'';
 test('quality gate waits for every independently meaningful acceptance job',()=>{
   const needs=/needs: \[([^\]]+)\]/u.exec(gate)?.[1].split(',').map(x=>x.trim());
-  assert.deepEqual(needs,['quality-core','editor-media-acceptance','show-mode-acceptance','oauth-windows','restart-recovery-acceptance','dependency-security','d2-lock']);
-  for(const variable of ['CORE','EDITOR','SHOW','OAUTH','RECOVERY','SECURITY','D2'])assert(gate.includes('test "$'+variable+'_RESULT" = success'));
+  assert.deepEqual(needs,['ci-plan','quick-checks','quality-core','editor-media-acceptance','show-mode-acceptance','oauth-windows','restart-recovery-acceptance','dependency-security','d2-lock']);
+  assert(gate.includes('for result in "$PLAN" "$QUICK" "$OAUTH" "$SECURITY" "$D2"; do test "$result" = success'));
+  assert(gate.includes('for result in "$CORE" "$EDITOR" "$SHOW" "$RECOVERY"; do test "$result" = "$expected"'));
+  assert(gate.includes('pull_request/full|push/full) expected=success'));
+  assert(gate.includes('push/reuse)'));
+  assert(gate.includes('expected=skipped'));
+  assert(source.includes("github.event_name == 'pull_request' && 'full'"));
+  for (const job of ['quality-core', 'editor-media-acceptance', 'show-mode-acceptance', 'restart-recovery-acceptance']) {
+    assert(source.includes('  ' + job + ":\n    needs: ci-plan\n    if: needs.ci-plan.outputs.mode == 'full'"));
+  }
   assert(gate.includes('always()'));
 });
 test('registry security audit is mandatory and preserves its actual exit',()=>{
@@ -22,7 +30,7 @@ test('recovery gate has an actual demo-only recovery job and current browser cam
 });
 
 test('zero-cost workflows use standard public runners without artifact uploads or package caches',()=>{
-  for(const name of ['ci.yml','owner-takeover.yml','offline-acceptance.yml']){
+  for(const name of ['ci.yml','ci-quick.yml','owner-takeover.yml','offline-acceptance.yml']){
     const yaml=readFileSync(new URL('../.github/workflows/'+name,import.meta.url),'utf8').replaceAll('\r\n','\n');
     assert(!/uses: (?:actions\/(?:upload-artifact|cache)|.*cache-save)@/u.test(yaml));
     assert(!/^\s+cache: /mu.test(yaml));
