@@ -72,7 +72,8 @@ test('one authored event: quiz, immutable snapshot, public teams, scores, staged
     quizId = page.url().split('/').at(-2);
     await page.getByRole('button', { name: '+ Přidat kolo', exact: true }).click();
     await page.getByLabel('Název kola *', { exact: true }).fill('Synthetic round'); await save();
-    await page.getByRole('button', { name: '+ Přidat otázku', exact: true }).click();
+    await page.locator('.outline-round').first().locator('.outline-insert').last().click();
+    await page.getByRole('dialog', { name: 'Přidat do osnovy' }).getByRole('button', { name: 'Volná odpověď' }).click();
     await page.getByLabel('Otázka *', { exact: true }).fill('Initial synthetic question');
     await page.getByLabel('Správná odpověď *', { exact: true }).fill(answer); await save();
     await page.getByLabel('Otázka *', { exact: true }).fill(snapshotPrompt); await save();

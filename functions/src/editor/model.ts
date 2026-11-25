@@ -222,8 +222,14 @@ export function applyKnownSlideUpdate(
     presentation: mergePresentation(current.presentation, input.presentation),
   };
   for (const field of ['design', 'answerDesign'] as const) if (input[field] !== undefined) result[field] = mergeStoredDesign(current[field], input[field]);
+  if (current.automaticAgenda === true) result.generatedAgendaSlide = true;
+  if (input.automaticAgenda !== undefined) result.automaticAgenda = input.automaticAgenda;
+  if (input.hidden === true && current.hidden !== true && (result.generatedAgendaSlide === true || current.automaticAgenda === true || result.automaticAgenda === true
+    || (typeof current.roundId === 'string' && (isRoundKind(current.kind as EditorSlideKind) || current.kind === 'recap' || current.kind === 'intro')))) {
+    throw new QuizEditorError('invalid-argument', 'Automatic slides cannot be hidden.');
+  }
   if (input.hidden !== undefined) {
-    if (!canHideInfoSlide({ kind: String(result.kind), isQuestion: result.isQuestion === true, ...(typeof result.roundId === 'string' ? { roundId: result.roundId } : {}) })) throw new QuizEditorError('invalid-argument', 'Only standalone information slides can be hidden.');
+    if (input.hidden && current.hidden !== true && !canHideInfoSlide({ kind: String(result.kind), isQuestion: result.isQuestion === true, ...(typeof result.roundId === 'string' ? { roundId: result.roundId } : {}) })) throw new QuizEditorError('invalid-argument', 'Only standalone information slides can be hidden.');
     result.hidden = input.hidden;
   }
   if (input.moderatorNote === '' && !Object.hasOwn(current, 'moderatorNote')) delete result.moderatorNote;
@@ -339,21 +345,9 @@ export function moveSlidesBefore(
   if (beforeSlideId !== null && movedIds.has(beforeSlideId)) {
     throw new QuizEditorError('invalid-argument', 'The move target cannot be part of the moved slides.');
   }
-  if (moved.some(slide => slide.data.kind === 'thank-you')) {
-    throw new QuizEditorError('failed-precondition', 'The thank-you slide has a fixed place before the finale.');
-  }
-
   const remaining = slides.filter(slide => !movedIds.has(slide.id));
-  const thankYouIndex = remaining.findIndex(slide => slide.data.kind === 'thank-you');
-  const isClosing = (slide: StoredEditorSlide) => typeof slide.data.kind === 'string' && slide.data.kind.toLowerCase() === 'end';
-  const movesClosing = moved.some(isClosing);
-  const targetIndex = beforeSlideId === null
-    ? (thankYouIndex >= 0 && !movesClosing ? thankYouIndex : remaining.length)
-    : remaining.findIndex(slide => slide.id === beforeSlideId);
+  const targetIndex = beforeSlideId === null ? remaining.length : remaining.findIndex(slide => slide.id === beforeSlideId);
   if (targetIndex < 0) throw new QuizEditorError('not-found', 'Target quiz slide was not found.');
-  if (thankYouIndex >= 0 && (targetIndex <= thankYouIndex ? movesClosing : !moved.every(isClosing))) {
-    throw new QuizEditorError('failed-precondition', 'The thank-you slide must stay between the program and the closing.');
-  }
 
   return [...remaining.slice(0, targetIndex), ...moved, ...remaining.slice(targetIndex)];
 }

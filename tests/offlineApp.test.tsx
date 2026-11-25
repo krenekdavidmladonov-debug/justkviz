@@ -7,7 +7,7 @@ import { checkOfflineShell, installOfflineShell, testOfflineShellBoot } from '..
 import { listOfflineSessions } from '../apps/web/src/features/offline/offlineStore';
 import { openOfflineRuntime, type OfflineRuntime } from '../apps/web/src/features/offline/offlineRuntime';
 import { commitOfflineSynchronization } from '../apps/web/src/features/offline/offlineOnline';
-import { initialOfflineState } from '../packages/quiz-domain/src/offline-event';
+import { initialOfflineState, reduceOfflineCommand, type OfflineCommand } from '../packages/quiz-domain/src/offline-event';
 import { offlineManifest } from './offline-fixture';
 
 const playback = vi.hoisted(() => ({ finishedGeneration: undefined as number | undefined }));
@@ -219,4 +219,50 @@ it.each(['complete', 'missing', 'changed'] as const)('keeps offline standings pr
   await act(async () => button('Ukázat sálu').click());
   if (outcome === 'changed') expect(append).not.toHaveBeenCalled();
   else expect(append).toHaveBeenCalledExactlyOnceWith({ type: 'results', payload: { throughRoundId: manifest.rounds[0]!.id, final: false, page: 0 } });
+});
+
+it.each([false, true])('chooses round/question identity and clears stale recap selection after navigation (legacy=%s)', async legacy => {
+  const original = offlineManifest();
+  const manifest = legacy ? { ...original, slides: original.slides.map(slide => {
+    const { roundId, questionNumber, ...old } = slide; void roundId; void questionNumber;
+    return { ...old, title: '' };
+  }) } : original;
+  const started = reduceOfflineCommand(manifest, initialOfflineState(manifest), { type: 'start', payload: {} });
+  let notifyRuntimeChange = () => {};
+  const mutable = {
+    manifest, state: reduceOfflineCommand(manifest, started, { type: 'navigate', payload: { position: 3 } }),
+    operations: [], playBlock: null, close: vi.fn(), append: vi.fn(),
+  };
+  mutable.append.mockImplementation(async (command: OfflineCommand) => {
+    mutable.state = { ...reduceOfflineCommand(manifest, mutable.state, command), sequence: mutable.state.sequence + 1 };
+    notifyRuntimeChange();
+  });
+  const runtime = mutable as unknown as OfflineRuntime;
+  vi.mocked(openOfflineRuntime).mockImplementation(async (_id, _password, onChange) => { notifyRuntimeChange = onChange; return runtime; });
+  vi.mocked(listOfflineSessions).mockResolvedValue([{ sessionId: manifest.sessionId, title: manifest.event.title, sequence: 0 } as Awaited<ReturnType<typeof listOfflineSessions>>[number]]);
+
+  await render();
+  const password = host.querySelector<HTMLInputElement>('input[type=password]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(password, 'synthetic-offline-password');
+    password.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => button('Odemknout a pokračovat').click());
+  const picker = () => [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('Otázka pro rekapitulaci'))!.querySelector('select')!;
+  const navigate = [...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('Snímek'))!.querySelector('select')!;
+  const first = picker().options[1]!.value;
+  expect(first).toBe(JSON.stringify([legacy ? 'legacy:slide-3' : 'round-1', 'slide-2']));
+  await act(async () => { picker().value = first; picker().dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(button('Odhalit vybranou rekapitulaci').disabled).toBe(false);
+  await act(async () => { navigate.value = '5'; navigate.dispatchEvent(new Event('change', { bubbles: true })); });
+  expect(picker().value).toBe('');
+  expect(button('Odhalit vybranou rekapitulaci').disabled).toBe(true);
+  expect([...picker().options].slice(1).map(option => option.textContent)).toEqual(['2.1 Druhá syntetická otázka']);
+  const second = picker().options[1]!.value;
+  expect(second).toBe(JSON.stringify([legacy ? 'legacy:slide-5' : 'round-2', 'slide-4']));
+  await act(async () => { picker().value = second; picker().dispatchEvent(new Event('change', { bubbles: true })); });
+  await act(async () => button('Odhalit vybranou rekapitulaci').click());
+  expect(mutable.append).toHaveBeenLastCalledWith({ type: 'recap', payload: { position: 4 } });
+  expect(host.querySelector('.offline-preview')?.textContent).toContain('PRIVATE_OFFLINE_ANSWER_TWO');
+  expect(host.querySelector('.offline-preview')?.textContent).not.toContain('PRIVATE_OFFLINE_ANSWER_ONE');
 });

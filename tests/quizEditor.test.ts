@@ -441,3 +441,16 @@ describe('private authoring drafts and independent answers', () => {
     expect(applyKnownSlideUpdate({position:1},validateSlideInput(slideInput()))).not.toHaveProperty('authoringStatus');
   });
 });
+
+test('an automatically created agenda stays visible when its entries become manual', () => {
+  const input = (patch: Record<string, unknown>) => validateSlideInput(slideInput({ kind: 'agenda', ...patch }));
+  const automatic = { kind: 'agenda', position: 1, automaticAgenda: true };
+  const manualEntries = applyKnownSlideUpdate(automatic, input({ automaticAgenda: false }));
+  expect(manualEntries.generatedAgendaSlide).toBe(true);
+  const legacyRecap = { position: 2, kind: 'recap', roundId: 'r1', hidden: false };
+  expect(applyKnownSlideUpdate(legacyRecap, validateSlideInput(slideInput({ kind: 'recap', hidden: false }))).hidden).toBe(false);
+  expect(() => applyKnownSlideUpdate(legacyRecap, validateSlideInput(slideInput({ kind: 'recap', hidden: true })))).toThrow();
+  expect(() => applyKnownSlideUpdate(manualEntries, input({ hidden: true }))).toThrow();
+  expect(() => applyKnownSlideUpdate(automatic, input({ automaticAgenda: false, hidden: true }))).toThrow();
+  expect(applyKnownSlideUpdate({ ...automatic, hidden: true }, input({ hidden: true })).hidden).toBe(true);
+});

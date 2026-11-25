@@ -84,7 +84,7 @@ export const repairQuizVideoTiming = (
 ) => invoke('repairQuizPreflightIssue', {
   quizId, slideId, expectedRevision: revision, kind: 'video-timing', clipStartSeconds, clipEndSeconds,
 });
-export const createQuizSlide = (quizId: string, revision: number, position: number, slide: EditorSlide, scope?: 'quiz', roundId?: string) => (
+export const createQuizSlide = (quizId: string, revision: number, position: number, slide: EditorSlide, scope?: 'quiz' | 'first-round', roundId?: string) => (
   invoke('createQuizSlide', { quizId, expectedRevision: revision, position, slide: slidePayload(slide), ...(scope === undefined ? {} : { scope }), ...(roundId === undefined ? {} : { roundId }) })
 );
 export const duplicateQuizSlide = (quizId: string, revision: number, slideId: string) => (
@@ -122,4 +122,4 @@ export const removeQuizRound = (
   targetRoundId?: string,
 ) => invoke('removeQuizRound', { quizId, roundId, mode, expectedRevision: revision, ...(targetRoundId ? { targetRoundId } : {}) });
 
-export const createQuizRound = (quizId: string, revision: number, title: string) => invoke('createQuizRound', { quizId, expectedRevision: revision, title });
+export const createQuizRound = (quizId: string, revision: number, title: string, position?: number) => invoke('createQuizRound', { quizId, expectedRevision: revision, title, ...(position === undefined ? {} : { position }) });

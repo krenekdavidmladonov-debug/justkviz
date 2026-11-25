@@ -1,3 +1,4 @@
+import { AnswerLengthWarning } from '../preflight/AnswerLengthMeasurement';
 import { parseQuizAsset, directMediaKind, type EditorAppearance } from '@filmovy-kviz/quiz-domain';
 import { MediaUploadField } from '../media/MediaUploadField';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -149,6 +150,8 @@ export function RoundSettingsForm({
     <section className="editor-form-stack">
       <header className="content-form-heading"><span>{round.position}. kolo</span><h2>Nastavení kola</h2><p>{round.questions.length} otázek</p></header>
       <label className="form-field" data-preflight-field="roundTitle">Název kola *<input disabled={disabled || round.id === 'roundless'} value={title} onChange={(event) => onTitle(event.target.value)} /></label>
+      {slide && !round.settingsSlide && <p className="field-help">Kolo zatím nemá úvodní snímek. Přidáte ho úpravou nadpisu, textu nebo vzhledu úvodu.</p>}
+      {slide && <label className="form-field">Nadpis úvodu kola<input disabled={disabled} maxLength={500} value={!slide.customRoundHeading && slide.title === round.title ? title : slide.title} onChange={event => onChange({ ...slide, title: event.target.value, customRoundHeading: event.target.value !== title })} /></label>}
       {slide && <label className="form-field">Doprovodný text úvodu kola<textarea disabled={disabled} value={slide.text} onChange={event => onChange({ ...slide, text: event.target.value })} /></label>}
       {!slide && <p className="field-help">Toto kolo nemá samostatnou úvodní obrazovku. Název kola lze přesto bezpečně upravit.</p>}
     </section>
@@ -430,11 +433,12 @@ export function SystemContentForm({ slide, disabled, onChange }: { readonly slid
   );
 }
 
-export function EditorPreview({ slide, quizTitle, showAnswer, onShowAnswer, onEdit }: {
+export function EditorPreview({ slide, quizTitle, showAnswer, onShowAnswer, onEdit, answersReadable = false }: {
   readonly slide: EditorSlide;
   readonly quizTitle: string;
   readonly showAnswer: boolean;
   readonly onShowAnswer: (value: boolean) => void;
+  readonly answersReadable?: boolean;
   readonly onEdit?: () => void;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -469,6 +473,7 @@ export function EditorPreview({ slide, quizTitle, showAnswer, onShowAnswer, onEd
     <aside className="round-editor-preview editor-panel-preview">
       <header className="preview-heading"><span>Náhled projekce</span><button ref={expandButtonRef} type="button" className="secondary-button" onClick={() => setExpanded(true)}>Zvětšit náhled</button>{onEdit && <button type="button" className="text-button preview-return-button" onClick={onEdit}>Zpět k editaci</button>}</header>
       <div className="local-preview-label">Lokální náhled · nepublikováno</div>
+      {answersReadable && slide.isQuestion && <AnswerLengthWarning slide={slide} quizTitle={quizTitle} />}
       {!expanded && <>{projection}{answerToggle}</>}
       {expanded && <dialog ref={dialogRef} className="editor-preview-dialog" aria-label="Zvětšený náhled projekce" onCancel={event => { event.preventDefault(); closePreview(); }}><header><strong>Náhled projekce</strong><button type="button" className="secondary-button" autoFocus onClick={closePreview}>Zpět k editaci</button></header>{projection}{answerToggle}<p className="field-help">Lokální náhled rozepsaných změn. Nic se nepublikuje.</p></dialog>}
       {slide.text.length + slide.title.length + slide.options.join('').length > 650 && <p className="field-validation warning" role="status">Slide obsahuje mnoho textu. Zkontrolujte zalomení a velikost v náhledu; uložení je možné.</p>}

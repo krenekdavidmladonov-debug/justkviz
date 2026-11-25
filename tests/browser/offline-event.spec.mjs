@@ -389,8 +389,14 @@ async function offlinePhase() {
         mediaProofs.push({ kind: slide.kind, ...await runtimeMedia(page, page, credentials.sessionId, 'audio') });
       } else mediaProofs.push({ kind: slide.kind, ...await runtimeMedia(page, projector, credentials.sessionId, 'video') });
     }
-    const recapSlide = manifest.slides.find(slide => slide.kind === 'audio');
-    await page.getByRole('combobox', { name: 'Otázka pro rekapitulaci', exact: true }).selectOption(String(recapSlide.position));
+    const recapSlide = manifest.slides.filter(slide => slide.kind === 'audio').at(-1);
+    const recapAnchor = manifest.slides.find(slide => slide.kind === 'recap' && slide.roundId === recapSlide.roundId);
+    await navigate(recapAnchor);
+    const recapPicker = page.getByRole('combobox', { name: 'Otázka pro rekapitulaci', exact: true });
+    const choices = await recapPicker.locator('option').evaluateAll(options => options.filter(option => option.value).map(option => ({ identity: JSON.parse(option.value), label: option.textContent })));
+    expect(choices.length).toBeGreaterThan(0);
+    expect(choices.every(choice => choice.identity[0] === recapSlide.roundId && /^2\.\d+ /.test(choice.label))).toBe(true);
+    await recapPicker.selectOption(JSON.stringify([recapSlide.roundId, recapSlide.id]));
     await expect(projector.getByText(recapSlide.correctAnswer, { exact: true })).toHaveCount(0);
     const beforeRecap = await page.evaluate(() => window.__offlineQaPackets);
     expect(beforeRecap.some(packet => packet.reference === recapSlide.mediaSource || packet.state?.includes(recapSlide.correctAnswer))).toBe(false);
@@ -428,14 +434,14 @@ async function offlinePhase() {
       await expect(projector.locator('.sm-row')).toHaveCount(number === 1 ? 0 : 6);
       await confirmed(page, credentials.sessionId, () => button(preview, 'Ukázat sálu').click());
       await expect(projector.locator('.sm-row')).toHaveCount(count);
-      const rows = await projector.locator('.sm-row').evaluateAll(rows => rows.map(row => ({
+      const readRows = () => projector.locator('.sm-row').evaluateAll(rows => rows.map(row => ({
         rank: row.querySelector('.sm-rank').textContent, team: row.querySelector('[role="rowheader"]').textContent,
         points: row.querySelector('.sm-points').textContent,
       })));
       const first = (number - 1) * 6;
-      expect(rows).toEqual(Array.from({ length: count }, (_, offset) => ({ rank: `${first + offset + 1}.`,
+      await expect.poll(readRows).toEqual(Array.from({ length: count }, (_, offset) => ({ rank: `${first + offset + 1}.`,
         team: `QA${String(10 - first - offset).padStart(2, '0')}`, points: String(10 - first - offset) })));
-      interimPages.push(rows);
+      interimPages.push(await readRows());
     }
     expect(new Set(interimPages.flat().map(row => row.team)).size).toBe(10);
     await confirmed(page, credentials.sessionId, () => button(page, 'Skrýt odpověď a výsledky').click());

@@ -1,10 +1,11 @@
-import { useMemo, useSyncExternalStore } from 'react';
+import { useMemo, useState, useSyncExternalStore } from 'react';
 import { collectPreflightMedia, runQuizPreflight, type EditorQuiz } from '@filmovy-kviz/quiz-domain';
 import { preflightImageWidths, subscribePreflightImageWidths } from './imageObservations';
 import { ImageResolutionCheck } from './ImageResolutionCheck';
+import { AnswerLengthMeasurement, answerMeasurementSlides, answerLengthWarning, type AnswerLengthResult } from './AnswerLengthMeasurement';
 import { Link } from 'react-router-dom';
 
-import { questionTypeLabels } from '../editor/semanticModel';
+import { questionTypeLabels, semanticQuestionType } from '../editor/semanticModel';
 import type { PreflightFixTarget, PreflightIssue, PreflightResult } from './types';
 import { preflightVisibleQuiz, preflightFixUrl } from './validation';
 
@@ -18,7 +19,7 @@ const categoryLabels = {
   PROJECTOR: 'Projektor',
 } as const;
 
-function issueHeading(issue: PreflightIssue): string {
+function issueHeading(issue: Pick<PreflightIssue, 'reference'>): string {
   const { reference } = issue;
   if (reference.questionNumber !== undefined && reference.questionType !== undefined) {
     return `${questionTypeLabels[reference.questionType]} · ${reference.roundPosition ?? '—'}. kolo · Otázka ${reference.questionNumber}`;
@@ -50,8 +51,19 @@ export function QuizPreflightPanel({
 }) {
   const quiz = useMemo(() => sourceQuiz ? preflightVisibleQuiz(sourceQuiz, answersReadable) : undefined, [sourceQuiz, answersReadable]);
   const widths = useSyncExternalStore(subscribePreflightImageWidths, preflightImageWidths);
-  const result = useMemo(() => quiz ? runQuizPreflight(quiz, { source: originalResult.source, hasUnsavedChanges: originalResult.issues.some(issue => issue.code === 'UNSAVED_CHANGES'), imageWidths: widths }) : originalResult, [quiz, originalResult, widths]);
+  const baseResult = useMemo(() => quiz ? runQuizPreflight(quiz, { source: originalResult.source, hasUnsavedChanges: originalResult.issues.some(issue => issue.code === 'UNSAVED_CHANGES'), imageWidths: widths }) : originalResult, [quiz, originalResult, widths]);
   const imageSources = useMemo(() => quiz ? collectPreflightMedia(quiz).filter(use => use.image).map(use => use.source) : [], [quiz]);
+  const answerSlides = useMemo(() => quiz && answersReadable ? answerMeasurementSlides(quiz) : [], [quiz, answersReadable]);
+  const [measuredAnswers, setMeasuredAnswers] = useState<AnswerLengthResult | null>(null);
+  const answerIssues = answerSlides.filter(slide => measuredAnswers?.slides === answerSlides && measuredAnswers.tooLong.has(slide.id)).map(slide => ({
+    code: 'ANSWER_TOO_LONG' as const, category: 'PROJECTOR' as const, severity: 'WARNING' as const, message: answerLengthWarning,
+    reference: { quizId, ...(slide.roundId ? { roundId: slide.roundId } : {}), ...(slide.roundTitle ? { roundTitle: slide.roundTitle } : {}),
+      ...(slide.roundNumber === undefined ? {} : { roundPosition: slide.roundNumber }), questionId: slide.id,
+      ...(slide.questionNumber === undefined ? {} : { questionNumber: slide.questionNumber }), questionType: semanticQuestionType(slide) },
+    fixTarget: { kind: 'question' as const, ...(slide.roundId ? { roundId: slide.roundId } : {}), questionId: slide.id, field: 'correctAnswer' },
+  }));
+  const result = { ...baseResult, issues: [...baseResult.issues, ...answerIssues], warningCount: baseResult.warningCount + answerIssues.length,
+    status: baseResult.status === 'READY' && answerIssues.length ? 'READY_WITH_WARNINGS' as const : baseResult.status };
   // Unsaved work is distinct from the optional editorial recommendations.
   const hasUnsaved = result.issues.some(issue => issue.code === 'UNSAVED_CHANGES');
   const contentIssues = result.issues.filter(issue => issue.code !== 'UNSAVED_CHANGES');
@@ -81,6 +93,7 @@ export function QuizPreflightPanel({
       data-question-count={result.questionCount}
       data-validation-duration-ms={result.validationDurationMs.toFixed(3)}
     >
+      {answersReadable && <AnswerLengthMeasurement slides={answerSlides} quizTitle={quiz?.title ?? ''} onMeasured={setMeasuredAnswers} />}
       <header className="preflight-heading">
         <div>
           <span>DOBROVOLNÁ KONTROLA KVÍZU</span>
