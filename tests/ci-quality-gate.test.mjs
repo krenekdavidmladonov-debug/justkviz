@@ -1,18 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { longJobs } from '../tools/deploy/ci-proof.mjs';
 const source=readFileSync(new URL('../.github/workflows/ci.yml',import.meta.url),'utf8').replaceAll('\r\n','\n');
 const gate=source.split('  quality-gate:')[1]?.split('\n  show-mode-acceptance:')[0]??'';
 test('quality gate waits for every independently meaningful acceptance job',()=>{
   const needs=/needs: \[([^\]]+)\]/u.exec(gate)?.[1].split(',').map(x=>x.trim());
-  assert.deepEqual(needs,['ci-plan','quick-checks','quality-core','editor-media-acceptance','show-mode-acceptance','oauth-windows','restart-recovery-acceptance','dependency-security','d2-lock']);
+  assert.deepEqual(needs,['ci-plan','quick-checks','quality-access-editor','quality-live-registration','quality-scoring-results','editor-media-acceptance','show-mode-acceptance','oauth-windows','restart-recovery-acceptance','dependency-security','d2-lock']);
   assert(gate.includes('for result in "$PLAN" "$QUICK" "$OAUTH" "$SECURITY" "$D2"; do test "$result" = success'));
-  assert(gate.includes('for result in "$CORE" "$EDITOR" "$SHOW" "$RECOVERY"; do test "$result" = "$expected"'));
+  assert(gate.includes('for result in "$ACCESS_EDITOR" "$LIVE_REGISTRATION" "$SCORING_RESULTS" "$EDITOR" "$SHOW" "$RECOVERY"; do test "$result" = "$expected"'));
   assert(gate.includes('pull_request/full|push/full) expected=success'));
   assert(gate.includes('push/reuse)'));
   assert(gate.includes('expected=skipped'));
   assert(source.includes("github.event_name == 'pull_request' && 'full'"));
-  for (const job of ['quality-core', 'editor-media-acceptance', 'show-mode-acceptance', 'restart-recovery-acceptance']) {
+  const fullJobs = [...source.matchAll(/^ {2}([\w-]+):\n {4}needs: ci-plan\n {4}if: needs.ci-plan.outputs.mode == 'full'\n {4}name: (.+)$/gmu)];
+  assert.deepEqual(fullJobs.map(match => match[2]).sort(), [...longJobs].sort());
+  for (const job of ['quality-access-editor','quality-live-registration','quality-scoring-results', 'editor-media-acceptance', 'show-mode-acceptance', 'restart-recovery-acceptance']) {
     assert(source.includes('  ' + job + ":\n    needs: ci-plan\n    if: needs.ci-plan.outputs.mode == 'full'"));
   }
   assert(gate.includes('always()'));
