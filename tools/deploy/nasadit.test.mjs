@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
-import { verifyMain, storageBucketExists, functionSourcePatch, listDeployedFunctions, functionTargets, deployFunctionPlan } from './nasadit.mjs';
+import { verifyMain, storageBucketExists, functionSourcePatch, listDeployedFunctions, functionTargets, deployFunctionPlan, chooseFunctionPlan, describeFunctionPlan, finishFunctionRelease, menuAction } from './nasadit.mjs';
 import { fastJobs, longJobs, repository } from './ci-proof.mjs';
 import { deploymentConfig, prepareFunctionCreation } from './artefakt.mjs';
 
@@ -343,4 +343,60 @@ test('podřízené procesy D1 mají Node z .tools v PATH', async () => {
   assert.ok(env.Path.startsWith('C:\\Projects\\justkviz\\.tools\\node22'));
   assert.ok(env.Path.endsWith('C:\\Windows'));
   assert.ok(!('NODE_OPTIONS' in env) && !('VITE_X' in env));
+});
+
+const ordinary = { existing: ['one', 'two'].map(entryPoint => ({ entryPoint, identity: entryPoint + '-old' })),
+  missing: [], special: ['lockEventQuiz'], extra: ['historic'] };
+const originProof = () => ({ commit: 'b'.repeat(40) });
+
+test('option 2 compares backend SHA, includes new exports and explains the preview', () => {
+  const inventory = { ...ordinary, missing: ['three'] };
+  const plan = chooseFunctionPlan('2', inventory, head, originProof, args => {
+    assert.equal(args.baseline, originProof().commit);
+    assert.equal(args.target, head);
+    assert.deepEqual(args.functionNames, ['one', 'two']);
+    return { mode: 'partial', changed: ['one'] };
+  });
+  assert.equal(describeFunctionPlan(plan), 'Změněné funkce (2): one, three\nBeze změny: 1\nOvěřený commit backendu: ' + originProof().commit);
+  assert.deepEqual(plan.special, ordinary.special);
+  const empty = chooseFunctionPlan('2', ordinary, head, originProof, () => ({ mode: 'partial', changed: [] }));
+  assert.match(describeFunctionPlan(empty), /Změněné funkce \(0\): \(žádné\)\nBeze změny: 2/u);
+  return deployFunctionPlan(empty, {}, { update: assert.fail, deploy: assert.fail, prepare: assert.fail });
+});
+
+test('unproven source, build changes and first reset creation force full plan with a reason', () => {
+  for (const plan of [chooseFunctionPlan('2', ordinary, head, () => ({ reason: 'Neshoda inventáře' }), assert.fail),
+    chooseFunctionPlan('2', ordinary, head, originProof, () => ({ mode: 'full', reasons: ['Lockfile'] })),
+    chooseFunctionPlan('2', { ...ordinary, missing: ['resetEventScores'] }, head, originProof, assert.fail)]) {
+    assert.deepEqual(plan.existing, ordinary.existing);
+    assert.match(describeFunctionPlan(plan), /Beze změny: 0[\s\S]*Důvod plného nasazení: .+/u);
+  }
+  assert.throws(() => chooseFunctionPlan('2', { ...ordinary, missing: ['createQuizSlide'] }, head, assert.fail), /D2/u);
+});
+
+test('options 1, 3, 4 and Hosting rollback bypass selection against backend history', () => {
+  for (const option of ['1', '3', '4', undefined]) assert.equal(chooseFunctionPlan(option, ordinary, head, assert.fail, assert.fail), ordinary);
+  assert.equal(menuAction('1'), 'hosting');
+  assert.equal(menuAction('3'), 'hosting');
+  assert.equal(menuAction('4'), 'lockEventQuiz');
+  assert.equal(menuAction(undefined, { mode: '--rollback' }), 'hosting');
+});
+
+test('attest completed updates only after independently checking changed and untouched functions', () => {
+  const completed = new Map([['one', 'one-new']]);
+  const after = { ...ordinary, existing: [{ entryPoint: 'one', identity: 'one-new' }, ordinary.existing[1]] };
+  let recorded;
+  finishFunctionRelease(ordinary, completed, after, head, (_api, commit, targets, updated) => {
+    recorded = [commit, targets, [...updated]];
+  }, assert.fail);
+  assert.deepEqual(recorded, [head, after.existing, ['one']]);
+  for (const stale of [ordinary, { ...after, existing: [after.existing[0], { entryPoint: 'two', identity: 'drift' }] },
+    { ...after, missing: ['two'] }]) {
+    assert.throws(() => finishFunctionRelease(ordinary, completed, stale, head, assert.fail, assert.fail), /neodpovídá/u);
+  }
+  const warnings = [];
+  finishFunctionRelease(ordinary, completed, after, head, () => { throw new Error('denied'); }, text => warnings.push(text));
+  finishFunctionRelease(ordinary, new Map([['one', undefined]]), after, head, assert.fail, text => warnings.push(text));
+  assert.equal(warnings.length, 2);
+  assert.ok(warnings.every(text => text.includes('plné nasazení')));
 });
