@@ -8,7 +8,8 @@ export function RequireStaff() {
   const location = useLocation();
   const navigation = useNavigation();
 
-  if (loading) {
+  // A lazy sign-in or access page may still be loading after the redirect.
+  if (loading || ((!currentUser || !role) && navigation.state !== 'idle')) {
     return <AdminLoading />;
   }
 

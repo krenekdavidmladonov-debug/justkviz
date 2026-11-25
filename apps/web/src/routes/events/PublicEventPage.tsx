@@ -1,24 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useLocation, useParams } from 'react-router-dom';
+import { Link, useLoaderData, useLocation, useParams } from 'react-router-dom';
 
-import { createEventRegistration, newRegistrationRetryKey, registrationActionError, type RegistrationFormValues } from '../../features/events/registrationApi';
-import { getPublicEvent } from '../../features/events/eventRepository';
+import type { RegistrationFormValues } from '../../features/events/registrationApi';
+import { getPublicEvent, type loadPublicEvent } from '../../features/events/publicEventRead';
 import { eventCountdown, eventDateLabel, registrationPresentation } from '../../features/events/eventPresentation';
 import type { PublicEventRecord, RegistrationMutationResponse } from '../../features/events/types';
 import { RegistrationForm, type RegistrationDraftValues } from '../../features/registrations/RegistrationForm';
 import { EventCapacity, EventDateTile, EventPrice, registrationExplanation } from './PublicEventElements';
-import { getPublicEventResults, type PublicEventResults } from '../../features/events/publicEventResults';
+import type { PublicEventResults } from '../../features/events/publicEventResults';
 import { CompletedPublicEvent } from './CompletedPublicEvent';
 import './public-events.css';
 
 const EMPTY: RegistrationDraftValues = { teamName: '', memberCount: 2, contactEmail: '' };
 
-export function PublicEventPage() {
-  const { eventId } = useParams<{ eventId: string }>();
-  return <PublicEventRegistration key={eventId} eventId={eventId} />;
+type InitialEvent = Awaited<ReturnType<typeof loadPublicEvent>>;
+
+export function PublicEventRoute() {
+  const initial = useLoaderData<typeof loadPublicEvent>();
+  return <PublicEventPage initial={initial} />;
 }
 
-function PublicEventRegistration({ eventId }: { readonly eventId: string | undefined }) {
+export function PublicEventPage({ initial }: { readonly initial?: InitialEvent }) {
+  const { eventId } = useParams<{ eventId: string }>();
+  return <PublicEventRegistration key={eventId} eventId={eventId} initial={initial} />;
+}
+
+function PublicEventRegistration({ eventId, initial }: { readonly eventId: string | undefined; readonly initial?: InitialEvent }) {
   const { hash } = useLocation();
   const [completed, setCompleted] = useState<PublicEventResults | null>(null);
   const [event, setEvent] = useState<PublicEventRecord | null>(null);
@@ -29,16 +36,18 @@ function PublicEventRegistration({ eventId }: { readonly eventId: string | undef
   const [now, setNow] = useState(Date.now);
   const inFlight = useRef(false);
   const loadVersion = useRef(0);
-  const [requestKey] = useState(newRegistrationRetryKey);
+  const requestKey = useRef<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(async () => {
+  const load = useCallback(async (prefetched?: InitialEvent) => {
     if (!eventId) return;
     const version = ++loadVersion.current;
     setLoading(true); setEvent(null); setCompleted(null); setCreated(null); setError(null);
     try {
-      const nextEvent = await getPublicEvent(eventId);
+      if (prefetched?.failed) throw new Error('Akci se nepodařilo načíst.');
+      const nextEvent = prefetched ? prefetched.event : await getPublicEvent(eventId);
       if (version !== loadVersion.current) return;
       if (!nextEvent || nextEvent.lifecycleStatus === 'completed') {
+        const { getPublicEventResults } = await import('../../features/events/publicEventResults');
         const results = await getPublicEventResults(eventId);
         if (version !== loadVersion.current) return;
         setCompleted(results);
@@ -48,7 +57,7 @@ function PublicEventRegistration({ eventId }: { readonly eventId: string | undef
     } catch { if (version === loadVersion.current) setError('Akci se nepodařilo načíst.'); }
     finally { if (version === loadVersion.current) setLoading(false); }
   }, [eventId]);
-  useEffect(() => { void load(); return () => { loadVersion.current++; }; }, [load]);
+  useEffect(() => { void load(initial); return () => { loadVersion.current++; }; }, [load, initial]);
   useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 15000); return () => window.clearInterval(timer); }, []);
 
   useEffect(() => {
@@ -78,14 +87,18 @@ function PublicEventRegistration({ eventId }: { readonly eventId: string | undef
     inFlight.current = true;
     const version = loadVersion.current;
     setPending(true); setError(null);
+    let describeError: (reason: unknown) => string = () => 'Přihlášení se nepodařilo. Zkuste to znovu.';
     try {
-      const result = await createEventRegistration(event.id, submittedValues, requestKey);
+      const api = await import('../../features/events/registrationApi');
+      describeError = api.registrationActionError;
+      requestKey.current ??= api.newRegistrationRetryKey();
+      const result = await api.createEventRegistration(event.id, submittedValues, requestKey.current);
       if (version !== loadVersion.current) return;
       setCreated(result);
       const refreshed = await getPublicEvent(event.id).catch(() => null);
       if (version === loadVersion.current && refreshed) setEvent(refreshed);
     }
-    catch (reason) { if (version === loadVersion.current) setError(registrationActionError(reason)); }
+    catch (reason) { if (version === loadVersion.current) setError(describeError(reason)); }
     finally { inFlight.current = false; setPending(false); }
   };
   return <article className="public-event-detail">

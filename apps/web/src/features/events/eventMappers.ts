@@ -1,5 +1,5 @@
 import { eventDisposition, eventScoringEpoch } from '@filmovy-kviz/quiz-domain';
-import { Timestamp, type DocumentData } from 'firebase/firestore';
+import type { DocumentData } from 'firebase/firestore';
 import { mapEventPricing, mapPublicEventPricing } from './eventPricing';
 
 import type {
@@ -29,9 +29,16 @@ function integer(data: Record<string, unknown>, field: string, minimum = 0): num
   return value as number;
 }
 
+// Firestore and Firestore Lite return distinct Timestamp classes.
+function isTimestamp(value: unknown): value is { toDate(): unknown } {
+  return !!value && typeof value === 'object' && 'toDate' in value && typeof value.toDate === 'function';
+}
+
 function date(value: unknown, field: string): Date {
-  if (!(value instanceof Timestamp)) throw new Error(`Neplatné pole akce: ${field}`);
-  return value.toDate();
+  if (!isTimestamp(value)) throw new Error(`Neplatné pole akce: ${field}`);
+  const result: unknown = value.toDate();
+  if (!(result instanceof Date) || !Number.isFinite(result.getTime())) throw new Error(`Neplatné pole akce: ${field}`);
+  return result;
 }
 
 function optionalDate(value: unknown, field: string): Date | undefined {

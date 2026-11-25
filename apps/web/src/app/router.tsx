@@ -1,24 +1,14 @@
+import { loadPublicEvent } from '../features/events/publicEventRead';
 import { PrivacyPage } from '../routes/PrivacyPage';
 import { lazyAdminRoute } from './lazyAdminRoute';
-import { RefereePage } from '../routes/referee/RefereePage';
 import { lazy, Suspense } from 'react';
-import { createBrowserRouter } from 'react-router-dom';
+import { createBrowserRouter, type RouteObject } from 'react-router-dom';
 
-import { AdminPage } from '../routes/admin/AdminPage';
-import { AdminLoginPage } from '../routes/admin/AdminLoginPage';
 import { AdminLoading } from '../routes/admin/AdminLoading';
-import { AdminNoAccessPage } from '../routes/admin/AdminNoAccessPage';
-import { RequireStaff } from '../routes/admin/RequireStaff';
-import { EventsPage } from '../routes/events/EventsPage';
-import { PublicEventPage } from '../routes/events/PublicEventPage';
-import { ManageRegistrationPage } from '../routes/events/ManageRegistrationPage';
 import { NotFoundPage } from '../routes/NotFoundPage';
-import { AdminShell } from './AdminShell';
 import { AppLayout } from './AppLayout';
 import { RouteErrorPage } from './RouteErrorPage';
 import { QuizLoading } from '../features/quizzes/QuizLoading';
-import { DriveConnectionCallback } from '../features/drive/DriveConnectionCallback';
-import '../styles/access.css';
 
 const ProjectorPage = lazy(async () => {
   const module = await import('../routes/projector/ProjectorPage');
@@ -27,6 +17,10 @@ const ProjectorPage = lazy(async () => {
 
 function LazyProjectorRoute() {
   return <Suspense fallback={<section className="projector-stage projector-message"><h1>Načítám projektor…</h1></section>}><ProjectorPage /></Suspense>;
+}
+
+function PublicEventLoading() {
+  return <section className="public-event-detail"><div className="event-public-state" role="status">Načítám akci…</div></section>;
 }
 
 function PublicRouteLoading() {
@@ -42,23 +36,23 @@ function isCurrentCreationEntry(entryKey: string): boolean {
   return router.state.location.key === entryKey && router.state.navigation.state === 'idle';
 }
 
-export const router = createBrowserRouter([
-  { path: 'admin/settings/drive/callback', element: <DriveConnectionCallback />, errorElement: <RouteErrorPage /> },
-  { path: 'referee/:eventId', element: <RefereePage />, errorElement: <RouteErrorPage /> },
+const sessionRoutes: RouteObject[] = [
+  { path: 'admin/settings/drive/callback', lazy: async () => ({ Component: (await import('../features/drive/DriveConnectionCallback')).DriveConnectionCallback }), errorElement: <RouteErrorPage /> },
+  { path: 'referee/:eventId', lazy: async () => ({ Component: (await import('../routes/referee/RefereePage')).RefereePage }), errorElement: <RouteErrorPage /> },
   { path: 'projector', element: <LazyProjectorRoute />, errorElement: <RouteErrorPage /> },
   { path: 'projector/:sessionId', element: <LazyProjectorRoute />, errorElement: <RouteErrorPage /> },
   {
     path: 'admin',
-    element: <RequireStaff />,
+    lazy: async () => ({ Component: (await import('../routes/admin/RequireStaff')).RequireStaff }),
     errorElement: <RouteErrorPage />,
     HydrateFallback: AdminLoading,
     children: [
       { path: 'live/:sessionId', lazy: lazyAdminRoute(() => import('../routes/admin/LiveControlPage').then(module => module.LiveControlPage), ['event.live']) },
       { path: 'quizzes/:quizId/edit', lazy: lazyAdminRoute(() => import('../routes/admin/QuizEditorPage').then(module => module.QuizEditorPage), ['quiz.read']) },
       {
-        element: <AdminShell />,
+        lazy: async () => ({ Component: (await import('../app/AdminShell')).AdminShell }),
         children: [
-          { index: true, element: <AdminPage /> },
+          { index: true, lazy: async () => ({ Component: (await import('../routes/admin/AdminPage')).AdminPage }) },
           { path: 'settings', lazy: async () => ({ Component: (await import('../routes/admin/AdminSettingsPage')).AdminSettingsPage }) },
           { path: 'users', lazy: lazyAdminRoute(() => import('../routes/admin/UsersAccessPage').then(module => module.UsersAccessPage), ['users.manage']) },
           { path: 'quizzes', lazy: lazyAdminRoute(() => import('../routes/admin/QuizLibraryPage').then(module => module.QuizLibraryPage), ['quiz.read']) },
@@ -84,19 +78,42 @@ export const router = createBrowserRouter([
       { path: '*', element: <NotFoundPage /> },
     ],
   },
+];
+
+const sessionLayout = async () => ({ Component: (await import('./SessionLayout')).SessionLayout });
+const eventsRoute = async () => ({ Component: (await import('../routes/events/EventsPage')).EventsPage });
+
+export const router = createBrowserRouter([
+  {
+    lazy: sessionLayout,
+    HydrateFallback: AdminLoading,
+    errorElement: <RouteErrorPage />,
+    children: sessionRoutes,
+  },
   {
     element: <AppLayout />,
     errorElement: <RouteErrorPage />,
     children: [
-      { index: true, element: <EventsPage /> },
-      { path: 'admin/login', element: <AdminLoginPage /> },
-      { path: 'admin/no-access', element: <AdminNoAccessPage /> },
-      { path: 'account', lazy: lazyAccountRoute, HydrateFallback: PublicRouteLoading },
-      { path: 'invite/:inviteId', lazy: lazyAccountRoute, HydrateFallback: PublicRouteLoading },
+      {
+        lazy: sessionLayout,
+        HydrateFallback: PublicRouteLoading,
+        children: [
+          { path: 'admin/login', lazy: async () => ({ Component: (await import('../routes/admin/AdminLoginPage')).AdminLoginPage }) },
+          { path: 'admin/no-access', lazy: async () => ({ Component: (await import('../routes/admin/AdminNoAccessPage')).AdminNoAccessPage }) },
+          { path: 'events/:eventId/registration/manage', lazy: async () => ({ Component: (await import('../routes/events/ManageRegistrationPage')).ManageRegistrationPage }) },
+          { path: 'account', lazy: lazyAccountRoute },
+          { path: 'invite/:inviteId', lazy: lazyAccountRoute },
+        ],
+      },
+      { index: true, lazy: eventsRoute, HydrateFallback: PublicRouteLoading },
       { path: 'privacy', element: <PrivacyPage /> },
-      { path: 'events', element: <EventsPage /> },
-      { path: 'events/:eventId', element: <PublicEventPage /> },
-      { path: 'events/:eventId/registration/manage', element: <ManageRegistrationPage /> },
+      { path: 'events', lazy: eventsRoute, HydrateFallback: PublicRouteLoading },
+      {
+        path: 'events/:eventId',
+        loader: ({ params }) => loadPublicEvent(params.eventId!),
+        lazy: async () => ({ Component: (await import('../routes/events/PublicEventPage')).PublicEventRoute }),
+        HydrateFallback: PublicEventLoading,
+      },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

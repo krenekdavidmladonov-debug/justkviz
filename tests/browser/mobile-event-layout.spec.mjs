@@ -130,10 +130,10 @@ for (const viewport of [{ width: 375, height: 667 }, { width: 1280, height: 720 
       const event = (await identity.db.doc('events/' + eventId).get()).data();
       expect(event.registrationStatus).toBe('open');
       if (viewport.width === 375) {
-        const firestoreListen = url => url.pathname === '/google.firestore.v1.Firestore/Listen/channel';
+        const publicEventRead = url => url.pathname.endsWith('/documents:batchGet');
         const { promise: allowEventRead, resolve: releaseEventRead } = Promise.withResolvers();
         let eventReadBlocked = false;
-        await page.route(firestoreListen, async route => {
+        await page.route(publicEventRead, async route => {
           eventReadBlocked = true;
           await allowEventRead;
           await route.fallback();
@@ -151,7 +151,7 @@ for (const viewport of [{ width: 375, height: 667 }, { width: 1280, height: 720 
         await expect(email).toBeInViewport({ ratio: 1 });
         await expect(teamName).toHaveAttribute('autocomplete', 'off');
         await expect(email).toHaveAttribute('autocomplete', 'email');
-        await page.unroute(firestoreListen);
+        await page.unroute(publicEventRead);
 
         await page.goto('/');
         await page.getByRole('article').filter({ has: page.getByRole('heading', { name: title, exact: true }) })

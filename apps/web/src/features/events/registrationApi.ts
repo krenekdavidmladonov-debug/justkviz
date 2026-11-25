@@ -13,6 +13,12 @@ async function invoke<T>(name: string, data: Record<string, unknown>): Promise<T
   return (await httpsCallable<Record<string, unknown>, T>(getFirebaseServices().functions, name)(data)).data;
 }
 
+async function publicRegistrationCall(name: string, data: Record<string, unknown>) {
+  // The public form loads Auth on demand. Restore an existing session before the callable.
+  await getFirebaseServices().auth.authStateReady();
+  return invoke<RegistrationMutationResponse>(name, data);
+}
+
 export function configureEventRegistration(
   eventId: string,
   expectedRevision: number,
@@ -45,19 +51,19 @@ export function newRegistrationRetryKey(): string {
 }
 
 export function createEventRegistration(eventId: string, values: RegistrationFormValues, requestKey?: string) {
-  return invoke<RegistrationMutationResponse>('createEventRegistration', { eventId, ...values, ...(requestKey ? { requestKey } : {}) });
+  return publicRegistrationCall('createEventRegistration', { eventId, ...values, ...(requestKey ? { requestKey } : {}) });
 }
 
 export function getManagedRegistration(eventId: string, registrationId: string, token: string) {
-  return invoke<RegistrationMutationResponse>('getEventRegistration', { eventId, registrationId, token });
+  return publicRegistrationCall('getEventRegistration', { eventId, registrationId, token });
 }
 
 export function updateManagedRegistration(eventId: string, registrationId: string, token: string, values: RegistrationFormValues, requestId?: string) {
-  return invoke<RegistrationMutationResponse>('updateEventRegistration', { eventId, registrationId, token, ...values, ...(requestId ? { requestId } : {}) });
+  return publicRegistrationCall('updateEventRegistration', { eventId, registrationId, token, ...values, ...(requestId ? { requestId } : {}) });
 }
 
 export function cancelManagedRegistration(eventId: string, registrationId: string, token: string) {
-  return invoke<RegistrationMutationResponse>('cancelEventRegistration', { eventId, registrationId, token });
+  return publicRegistrationCall('cancelEventRegistration', { eventId, registrationId, token });
 }
 
 export function adminCancelRegistration(eventId: string, registrationId: string) {

@@ -3,11 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { RouterProvider } from 'react-router-dom';
 
 import { router } from './app/router';
-import { AuthProvider } from './auth/AuthProvider';
-import { DriveConnectionSessionGuard } from './features/drive/DriveConnectionCallback';
 import { pageTitle } from './config/pageTitle';
 import './styles/global.css';
-import './styles/editor.css';
 
 const rootElement = document.getElementById('root');
 
@@ -25,9 +22,6 @@ if (!rootElement) {
 
 createRoot(rootElement).render(
   <StrictMode>
-    <AuthProvider>
-      <DriveConnectionSessionGuard />
-      <RouterProvider router={router} />
-    </AuthProvider>
+    <RouterProvider router={router} />
   </StrictMode>,
 );

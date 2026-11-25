@@ -7,7 +7,7 @@ import { PublicEventPage } from '../apps/web/src/routes/events/PublicEventPage';
 import type { PublicEventRecord, RegistrationMutationResponse } from '../apps/web/src/features/events/types';
 
 const api = vi.hoisted(() => ({ event: vi.fn(), create: vi.fn() }));
-vi.mock('../apps/web/src/features/events/eventRepository', () => ({ getPublicEvent: api.event }));
+vi.mock('../apps/web/src/features/events/publicEventRead', () => ({ getPublicEvent: api.event }));
 vi.mock('../apps/web/src/features/events/registrationApi', () => ({
   newRegistrationRetryKey: () => crypto.randomUUID(),
   createEventRegistration: api.create,

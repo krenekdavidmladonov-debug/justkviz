@@ -7,7 +7,7 @@ import { ManageRegistrationPage } from '../apps/web/src/routes/events/ManageRegi
 import type { PublicEventRecord, RegistrationMutationResponse } from '../apps/web/src/features/events/types';
 
 const api = vi.hoisted(() => ({ get: vi.fn(), event: vi.fn(), update: vi.fn(), cancel: vi.fn() }));
-vi.mock('../apps/web/src/features/events/eventRepository', () => ({ getPublicEvent: api.event }));
+vi.mock('../apps/web/src/features/events/publicEventRead', () => ({ getPublicEvent: api.event }));
 vi.mock('../apps/web/src/features/events/registrationApi', () => ({ getManagedRegistration: api.get, updateManagedRegistration: api.update, cancelManagedRegistration: api.cancel, registrationActionError: (error: Error) => error.message }));
 
 function deferred<T>() {
