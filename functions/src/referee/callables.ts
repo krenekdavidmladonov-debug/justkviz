@@ -120,7 +120,8 @@ function snapshotIn(event: Record<string, unknown>): string {
 }
 export const readRefereeEvent = onCall(options, async request => {
   if (isWarmupPing(request.data)) return warmupResponse();
-  const c = credential(request.data); await throttle(request);
+  const data = record(request.data);
+  const c = credential(data); await throttle(request);
   return db().runTransaction(async transaction => {
     const { grant, event } = await accessIn(transaction, c);
     const snapshotId = snapshotIn(event);
@@ -129,12 +130,12 @@ export const readRefereeEvent = onCall(options, async request => {
     const root = db().doc('events/' + c.eventId);
     const registrations = await transaction.get(root.collection('registrations').where('status', '==', 'accepted').select('teamName', 'createdAt'));
     const teams = registrationOrder(registrations.docs).map(d => ({ id: d.id, name: String(d.data().teamName) }));
-    const sync = request.data.sync === true;
+    const sync = data.sync === true;
     const shape = sync ? fingerprint([c.eventId, c.accessId, snapshotId, scoringEpoch, teams]) : undefined;
     const scores = await currentScores(transaction, root.collection('scores'), new Set(teams.map(team => team.id)), shape);
     let cursor: string | undefined;
     if (shape) {
-      const previous = parseCursor(request.data.cursor);
+      const previous = parseCursor(data.cursor);
       const metadata = fingerprint(meta);
       cursor = [shape, scores.version, metadata].join('.');
       if (previous && previous.shape === shape && previous.version <= scores.version) {
