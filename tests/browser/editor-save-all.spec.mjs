@@ -313,7 +313,7 @@ test('discarding a new question from the header removes the temporary draft', as
     await page.locator('.outline-round').first().locator('.outline-insert').last().click();
     await page.getByRole('dialog', { name: 'Přidat do osnovy' }).getByRole('button', { name: 'Volná odpověď' }).click();
     await prompt(page).fill('Temporary question');
-    await page.getByRole('button', { name: 'Zahodit změny…', exact: true }).click();
+    await page.getByLabel('Další akce kvízu',{exact:true}).click();await page.getByRole('button', { name: 'Zahodit změny…', exact: true }).click();
     await page.getByRole('button', { name: 'Pokračovat bez uložení' }).click();
     await expect(page.getByRole('button', { name: 'Zrušit novou otázku' })).toHaveCount(0);
     await expect(page.locator('.save-state')).toHaveText('Uloženo');

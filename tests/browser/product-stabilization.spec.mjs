@@ -1,3 +1,4 @@
+import { seedEmptyQuiz } from '../e2e/legacy-quiz-fixture.mjs';
 import { test, expect } from '@playwright/test';
 import { randomUUID, createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -83,7 +84,7 @@ test('one complete evening: saved editor, registration, real materials, media, S
   try {
     await mkdir(output, { recursive: true }); await localOnly(context, baseURL);
     page.on('pageerror', error => errors.push({ surface: 'admin', message: error.message }));
-    quizId = (await identity.call('createQuiz', { title: 'Vydání · filmový večer ' + suffix, requestId: randomUUID() })).quizId;
+    quizId = (await seedEmptyQuiz(identity.db, 'Vydání · filmový večer ' + suffix)).quizId;
     const add = async (kind, extra, position) => identity.call('createQuizSlide', {
       quizId, expectedRevision: (await quiz()).revision, position: position ?? (await slides()).length + 1,
       ...(['intro', 'rules', 'end'].includes(kind) ? { scope: 'quiz' } : {}), slide: mediaSlide(kind, extra),

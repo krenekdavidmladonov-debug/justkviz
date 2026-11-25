@@ -219,6 +219,15 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const driveEnabled = !readOnly && !authLoading && !!currentUser && membership?.role === 'owner' && can('users.manage') && can('quiz.media.upload');
   const [quiz, setQuiz] = useState<EditorQuiz | null>(null);
   const [practicing, setPracticing] = useState(false);
+  const actionsMenuRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    function closeOutside(event: PointerEvent) {
+      const menu = actionsMenuRef.current;
+      if (menu?.open && event.target instanceof Element && !menu.contains(event.target) && !event.target.closest('dialog')) menu.open = false;
+    }
+    document.addEventListener('pointerdown', closeOutside);
+    return () => document.removeEventListener('pointerdown', closeOutside);
+  }, []);
   const practiceButtonRef = useRef<HTMLButtonElement>(null), restorePracticeFocus = useRef(false);
   useEffect(() => {
     if (!practicing && restorePracticeFocus.current && practiceButtonRef.current) {
@@ -919,15 +928,23 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
         </div>
         <div className="round-editor-save">
           {readOnly && <span className="read-only-badge">Pouze pro čtení</span>}
-          <QuizStatusControl quiz={quiz} disabled={structureRefreshPending || dirty || saving || uploading} onChanged={() => reload()} runChange={runStatusChange} />
           <span className={`save-state ${dirty ? 'dirty' : ''} ${saveFailed ? 'failed' : ''}`} role="status" aria-live="polite">{saveLabel}</span>
           {!dirty && !saving && !saveFailed && lastSavedAt && <time className="working-copy-count" dateTime={lastSavedAt.toISOString()}>Vše uloženo v {lastSavedAt.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}</time>}
           {dirty && <span className="working-copy-count">Rozpracované položky: {new Set([...Object.keys(parked), ...(dirtySlide || dirtyRound ? [selectedKey] : []), ...(dirtyQuiz ? ['quiz'] : [])]).size}</span>}
-          <button type="button" className="secondary-button preflight-header-button readiness-chip" aria-expanded={preflightOpen} onClick={() => setPreflightOpen((value) => !value)}>Zkontrolovat kvíz</button><button type="button" ref={practiceButtonRef} className="secondary-button practice-button" disabled={dirty || saving || uploading || practiceSlides(quiz).length === 0} title={dirty ? 'Nejprve uložte rozepsané změny.' : undefined} onClick={() => setPracticing(true)}>Soukromá zkouška</button>
           <button type="button" className="primary-button" disabled={editingDisabled || saving || uploading || !dirty} onClick={() => void saveAll()}>Uložit vše</button>
-          {dirty && <button type="button" className="text-button" disabled={saving || uploading} onClick={() => setPendingSelection(selectedKey)}>Zahodit změny…</button>}
-          {draft?.isQuestion && <button type="button" className="secondary-button draft-save-button" disabled={editingDisabled || saving || uploading} onClick={() => void saveAll(selectedKey, 'draft')}>Uložit koncept</button>}
-          <TechnicalDetails><code>Revize: {quiz.revision}<br />Výběr: {selectedKey}</code></TechnicalDetails>
+          <button type="button" ref={practiceButtonRef} className="secondary-button practice-button" disabled={dirty || saving || uploading || practiceSlides(quiz).length === 0} title={dirty ? 'Nejprve uložte rozepsané změny.' : undefined} onClick={() => setPracticing(true)}>Zkouška</button>
+          <details className="editor-more-actions" ref={actionsMenuRef} onKeyDown={event => {
+            if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); }
+          }}>
+            <summary aria-label="Další akce kvízu" title="Další akce kvízu">⋯</summary>
+            <div className="editor-more-panel">
+              <button type="button" className="secondary-button preflight-header-button readiness-chip" aria-expanded={preflightOpen} onClick={() => { if (actionsMenuRef.current) actionsMenuRef.current.open = false; setPreflightOpen(value => !value); actionsMenuRef.current?.querySelector('summary')?.focus(); }}>Zkontrolovat kvíz</button>
+              <QuizStatusControl quiz={quiz} disabled={structureRefreshPending || dirty || saving || uploading} onChanged={() => reload()} runChange={runStatusChange} />
+              {dirty && <button type="button" className="text-button" disabled={saving || uploading} onClick={() => setPendingSelection(selectedKey)}>Zahodit změny…</button>}
+              {draft?.isQuestion && <button type="button" className="secondary-button draft-save-button" disabled={editingDisabled || saving || uploading} onClick={() => void saveAll(selectedKey, 'draft')}>Uložit koncept</button>}
+              <TechnicalDetails><code>Revize: {quiz.revision}<br />Výběr: {selectedKey}</code></TechnicalDetails>
+            </div>
+          </details>
         </div>
       </header>
 
@@ -995,7 +1012,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
               onTitle={(value) => { setTitle(value); setDirtyQuiz(true); }}
               onDescription={(value) => { setDescription(value); setDirtyQuiz(true); }} />
           )}
-          {selectedKey === 'quiz' && <div className="editor-get-started"><button type="button" className="primary-button" disabled={editingDisabled || saving || uploading} onClick={() => void mutate(current => createQuizRound(current.id, current.revision, `${buildSemanticQuizModel(current).rounds.length + 1}. kolo`), undefined, true)}>{semantic.rounds.length === 0 ? 'Přidat první kolo' : 'Přidat kolo'}</button><p className="field-help">Do kola pak přidáte otázky. Další nastavení můžete nechat na později.</p></div>}
+          {selectedKey === 'quiz' && quiz.slides.length === 0 && <div className="editor-get-started"><button type="button" className="primary-button" disabled={editingDisabled || saving || uploading} onClick={() => void mutate(current => createQuizRound(current.id, current.revision, `${buildSemanticQuizModel(current).rounds.length + 1}. kolo`), undefined, true)}>Přidat první kolo</button><p className="field-help">Do kola pak přidáte otázky. Další nastavení můžete nechat na později.</p></div>}
           {selectedKey === 'quiz' && <EditorDisclosure title="Vzhled celého kvízu" busy={uploading}>{() => <SlideDesignFields lockLayout scope="quiz" value={defaultDesign} disabled={editingDisabled || saving || uploading} onChange={value => { setDefaultDesign(value); setDirtyQuiz(true); }} />}</EditorDisclosure>}
           {selectedKey === 'quiz' && <EditorDisclosure title="Tiskové materiály" busy={uploading}>{() => <PrintTemplateFields quizId={quiz.id} value={printTemplate} disabled={editingDisabled || saving || uploading} onChange={value => { setPrintTemplate(value); setDirtyQuiz(true); }} />}</EditorDisclosure>}
           {selectedTemplate && <section className="editor-form-stack">

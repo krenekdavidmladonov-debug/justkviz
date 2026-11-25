@@ -111,7 +111,7 @@ function QuizCreationForm({ actorUid, isCurrentEntry }: CreationEntryProps & { r
       <Link className="back-link" to="/admin/quizzes">← Zpět na kvízy</Link>
       <header className="event-page-heading event-form-heading">
         <h1>Nový kvíz</h1>
-        <p className="lead">Začněte názvem. Kolo a první otázku přidáte hned potom v editoru.</p>
+        <p className="lead">Zadejte název. V editoru už bude připravená osnova večera s prvním kolem a otázkou.</p>
       </header>
       {error && <HumanError error={{ title: 'Kvíz nelze vytvořit', ...error }} />}
       <form className="event-form" aria-busy={pending} onSubmit={(event) => void submit(event)}>

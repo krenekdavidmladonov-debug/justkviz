@@ -1,3 +1,4 @@
+import { seedEmptyQuiz } from './legacy-quiz-fixture.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { editorIdentity } from './editor-identity.mjs';
@@ -25,7 +26,7 @@ async function anonymous(name, data) {
 let groups = 0;
 const pass = message => { groups++; console.log('PASS N11: ' + message); };
 try {
-  const { quizId } = await call('createQuiz', { title: 'Synthetic N11 version quiz', requestId: randomUUID() });
+  const { quizId } = await seedEmptyQuiz(db, 'Synthetic N11 version quiz');
   const quizRef = db.doc('quizzes/' + quizId), quiz = async () => (await quizRef.get()).data();
   const slides = async () => (await quizRef.collection('slides').orderBy('position').get()).docs.map(row => ({ id: row.id, ...row.data() }));
   async function add(kind, extra = {}, position) {

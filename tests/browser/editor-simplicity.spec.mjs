@@ -38,12 +38,14 @@ test('A–E real browser workflows and larger synthetic quiz comparison', async 
       await step('Název kvízu',()=>page.getByLabel('Název kvízu').fill('Filmový večer – '+phase));
       await step('Vytvořit',async()=>{await page.getByRole('button',{name:'Vytvořit',exact:true}).click();await expect(page).toHaveURL(/\/edit$/);}); quizId=page.url().split('/').at(-2); quizzes.push(quizId);
       for(let r=0;r<2;r++){
-        await step('Přidat kolo',async()=>{await page.getByRole('button',{name:/^\+?\s*Přidat kolo$/}).click();await expect(page.locator('.outline-round')).toHaveCount(r+1);});
+        if(r===0 && phase!=='baseline') await round(page,0).locator('.outline-round-select').click();
+        else await step('Přidat kolo',async()=>{await page.getByRole('button',{name:/^\+?\s*Přidat kolo$/}).click();await expect(page.locator('.outline-round')).toHaveCount(r+1);});
         await step('Název kola',()=>page.getByLabel('Název kola *').fill('Filmové kolo '+(r+1))); await save();
         for(let q=0;q<5;q++){
-          await addQuestion(r);
+          const starter = r===0 && q===0 && phase!=='baseline';
+          if(starter) await round(page,0).locator('.outline-question').click(); else await addQuestion(r);
           await step('Zadání otázky',()=>prompt(page).fill(`Kolo ${r+1}: Kdo natočil film číslo ${q+1}?`));
-          await step('Správná odpověď',()=>answer(page).fill('Režisér '+(q+1))); await save();
+          await step('Správná odpověď',()=>answer(page).fill('Režisér '+(q+1))); if(starter){await page.getByRole('button',{name:'Dokončit otázku'}).click();await expect(page.locator('.save-state')).toHaveText('Uloženo');}else await save();
         }
       }
       await expect(page.locator('.outline-question')).toHaveCount(10);

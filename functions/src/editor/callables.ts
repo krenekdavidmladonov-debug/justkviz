@@ -16,6 +16,7 @@ import { driveRuntimeSecrets } from '../drive/runtime.js';
 import { verifyDriveAssets } from '../drive/media-read.js';
 import { materializeQuizCopyAsset, verifyQuizCopyAssetPin, type QuizCopyStoragePin } from '../media/quiz-copy-storage.js';
 
+import { starterSlides } from './starter.js';
 import { QuizEditorError } from './errors.js';
 import {
   applyKnownSlideUpdate,
@@ -232,7 +233,7 @@ function derivedPresentation(data: Record<string, unknown>): Record<string, unkn
 
 function writeDerivedState(
   transaction: Transaction,
-  state: QuizState,
+  state: Pick<QuizState, 'quizRef' | 'slides'>,
   slides: readonly StoredEditorSlide[],
 ): void {
   const storedRoundIds = new Set(state.slides.map(slideRoundId).filter((value): value is string => value !== undefined));
@@ -303,12 +304,11 @@ function writeDerivedState(
   }
 }
 
-function writeQuizState(
+function writeSlideDocuments(
   transaction: Transaction,
-  state: QuizState,
+  state: Pick<QuizState, 'quizRef' | 'revision' | 'slides'>,
   slides: readonly StoredEditorSlide[],
-  actor: AdminActor,
-): EditorQuizMutationResponse {
+) {
   if (slides.some(slide => slide.data.automaticAgenda === true)) {
     const mapped = slides.map(slide => mapEditorSlide(slide.id, slide.data));
     const model = buildSemanticQuizModel({ id: state.quizRef.id, title: '', description: '', revision: state.revision, slideCount: slides.length, roundCount: 0, questionCount: 0, slides: mapped });
@@ -320,11 +320,20 @@ function writeQuizState(
   if (estimatedWrites > maximumQuizWriteCount) {
     throw new QuizEditorError('failed-precondition', 'Quiz is too large for one safe editor transaction.');
   }
-  const now = Timestamp.now();
   for (const slide of slides) {
     transaction.set(state.quizRef.collection('slides').doc(slide.id), slide.data);
   }
   writeDerivedState(transaction, state, slides);
+}
+
+function writeQuizState(
+  transaction: Transaction,
+  state: QuizState,
+  slides: readonly StoredEditorSlide[],
+  actor: AdminActor,
+): EditorQuizMutationResponse {
+  writeSlideDocuments(transaction, state, slides);
+  const now = Timestamp.now();
   const counts = stateCounts(slides);
   transaction.update(state.quizRef, {
     ...counts,
@@ -370,28 +379,23 @@ export const createQuiz = securedOnCall('createQuiz', callableOptions, async (re
       }
       const now = Timestamp.now();
       grantCreatedResource(transaction, 'quiz', identity.quizId);
+      const slides = orderedWithPositions(starterSlides(creation.title));
+      const counts = stateCounts(slides);
       transaction.create(quizRef, {
         schemaVersion: 1,
         title: creation.title,
         description: '',
         status: 'draft',
         revision: 0,
-        slideCount: 0,
-        questionCount: 0,
-        roundCount: 0,
+        ...counts,
         creationFingerprint: identity.fingerprint,
         createdAt: now,
         updatedAt: now,
         createdBy: actor.uid,
         updatedBy: actor.uid,
       });
-      return {
-        quizId: identity.quizId,
-        revision: 0,
-        slideCount: 0,
-        questionCount: 0,
-        roundCount: 0,
-      };
+      writeSlideDocuments(transaction, { quizRef, revision: 0, slides: [] }, slides);
+      return { quizId: identity.quizId, revision: 0, ...counts };
     });
   } catch (error) {
     return mapError(error);

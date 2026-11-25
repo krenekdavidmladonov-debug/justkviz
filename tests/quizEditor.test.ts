@@ -1,3 +1,4 @@
+import { starterSlides } from '../functions/src/editor/starter';
 import { describe, expect, test } from 'vitest';
 
 import { mapEditorQuiz, mapEditorSlide } from '../apps/web/src/features/editor/editorMappers';
@@ -37,6 +38,16 @@ function slideInput(overrides: Record<string, unknown> = {}) {
     ...overrides,
   };
 }
+
+test('the new evening program has one editable draft question and quiz-scoped closing screens', () => {
+  const slides = starterSlides('Noc s filmem');
+  expect(slides.map(slide => slide.data.kind)).toEqual(['intro', 'rules', 'agenda', 'round', 'free', 'recap', 'thank-you', 'end']);
+  expect(new Set(slides.map(slide => slide.id)).size).toBe(slides.length);
+  expect(slides.filter(slide => slide.data.roundId).map(slide => slide.data.kind)).toEqual(['round', 'free', 'recap']);
+  expect(slides.filter(slide => slide.data.isQuestion).map(slide => slide.data)).toEqual([
+    expect.objectContaining({ kind: 'free', title: '', text: '', correctAnswer: '', authoringStatus: 'draft', answerMode: 'open' }),
+  ]);
+});
 
 test('whole-quiz copying rejects nested private asset references including escaped transport URLs', () => {
   expect(hasQuizScopedMedia({ resultTemplates: { final: { design: { logoImage: 'quiz-asset:source/media' } } } })).toBe(true);

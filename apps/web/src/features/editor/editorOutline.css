@@ -21,9 +21,6 @@
 .quiz-outline .outline-question-row .outline-question small { font-size:.65rem; }
 .quiz-outline .outline-question-row .outline-issue { width:16px; height:16px; }
 .quiz-outline .outline-item-actions { flex:none; width:28px; }
-.quiz-outline .outline-delete-button { flex:none; width:36px; min-width:36px; min-height:44px; padding:6px; border:0; border-radius:6px; color:var(--color-danger, #f28b98); background:transparent; cursor:pointer; }
-.quiz-outline .outline-delete-button:hover:enabled { background:var(--color-surface-elevated); }
-@media (pointer:coarse) { .quiz-outline .outline-delete-button { width:44px; min-width:44px; } }
 .quiz-outline .outline-item-actions > summary { width:28px; min-height:36px; display:grid; place-items:center; list-style:none; font-weight:800; font-size:1.1rem; cursor:pointer; border-radius:5px; color:var(--color-text-muted); }
 .quiz-outline .outline-item-actions > summary::-webkit-details-marker { display:none; }
 .quiz-outline .outline-item-actions[open] > summary, .quiz-outline .outline-item-actions > summary:hover { color:var(--color-text); background:var(--color-surface-elevated); }
@@ -84,3 +81,5 @@
 .quiz-outline .presentation-outline :is(.outline-question-row, [data-slide-id]).drop-after::after { content:''; position:absolute; inset-inline:3px; height:3px; background:var(--color-focus); z-index:4; pointer-events:none; }
 .quiz-outline .drop-before::before { top:0; }
 .quiz-outline .drop-after::after { bottom:0; }
+
+.quiz-outline .outline-action-panel .editor-delete-button { justify-content:flex-start; color:var(--color-danger); }

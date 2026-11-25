@@ -12,7 +12,7 @@ vi.mock('../apps/web/src/auth/AuthProvider', () => ({ useAuth: () => ({ currentU
 vi.mock('../apps/web/src/features/editor/editorApi', () => ({ createQuiz: vi.fn() }));
 
 const createPath = '/admin/quizzes/new', listPath = '/admin/quizzes', editorPath = '/admin/quizzes/synthetic-created/edit';
-const created: Awaited<ReturnType<typeof createQuiz>> = { quizId: 'synthetic-created', revision: 0, slideCount: 0, questionCount: 0, roundCount: 0 };
+const created: Awaited<ReturnType<typeof createQuiz>> = { quizId: 'synthetic-created', revision: 0, slideCount: 8, questionCount: 1, roundCount: 1 };
 let host: HTMLDivElement, root: Root, router: ReturnType<typeof createMemoryRouter>;
 let listLoader: (() => Promise<null>) | undefined;
 beforeEach(() => {

@@ -1,4 +1,5 @@
 /* global window, document */
+import { seedEmptyQuiz } from '../e2e/legacy-quiz-fixture.mjs';
 import {test,expect} from '@playwright/test';
 import {randomUUID} from 'node:crypto';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
@@ -26,7 +27,7 @@ test('whole-evening design saves, snapshots, public reveal, publication history 
  const invoke=async(name,data)=>{network.push(name);return identity.call(name,data);};
  const navigate=async s=>{await invoke('goToSlide',{sessionId,expectedRevision:(await state()).revision,position:s.position});await expect(page.locator('.live-control')).toHaveAttribute('data-current-position',String(s.position));};
  try {
-  quizId=(await invoke('createQuiz',{title,requestId:randomUUID()})).quizId;
+  quizId=(await seedEmptyQuiz(identity.db, title)).quizId;
   // Existing stored print customization must survive the simplified layout-only editor.
   await invoke('updateQuizMetadata',{quizId,expectedRevision:(await quiz()).revision,quiz:{title,description:'',printTemplate:{layout:'comfortable',title:'Frozen paper title '+suffix,instructions:'Synthetic print instructions',footer:'Frozen footer'}}});
   const add=async(kind,extra={},position)=>invoke('createQuizSlide',{quizId,expectedRevision:(await quiz()).revision,position:position??(await slides()).length+1,...(['intro','rules','info','end'].includes(kind)?{scope:'quiz'}:{}),slide:mediaSlide(kind,{title:'Synthetic '+kind,text:'Synthetic '+kind+' screen',...extra})});

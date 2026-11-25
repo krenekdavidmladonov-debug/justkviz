@@ -134,7 +134,7 @@ test('imported slide survives two saves and reports a stale revision without los
   }
 });
 
-test('library CTA creates an empty quiz and carries its first round and free question through reopen @seeded', async ({ browser }) => {
+test('library CTA creates the evening template and carries its first free question through reopen @seeded', async ({ browser }) => {
   const context = await browser.newContext();
   await restrictToLocalhost(context);
   const page = await context.newPage();
@@ -151,16 +151,27 @@ test('library CTA creates an empty quiz and carries its first round and free que
     await page.getByLabel('Název kvízu').fill(title);
     await waitForCallable(page, 'createQuiz', () => page.getByRole('button', { name: 'Vytvořit', exact: true }).click());
     await expect(page).toHaveURL(/\/admin\/quizzes\/quiz_[a-f0-9]+\/edit$/u);
-    await expect(page.locator('.editor-empty-preview')).toContainText('Zatím není co promítnout');
-    await expect(page.locator('.outline-round')).toHaveCount(0);
-
-    await waitForCallable(page, 'createQuizRound', () => page.getByRole('button', { name: '+ Přidat kolo' }).click());
+    const kinds = ['intro', 'rules', 'agenda', 'round', 'free', 'recap', 'thank-you', 'end'];
+    await expect.poll(() => page.locator('.presentation-outline [data-slide-kind]').evaluateAll(rows => rows.map(row => row.getAttribute('data-slide-kind')))).toEqual(kinds);
     await expect(page.locator('.outline-round')).toHaveCount(1);
-    await page.locator('.outline-round').first().locator('.outline-insert').last().click();
-    await page.getByRole('dialog', { name: 'Přidat do osnovy' }).getByRole('button', { name: 'Volná odpověď' }).click();
+    await expect(page.locator('.editor-get-started')).toHaveCount(0);
+    await expect(page.locator('.round-editor-header button:visible')).toHaveCount(2);
+    await expect(page.getByLabel('Další akce kvízu')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Průběžné pořadí/ })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Finální vyhlášení/ })).toBeVisible();
+    const order = page.locator('.presentation-outline');
+    const beforeFinale = await order.getByRole('button', { name: /Finální vyhlášení/ }).evaluate(button => {
+      const thanks = button.closest('ol')!.querySelector('[data-slide-kind="thank-you"]')!;
+      const end = button.closest('ol')!.querySelector('[data-slide-kind="end"]')!;
+      return !!(thanks.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING)
+        && !!(button.compareDocumentPosition(end) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    expect(beforeFinale).toBe(true);
+    await expect(page.locator('.outline-question')).toContainText('Je potřeba doplnit');
+    await page.locator('.outline-question').click();
     await page.getByLabel('Otázka *').fill(question);
     await page.getByLabel('Správná odpověď *').fill(answer);
-    await waitForCallable(page, 'createQuizSlide', () => page.getByRole('button', { name: 'Uložit vše', exact: true }).click());
+    await waitForCallable(page, 'updateQuizSlide', () => page.getByRole('button', { name: 'Dokončit otázku', exact: true }).click());
     await expect(page.locator('.save-state')).toHaveText('Uloženo');
 
     await page.getByRole('link', { name: '← Knihovna kvízů' }).click();
@@ -217,6 +228,8 @@ test('lost quiz creation restores the same attempt on reload and permits a delib
     expect(requests[0]?.requestId).toBe(legacyId);
     expect(await page.evaluate(() => sessionStorage.getItem('justkviz.quiz-create-request-id'))).toBeNull();
     expect(committedIds[1]).toBe(committedIds[0]);
+    await expect(page.locator('[data-slide-kind]')).toHaveCount(8);
+    await expect(page.locator('.outline-question')).toHaveCount(1);
     await page.getByRole('link', { name: '← Knihovna kvízů' }).click();
     await expect(page.getByRole('link', { name: title, exact: true })).toHaveCount(1);
 

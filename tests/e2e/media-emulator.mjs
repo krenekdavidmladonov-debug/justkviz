@@ -1,3 +1,4 @@
+import { seedEmptyQuiz } from './legacy-quiz-fixture.mjs';
 import { strict as assert } from 'node:assert';
 import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -296,7 +297,7 @@ try {
   const { materializeQuizCopyAsset } = await import('../../functions/lib/media/quiz-copy-storage.js');
   const { readDriveAsset, verifyDriveAsset } = await import('../../functions/lib/drive/media-read.js');
   const { createTokenVault } = await import('../../functions/lib/email/token-vault.js');
-  const driver = await f.admin.call('createQuiz', { requestId: randomUUID(), title: 'Syntetický soukromý Disk' });
+  const driver = await seedEmptyQuiz(f.db, 'Syntetický soukromý Disk', { uid });
   const driveQuiz = f.db.doc('quizzes/' + driver.quizId);
   const connection = f.db.doc('driveConnections/' + uid);
   extraFixtures.push(async () => { await connection.delete(); await f.db.recursiveDelete(driveQuiz); });
