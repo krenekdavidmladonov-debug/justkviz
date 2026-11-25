@@ -32,6 +32,8 @@ export interface EditorSlide {
   readonly design?: SlideDesign;
   readonly answerDesign?: SlideDesign;
   readonly automaticAgenda?: boolean;
+  readonly customRoundHeading?: boolean;
+  readonly generatedAgendaSlide?: boolean;
   readonly authoringStatus?: 'draft' | 'ready';
   readonly answerMode?: 'open' | 'choice';
   readonly imageLayout?: 'split' | 'stacked';

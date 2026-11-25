@@ -6,6 +6,7 @@ import { PNG } from 'pngjs';
 import { describe, expect, test, vi } from 'vitest';
 
 import { renderPrintArtifact } from '../functions/src/print/renderer';
+import { offlineSlides } from '../functions/src/offline/source';
 import { answerDisplay, mapSnapshotToPrintEvent } from '../functions/src/print/snapshot-mapper';
 import { syntheticPrintEvent, longSyntheticPrintEvent, syntheticSnapshotDocuments, syntheticTeams } from './printCenter.fixture';
 import { printLogoAsset } from '../functions/src/print/logo';
@@ -387,6 +388,18 @@ describe('print generation source consistency', () => {
 });
 
 describe('trusted snapshot mapper', () => {
+  test('prints interleaved questions in the same order as the locked offline stream and keeps scoring columns unique', () => {
+    const rounds = ['A','B'].map((id, index) => ({ id, data: { title: id, position: index + 1 } }));
+    const ids = ['a1', 'b1', 'a2'];
+    const slides = ids.map((id, index) => ({ id, data: { kind: 'free', isQuestion: true, roundId: id[0]!.toUpperCase(),
+      position: index + 1, questionNumber: id === 'a2' ? 2 : 1, correctAnswer: id, text: id } }));
+    const frozen = { status: 'ready', quizTitle: 'Večer' };
+    const { quiz } = mapSnapshotToPrintEvent({ title: 'Akce' }, frozen, rounds, [...slides].reverse());
+    expect(quiz.questionBlocks?.flatMap(block => block.questions.map(question => question.answer))).toEqual(offlineSlides(frozen, slides, rounds).map(slide => slide.id));
+    expect(quiz.questionBlocks?.map(block => [block.number, block.questions[0]?.number])).toEqual([[1,1],[2,1],[1,2]]);
+    expect(quiz.rounds.map(round => round.questions.length)).toEqual([2,1]);
+  });
+
   test('maps only print fields and drops prompts, media, notes, legacy data, and internal IDs', () => {
     const { rounds, slides } = syntheticSnapshotDocuments();
     const mapped = mapSnapshotToPrintEvent(

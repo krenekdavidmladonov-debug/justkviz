@@ -500,7 +500,7 @@ it('new questions inherit shared appearance without copying it into local overri
   vi.mocked(getEditorQuiz).mockResolvedValue({ ...quiz, defaultAppearance: { backgroundImage: 'https://example.invalid/default.jpg', backgroundOverlay: 35, imageLayout: 'stacked' } });
   vi.mocked(createQuizSlide).mockResolvedValue({ quizId: 'quiz', revision: 2, slideCount: 3, questionCount: 3, roundCount: 1, selectedSlideId: 'new-question' });
   await render();
-  await act(async () => host.querySelector<HTMLButtonElement>('.add-question-button')!.click());
+  await addQuestion();
   await setText('prompt', 'Nová otázka'); await setText('correctAnswer', 'Nová odpověď');
   const save = [...host.querySelectorAll('button')].find(button => button.textContent === 'Uložit vše')!;
   await act(async () => save.click());
@@ -527,10 +527,12 @@ function holdQuestionFocusFrames() {
   return frames;
 }
 async function addQuestion() {
-  const button = host.querySelector<HTMLButtonElement>('.add-question-button')!;
+  const gap = host.querySelector<HTMLButtonElement>('[data-before=""] .outline-insert')!;
+  await act(async () => gap.click());
+  const button = [...host.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(item => item.textContent === 'Volná odpověď')!;
   button.focus();
   await act(async () => button.click());
-  return button;
+  return gap;
 }
 const questionField = (field: string) => host.querySelector<HTMLTextAreaElement>(`[data-preflight-field="${field}"] textarea`)!;
 async function releaseFocusFrame(frame: FrameRequestCallback) { await act(async () => frame(0)); }

@@ -117,25 +117,45 @@ export function mapSnapshotToPrintEvent(
     throw new PrintCenterError(422, 'question-limit', 'Počet otázek není vhodný pro tisk.');
   }
 
+  const rounds = sortedRounds.map((round, roundOffset) => ({
+    number: roundOffset + 1,
+    title: requiredText(round.data.title, 'round.title'),
+    questions: (questionsByRound[roundOffset] ?? [])
+      .sort((left, right) => left.position - right.position)
+      .map((question, questionOffset) => ({
+        number: questionOffset + 1,
+        kind: question.kind,
+        answerMode: question.answerMode,
+        ...(question.choiceCount === undefined ? {} : { choiceCount: question.choiceCount }),
+        answer: question.answer,
+        ...(question.choiceLabel ? { choiceLabel: question.choiceLabel } : {}),
+      })),
+  }));
+  // Score sheets retain exactly one column per round. Answer sheets and keys
+  // follow the presentation stream, retaining the original question numbers.
+  const sequence = rounds.flatMap((round, index) => round.questions.map((question, offset) => ({
+    round, question, position: questionsByRound[index]![offset]!.position,
+  })));
+  let questionBlocks: typeof rounds | undefined;
+  if (sequence.some((entry, index) => index > 0 && entry.position < sequence[index - 1]!.position)) {
+    questionBlocks = [];
+    for (const { round, question } of sequence.sort((a, b) => a.position - b.position)) {
+      const previous = questionBlocks.at(-1);
+      if (previous?.number === round.number) previous.questions.push(question);
+      else questionBlocks.push({ ...round, questions: [question] });
+    }
+    for (const empty of rounds.filter(round => !round.questions.length)) {
+      const index = questionBlocks.findIndex(block => block.number > empty.number);
+      questionBlocks.splice(index < 0 ? questionBlocks.length : index, 0, empty);
+    }
+  }
   return {
     title: requiredText(eventData.title, 'event.title'),
     quiz: {
       title: requiredText(snapshotData.quizTitle, 'snapshot.quizTitle'),
       ...(snapshotData.printTemplate ? { printTemplate: normalizePrintTemplate(snapshotData.printTemplate) } : {}),
-      rounds: sortedRounds.map((round, roundOffset) => ({
-        number: roundOffset + 1,
-        title: requiredText(round.data.title, 'round.title'),
-        questions: (questionsByRound[roundOffset] ?? [])
-          .sort((left, right) => left.position - right.position)
-          .map((question, questionOffset) => ({
-            number: questionOffset + 1,
-            kind: question.kind,
-            answerMode: question.answerMode,
-            ...(question.choiceCount === undefined ? {} : { choiceCount: question.choiceCount }),
-            answer: question.answer,
-            ...(question.choiceLabel ? { choiceLabel: question.choiceLabel } : {}),
-          })),
-      })),
+      rounds,
+      ...(questionBlocks === undefined ? {} : { questionBlocks }),
     },
   };
 }

@@ -1,5 +1,5 @@
 import { AnswerLengthWarning } from '../../features/preflight/AnswerLengthMeasurement';
-import { canHideInfoSlide, resolveSlideDesign, resolveLegacySlideAppearance, type SlideDesign, type ResultTemplates, type PrintTemplate } from '@filmovy-kviz/quiz-domain';
+import { canHideInfoSlide, questionRoundAtGap, resolveSlideDesign, resolveLegacySlideAppearance, type SlideDesign, type ResultTemplates, type PrintTemplate } from '@filmovy-kviz/quiz-domain';
 import { SlideDesignFields, legacySlideDesign } from '../../features/editor/SlideDesignFields';
 import { ResultTemplatePreview } from '../../features/editor/ResultTemplatePreview';
 import { PrintTemplateFields } from '../../features/print/PrintTemplateFields';
@@ -24,7 +24,7 @@ import {
   SystemContentForm,
   SystemSectionForm,
 } from '../../features/editor/EditorForms';
-import { EditorOutline } from '../../features/editor/EditorOutline';
+import { EditorOutline, type EveningItem } from '../../features/editor/EditorOutline';
 import { moveOutlineQuestion, moveOutlineRound } from '../../features/editor/outlineMoves';
 import {
   createQuizSlide,
@@ -106,16 +106,15 @@ function localDraft(kind: EditableSlideKind, position: number, values: Partial<E
   };
 }
 
-function newQuestionDraft(type: CreatableQuestionType, round: SemanticRound): EditorSlide {
+function newQuestionDraft(type: CreatableQuestionType, round: SemanticRound | undefined, position: number): EditorSlide {
   const kind = storageKindForQuestion(type);
-  const position = insertionPositionForRound(round);
-  const questionNumber = round.questions.filter((question) => question.slide.position < position).length + 1;
+  const questions = round?.questions ?? [];
+  const questionNumber = questions.filter(question => question.slide.position < position).length + 1;
   return localDraft(kind, position, {
     id: `local-question-${type}`,
-    roundId: round.id,
-    roundTitle: round.title,
+    ...(round && round.id !== 'roundless' ? { roundId: round.id, roundTitle: round.title } : {}),
     questionNumber,
-    questionCount: round.questions.length + 1,
+    questionCount: questions.length + 1,
     authoringStatus: 'ready', answerMode: type === 'choice' ? 'choice' : 'open',
     options: type === 'choice' ? ['', '', '', ''] : [],
     clipStartSeconds: type === 'audio' || type === 'video' ? 0 : null,
@@ -136,6 +135,8 @@ function roundForSelection(key: string, model: SemanticQuizModel): SemanticRound
 
 function selectionForSlide(slideId: string | undefined, model: SemanticQuizModel, fallback = 'quiz'): string {
   if (slideId === undefined) return fallback;
+  const section = model.introduction.find(item => item.slide?.id === slideId);
+  if (section) return `system:${section.key}`;
   const round = model.rounds.find((item) => item.settingsSlide?.id === slideId);
   return round === undefined ? `slide:${slideId}` : `round:${round.id}`;
 }
@@ -251,7 +252,6 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const [removeRound, setRemoveRound] = useState<SemanticRound | null>(null);
   const [removeQuestion, setRemoveQuestion] = useState<EditorSlide | null>(null);
   useEffect(() => { setRemoveRound(null); setRemoveQuestion(null); }, [quizId]);
-  const [pickerRoundId, setPickerRoundId] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<EditorPanel>('content');
   const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
   const [showReadiness, setShowReadiness] = useState(false);
@@ -264,9 +264,9 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const uploadPending = useRef(false);
   const onUploadPending = useCallback((pending: boolean) => { uploadPending.current = pending; setUploading(pending); }, []);
   const [saveFailed, setSaveFailed] = useState(false);
-  const [refreshFailure, setRefreshFailure] = useState<'content' | 'announcement' | 'unconfirmed-announcement' | null>(null);
-  const announcementRefreshPending = refreshFailure !== null && refreshFailure !== 'content';
-  const editingDisabled = readOnly || announcementRefreshPending;
+  const [refreshFailure, setRefreshFailure] = useState<'content' | 'structure' | 'unconfirmed-announcement' | null>(null);
+  const structureRefreshPending = refreshFailure !== null && refreshFailure !== 'content';
+  const editingDisabled = readOnly || structureRefreshPending;
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   useEffect(() => { setLastSavedAt(null); }, [quizId, readOnly]);
   const [error, setError] = useState<string | null>(null);
@@ -580,13 +580,13 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
       const refreshed = await reload(key, pendingCreate?.semanticKey.startsWith('system:') ? undefined : createdId);
       if (refreshed === null && result.acknowledged > 0) {
         setError(null);
-        setRefreshFailure('content');
+        setRefreshFailure(result.quiz.slides.length === result.quiz.slideCount ? 'content' : 'structure');
       }
       // A partial save retains acknowledged slides for the next successful retry;
       // background attachment must not add revision conflicts to a failed save.
       driveImports.queueSavedSlides([...deferredDriveSlides.current.values()]);
       deferredDriveSlides.current.clear();
-      return refreshed ?? result.quiz;
+      return refreshed ?? (result.quiz.slides.length === result.quiz.slideCount ? result.quiz : null);
     } catch (saveError) {
       setSaveFailed(true); setError(safeErrorMessage(saveError)); return null;
     } finally { savePending.current = false; setSaving(false); }
@@ -655,7 +655,6 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
 
   function select(key: string) {
     if (key === selectedKey || uploadPending.current || savePending.current) return;
-    setPickerRoundId(null);
     if (pendingCreate !== null && dirtySlide) { setPendingSelection(key); return; }
     const entries = { ...parkedRef.current };
     delete entries[selectedKey];
@@ -708,7 +707,10 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
     setError(null);
     try {
       const result = await action(current);
-      return await reload(preferredKey ?? selectedKey, result.selectedSlideId) !== null;
+      if (await reload(preferredKey ?? selectedKey, result.selectedSlideId) !== null) return true;
+      setError(null);
+      setRefreshFailure('structure');
+      return false;
     } catch (mutationError) {
       setError(safeErrorMessage(mutationError));
       requestAnimationFrame(() => errorRef.current?.focus());
@@ -719,18 +721,56 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
     }
   }
 
-  async function createQuestion(roundId: string, type: CreatableQuestionType = 'free') {
+  function gapPosition(current: EditorQuiz, beforeId: string | null) {
+    if (beforeId === null) return current.slideCount + 1;
+    const slide = current.slides.find(item => item.id === beforeId);
+    if (!slide) throw new Error(staleEditorMessage);
+    return slide.position;
+  }
+
+  function roundAtPosition(current: EditorQuiz, position: number) {
+    const slides = [...current.slides].sort((a, b) => a.position - b.position);
+    const next = slides[position - 1];
+    return questionRoundAtGap(slides.map(slide => slide.roundId), position - 1, next?.isQuestion || next?.kind === 'recap');
+  }
+
+  function insertItem(beforeId: string | null, type: EveningItem) {
+    if (type === 'choice' || type === 'free' || type === 'image' || type === 'audio' || type === 'video') {
+      void createQuestion(undefined, type, beforeId);
+      return;
+    }
+    void mutate(current => {
+      const position = gapPosition(current, beforeId);
+      if (type === 'round') return createQuizRound(current.id, current.revision, `${buildSemanticQuizModel(current).rounds.length + 1}. kolo`, position);
+      if (type === 'recap') {
+        const roundId = roundAtPosition(current, position);
+        const round = buildSemanticQuizModel(current).rounds.find(item => item.id === roundId);
+        return createQuizSlide(current.id, current.revision, position, localDraft('recap', position, { title: round?.title ?? '1. kolo' }), roundId ? undefined : 'first-round', roundId);
+      }
+      const titles = { title: 'Titulní snímek', info: 'Organizační sdělení', pause: 'Přestávka', intro: 'Vítejte', rules: 'Pravidla', agenda: 'Harmonogram', 'thank-you': 'Děkujeme, že jste hráli!', end: 'Děkujeme za hru' };
+      const slide = localDraft(type === 'pause' ? 'info' : type, position, { title: titles[type], ...(type === 'rules' ? { options: [...defaultRules] } : {}) });
+      return createQuizSlide(current.id, current.revision, position, slide, 'quiz');
+    }, undefined, true);
+  }
+
+  async function createQuestion(roundId: string | undefined, type: CreatableQuestionType = 'free', beforeId?: string | null) {
     if (quiz === null || editingDisabled || uploadPending.current || savePending.current) return;
     const opener = document.activeElement;
     const current = dirty ? await saveAll() : quiz;
     if (current === null) return;
-    const round = buildSemanticQuizModel(current).rounds.find(item => item.id === roundId);
-    if (round === undefined) return;
-    // Empty slide overrides inherit the quiz defaults through the shared renderer.
-    const next = newQuestionDraft(type, round);
+    const model = buildSemanticQuizModel(current);
+    let position: number | undefined;
+    if (beforeId !== undefined) {
+      try { position = gapPosition(current, beforeId); } catch (gapError) { setError(safeErrorMessage(gapError)); return; }
+      roundId = roundAtPosition(current, position);
+    }
+    const round = model.rounds.find(item => item.id === roundId);
+    if (position === undefined && round) position = insertionPositionForRound(round);
+    if (position === undefined) return;
+    const next = newQuestionDraft(type, round, position);
     setDraft(next); setPendingCreate({ position: next.position, semanticKey: 'draft' });
     setSelectedKey('draft'); setDirtySlide(true); setDirtyRound(false);
-    setPickerRoundId(null); setTouched(new Set()); setShowAnswer(false); setShowReadiness(false); setActivePanel('content');
+    setTouched(new Set()); setShowAnswer(false); setShowReadiness(false); setActivePanel('content');
     requestAnimationFrame(() => {
       const working = driveWorkingCopy.current;
       if (editorState.current.quizId !== current.id || working.quiz?.id !== current.id
@@ -780,7 +820,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
       if (await reload(key) === null) {
         setSelectedKey(key);
         setError(null);
-        setRefreshFailure('announcement');
+        setRefreshFailure('structure');
       }
       return true;
     } catch (moveError) {
@@ -811,9 +851,11 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const isLocalQuestion = selectedKey === 'draft' && pendingCreate?.semanticKey === 'draft'
     && draft?.isQuestion === true && !semantic.slideById.has(draft.id);
   const questionNumber = selectedQuestion?.number ?? draft?.questionNumber ?? 1;
+  const secondarySection = draft && selectedKey === `slide:${draft.id}` && !draft.roundId
+    ? semantic.introduction.find(item => (item.key === 'opening' ? 'intro' : item.key) === draft.kind) : undefined;
   const selectedSection = selectedKey.startsWith('system:')
     ? semantic.introduction.find((item) => item.key === selectedKey.slice('system:'.length))
-    : undefined;
+    : secondarySection && draft ? { ...secondarySection, slide: draft } : undefined;
   const selectedTemplate = selectedKey.startsWith('results:') ? selectedKey.slice('results:'.length) as 'interim' | 'final' : undefined;
   const template = selectedTemplate ? resultTemplates[selectedTemplate] : undefined;
   const inheritedRound = selectedRound === undefined ? undefined : (parked[`round:${selectedRound.id}`]?.draft ?? selectedRound.settingsSlide)?.design;
@@ -823,17 +865,17 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
   const previewSlide = previewBase === undefined ? undefined : {
     ...previewBase, ...resolveLegacySlideAppearance(appearance, previewBase), design: resolveSlideDesign(defaultDesign, selectedKey.startsWith('round:') || selectedTemplate ? undefined : inheritedRound, previewBase.design),
     ...(previewRoundNumber === undefined ? {} : { roundNumber: previewRoundNumber }),
-    ...(selectedKey.startsWith('round:') && dirtyRound ? { title: roundTitle } : {}),
+    ...(selectedKey.startsWith('round:') && dirtyRound && previewBase.title === selectedRound?.title ? { title: roundTitle } : {}),
     ...(selectedSection?.key === 'agenda' && previewBase.automaticAgenda === true ? { options: generatedAgendaOptions(semantic.rounds, quiz.slides) } : {}),
   };
   const saveLabel = uploading ? 'Nejdřív dokončete nahrávání média.' : editorSaveLabels[editorSaveStatus(dirty, saving, saveFailed)];
   const structuralDisabled = editingDisabled || saving || dirty || uploading;
   const deletionDisabled = structuralDisabled || !can('quiz.delete');
-  const deletionReason = readOnly || !can('quiz.delete') ? 'Smazání vyžaduje oprávnění upravovat a mazat obsah kvízu.' : announcementRefreshPending ? 'Nejprve načtěte aktuální pořadí.' : dirty ? 'Nejprve uložte nebo zahoďte rozepsané změny.' : uploading ? 'Nejprve dokončete nahrávání média.' : saving ? 'Právě probíhá změna kvízu.' : undefined;
+  const deletionReason = readOnly || !can('quiz.delete') ? 'Smazání vyžaduje oprávnění upravovat a mazat obsah kvízu.' : structureRefreshPending ? 'Nejprve načtěte aktuální pořadí.' : dirty ? 'Nejprve uložte nebo zahoďte rozepsané změny.' : uploading ? 'Nejprve dokončete nahrávání média.' : saving ? 'Právě probíhá změna kvízu.' : undefined;
   const navigationAsDraft = draft?.isQuestion === true && (draft.authoringStatus === 'draft' || hasSaveBlockingIssues(draft, quiz.slides.find(slide => slide.id === draft.id), !can('quiz.answers.read')));
 
   return (
-    <MediaAuthoringContext.Provider value={{ quizId: quiz.id, onPending: onUploadPending, canUpload: !announcementRefreshPending && can('quiz.media.upload'), canAttach: !announcementRefreshPending && can('quiz.media.attach') }}><article ref={editorRef} className="round-first-editor">
+    <MediaAuthoringContext.Provider value={{ quizId: quiz.id, onPending: onUploadPending, canUpload: !structureRefreshPending && can('quiz.media.upload'), canAttach: !structureRefreshPending && can('quiz.media.attach') }}><article ref={editorRef} className="round-first-editor">
       {(pendingSelection !== null || blocker.state === 'blocked') && (
         <UnsavedChangesDialog
           saveLabel={navigationAsDraft ? "Uložit koncept a pokračovat" : "Uložit a pokračovat"}
@@ -877,7 +919,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
         </div>
         <div className="round-editor-save">
           {readOnly && <span className="read-only-badge">Pouze pro čtení</span>}
-          <QuizStatusControl quiz={quiz} disabled={announcementRefreshPending || dirty || saving || uploading} onChanged={() => reload()} runChange={runStatusChange} />
+          <QuizStatusControl quiz={quiz} disabled={structureRefreshPending || dirty || saving || uploading} onChanged={() => reload()} runChange={runStatusChange} />
           <span className={`save-state ${dirty ? 'dirty' : ''} ${saveFailed ? 'failed' : ''}`} role="status" aria-live="polite">{saveLabel}</span>
           {!dirty && !saving && !saveFailed && lastSavedAt && <time className="working-copy-count" dateTime={lastSavedAt.toISOString()}>Vše uloženo v {lastSavedAt.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}</time>}
           {dirty && <span className="working-copy-count">Rozpracované položky: {new Set([...Object.keys(parked), ...(dirtySlide || dirtyRound ? [selectedKey] : []), ...(dirtyQuiz ? ['quiz'] : [])]).size}</span>}
@@ -894,7 +936,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
         <div className="human-error" role="status">
           <div>
             <strong>{refreshFailure === 'unconfirmed-announcement' ? 'Přesun se nepodařilo ověřit.' : 'Změny jsou uložené.'}</strong>
-            {announcementRefreshPending ? <p>Načtěte aktuální pořadí, abyste mohli pokračovat v úpravách.</p>
+            {structureRefreshPending ? <p>Načtěte aktuální pořadí, abyste mohli pokračovat v úpravách.</p>
               : <p>Nový náhled se nepodařilo načíst.{dirty ? ' Znovu ho můžete načíst po uložení rozepsaných změn.' : ''}</p>}
           </div>
           <button type="button" className="secondary-button" disabled={dirty || saving || uploading} onClick={() => void retrySavedRefresh()}>Zkusit načíst znovu</button>
@@ -927,7 +969,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
           activeDraft={selectedKey !== 'draft' || isLocalQuestion ? draft : null}
           disabled={structuralDisabled}
           creationDisabled={editingDisabled || saving || uploading}
-          disabledReason={readOnly ? 'Máte oprávnění pouze ke čtení.' : announcementRefreshPending ? 'Nejprve načtěte aktuální pořadí.' : uploading ? 'Nejdříve dokončete nahrávání média.' : saving ? 'Právě ukládám změny…' : 'Pro přesouvání nejprve uložte nebo zahoďte rozepsané změny.'}
+          disabledReason={readOnly ? 'Máte oprávnění pouze ke čtení.' : structureRefreshPending ? 'Nejprve načtěte aktuální pořadí.' : uploading ? 'Nejdříve dokončete nahrávání média.' : saving ? 'Právě ukládám změny…' : 'Pro přesouvání nejprve uložte nebo zahoďte rozepsané změny.'}
           onMove={moveInOutline}
           onMoveRound={moveRoundInOutline}
           onMoveSlide={moveAnnouncementInOutline}
@@ -936,20 +978,8 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
           deleteDisabledReason={deletionReason}
           onDeleteQuestion={question => { setError(null); setRemoveQuestion(question); }}
           onDeleteRound={round => { setError(null); setRemoveRound(round); }}
-          pickerRoundId={pickerRoundId}
           onSelect={select}
-          onOpenPicker={setPickerRoundId}
-          onClosePicker={() => setPickerRoundId(null)}
-          onCreateQuestion={(round, type) => void createQuestion(round.id, type)}
-          onAddInfo={() => void mutate(current => {
-            const position = current.slides.find(slide => slide.kind === 'thank-you')?.position ?? current.slideCount + 1;
-            return createQuizSlide(current.id, current.revision, position, localDraft('info', position, { title: 'Organizační sdělení', text: 'Napište oznámení, poděkování nebo pokyny k přestávce.' }), 'quiz');
-          })}
-          onAddThankYou={() => void mutate(current => {
-            const position = current.slideCount + 1;
-            return createQuizSlide(current.id, current.revision, position, localDraft('thank-you', position, { title: 'Děkujeme, že jste hráli!' }), 'quiz');
-          })}
-          onAddClosing={() => void mutate(current => createQuizSlide(current.id, current.revision, current.slideCount + 1, localDraft('end', current.slideCount + 1, { title: 'Děkujeme za hru' }), 'quiz'))}
+          onInsert={insertItem}
           onAddRound={() => {
             void mutate(current => createQuizRound(current.id, current.revision, `${buildSemanticQuizModel(current).rounds.length + 1}. kolo`), undefined, true);
           }}
@@ -983,7 +1013,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
             <>
               {selectedRound.id !== 'roundless' && <div className="editor-selection-actions"><span>{selectedRound.position}. kolo · {selectedRound.title}</span><EditorDeleteButton label="Smazat kolo…" disabled={deletionDisabled} reason={deletionReason} onClick={() => { setError(null); setRemoveRound(selectedRound); }} /></div>}
               <RoundSettingsForm round={selectedRound} title={roundTitle} slide={draft ?? undefined} disabled={editingDisabled || saving}
-                onTitle={(value) => { setRoundTitle(value); setDirtyRound(true); if (draft?.id === 'local-round') { setDraft({ ...draft, title: value }); setDirtySlide(true); } }}
+                onTitle={(value) => { setRoundTitle(value); setDirtyRound(true); if (draft?.id === 'local-round' && !draft.customRoundHeading) setDraft({ ...draft, title: value }); }}
                 onChange={(value) => { setDraft(value); setDirtySlide(true); }} />
               {selectedRound.id !== 'roundless' && <div className="editor-get-started"><button type="button" className="primary-button" disabled={editingDisabled || saving || uploading} onClick={() => void createQuestion(selectedRound.id)}>Přidat otázku</button><p className="field-help">Stačí zadání a správná odpověď. Média přidáte podle potřeby.</p></div>}
               {selectedRound.id !== 'roundless' ? <details className="editor-extra"><summary>Další akce kola</summary><div className="semantic-actions round-actions">
@@ -1023,28 +1053,26 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
               )}
               {isLocalQuestion && <button type="button" disabled={saving || uploading} className="text-button" onClick={() => {
                 if (savePending.current || uploadPending.current) return;
-                discardDraft(); setSelectedKey(`round:${selectedRound?.id ?? ''}`);
+                discardDraft(); setSelectedKey(selectedRound ? `round:${selectedRound.id}` : 'quiz');
               }}>Zrušit novou otázku</button>}
             </>
           )}
-          {draft !== null && !draft.isQuestion && !selectedKey.startsWith('system:') && !selectedKey.startsWith('round:') && (
+          {draft !== null && !draft.isQuestion && !selectedSection && !selectedKey.startsWith('round:') && (
             <SystemContentForm slide={draft} disabled={editingDisabled || saving} onChange={(value) => { setDraft(value); setDirtySlide(true); }} />
           )}
           {draft !== null && <EditorDisclosure key={`design:${selectedKey}`} field="backgroundImage" title={`Vzhled ${selectedKey.startsWith('round:') ? 'celého kola' : 'otázky nebo slidu'}`} busy={uploading}>{() => <SlideDesignFields lockLayout={draft.isQuestion || selectedKey.startsWith('round:')} scope={selectedKey.startsWith('round:') ? 'round' : 'slide'} value={draft.design ?? {}} legacy={legacySlideDesign({ ...draft, ...resolveLegacySlideAppearance(appearance, draft) })} legacyResetAvailable={Boolean(draft.backgroundImage) || (draft.backgroundOverlay ?? draft.presentation.backgroundOverlay ?? 0) > 0 || draft.imageLayout !== undefined} inherited={inheritedDesign} disabled={editingDisabled || saving || uploading} onChange={value => { setDraft({ ...draft, design: value }); setDirtySlide(true); }} onReset={() => { setDraft({ ...draft, design: {}, resetAppearance: true, backgroundImage: '', backgroundOverlay: null, imageLayout: undefined, presentation: { ...draft.presentation, backgroundOverlay: null } }); setDirtySlide(true); }} />}</EditorDisclosure>}
           {draft?.isQuestion && can('quiz.answers.read') && <EditorDisclosure key={`answer-design:${selectedKey}`} title="Vzhled odhalené odpovědi" busy={uploading}>{() => <SlideDesignFields lockLayout scope="answer" value={draft.answerDesign ?? {}} inherited={resolveSlideDesign(legacySlideDesign(draft), inheritedDesign, draft.design)} disabled={editingDisabled || saving || uploading || !can('quiz.answers.edit')} onChange={value => { setDraft({ ...draft, answerDesign: value }); setDirtySlide(true); }} />}</EditorDisclosure>}
           {draft !== null && !draft.isQuestion && ['info', 'end', 'title', 'thank-you'].includes(draft.kind) && !pendingCreate && <div className="semantic-actions">
-            {draft.kind !== 'thank-you' && <>
-              <button type="button" className="secondary-button" disabled={structuralDisabled} onClick={() => void mutate(current => duplicateQuizSlide(current.id, current.revision, draft.id))}>Duplikovat slide</button>
-              <button type="button" className="secondary-button" disabled={structuralDisabled || draft.position <= 1 || (draft.kind === 'end' && semantic.thankYou?.position === draft.position - 1)} onClick={() => void mutate(current => moveQuizSlide(current.id, current.revision, draft.id, -1))}>Posunout před předchozí slide</button>
-              <button type="button" className="secondary-button" disabled={structuralDisabled || draft.position >= quiz.slideCount || semantic.thankYou?.position === draft.position + 1} onClick={() => void mutate(current => moveQuizSlide(current.id, current.revision, draft.id, 1))}>Posunout za následující slide</button>
-            </>}
+            {draft.kind !== 'thank-you' && <button type="button" className="secondary-button" disabled={structuralDisabled} onClick={() => void mutate(current => duplicateQuizSlide(current.id, current.revision, draft.id))}>Duplikovat slide</button>}
+              <button type="button" className="secondary-button" disabled={structuralDisabled || draft.position <= 1} onClick={() => void mutate(current => moveQuizSlide(current.id, current.revision, draft.id, -1))}>Posunout před předchozí slide</button>
+              <button type="button" className="secondary-button" disabled={structuralDisabled || draft.position >= quiz.slideCount} onClick={() => void mutate(current => moveQuizSlide(current.id, current.revision, draft.id, 1))}>Posunout za následující slide</button>
             <button type="button" className="danger-button" disabled={structuralDisabled || !can('quiz.delete') || (quiz.slideCount <= 1 && draft.kind !== 'thank-you')} onClick={() => {
               if (window.confirm(draft.kind === 'thank-you' ? 'Odstranit poděkování před vyhlášením?' : 'Odstranit tento informační slide?')) {
                 void mutate(current => deleteQuizSlide(current.id, current.revision, draft.id), draft.kind === 'thank-you' ? 'quiz' : undefined);
               }
             }}>Odstranit slide</button>
           </div>}
-          {draft !== null && canHideInfoSlide(draft) && <label className="binary-answer"><input type="checkbox" checked={draft.hidden === true} disabled={editingDisabled || saving} onChange={event => { setDraft({ ...draft, hidden: event.target.checked }); setDirtySlide(true); }} /> Skrýt při moderování <span className="field-help">Obsah zůstane uložený, průběh jej přeskočí.</span></label>}
+          {draft !== null && canHideInfoSlide(draft) && (draft.hidden || !(draft.automaticAgenda || draft.generatedAgendaSlide)) && <label className="binary-answer"><input type="checkbox" checked={draft.hidden === true} disabled={editingDisabled || saving} onChange={event => { setDraft({ ...draft, hidden: event.target.checked }); setDirtySlide(true); }} /> Skrýt při moderování <span className="field-help">Obsah zůstane uložený, průběh jej přeskočí.</span></label>}
           {showReadiness && draft?.isQuestion && <ReadinessSummary slide={draft} />}
           {dirty && <p className="structure-save-hint">Strukturální operace budou dostupné po uložení nebo zahození rozepsaných změn.</p>}
         </main>

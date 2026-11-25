@@ -357,7 +357,7 @@ function planPanels(layout: Layout, event: PrintEvent, headerHeight: number, org
     plans.push(plan);
     y = top;
   };
-  for (const round of event.quiz.rounds) {
+  for (const round of event.quiz.questionBlocks ?? event.quiz.rounds) {
     if (!round.questions.length) continue;
     let block = fitRound(layout, round, top - bottom, organizer, compact);
     if (compact && plan.blocks.length && y - block.height < bottom) {
@@ -508,7 +508,7 @@ function renderAnswerKey(layout: Layout, event: PrintEvent): void {
     drawHeader(layout, event, 'Klíč správných odpovědí — pokračování');
   };
   drawHeader(layout, event, 'Klíč správných odpovědí');
-  for (const round of event.quiz.rounds) {
+  for (const round of event.quiz.questionBlocks ?? event.quiz.rounds) {
     const headingHeight = roundHeadingHeight(layout, round);
     const firstQuestion = round.questions[0];
     const firstAnswerHeight = firstQuestion

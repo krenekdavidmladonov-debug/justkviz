@@ -1,4 +1,4 @@
-import { buildSemanticQuizModel, generatedAgendaOptions, mapEditorSlide, mergeStoredDesign, normalizeSlideDesign, mergeStoredPrintTemplate } from '@filmovy-kviz/quiz-domain';
+import { buildSemanticQuizModel, questionRoundAtGap, generatedAgendaOptions, mapEditorSlide, mergeStoredDesign, normalizeSlideDesign, mergeStoredPrintTemplate } from '@filmovy-kviz/quiz-domain';
 import { assertQuizAssets } from '../media/model.js';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import {
@@ -126,6 +126,11 @@ function slideRoundId(slide: StoredEditorSlide): string | undefined {
     : undefined;
 }
 
+function isAutomaticScreen(slide: StoredEditorSlide): boolean {
+  return isStoredRoundHeader(slide) || (slideRoundId(slide) !== undefined && storedKind(slide) === 'recap')
+    || slide.data.generatedAgendaSlide === true || slide.data.automaticAgenda === true;
+}
+
 function isStoredRoundHeader(slide: StoredEditorSlide): boolean {
   return isRoundKind(storedKind(slide))
     || (slideRoundId(slide) !== undefined && storedKind(slide) === 'intro' && slide.data.isQuestion !== true);
@@ -163,6 +168,33 @@ function publicResponse(
   };
 }
 
+function insertNativeRound(state: QuizState, index: number, roundId: string, title: string, content?: StoredEditorSlide) {
+  const screens = state.quizRef.collection('slides');
+  const basic = { title, text: '', moderatorNote: '', options: [], media: [], correctAnswer: '', presentation: {}, roundId, isQuestion: false };
+  const header = { id: screens.doc().id, data: { ...basic, kind: 'round' } };
+  const members: StoredEditorSlide[] = [header];
+  if (content) members.push(content);
+  if (content?.data.kind !== 'recap') members.push({ id: screens.doc().id, data: { ...basic, kind: 'recap' } });
+  const stream = [...state.slides.slice(0, index), ...members, ...state.slides.slice(index)];
+  if (!stream.some(slide => slide.data.kind === 'agenda')) {
+    const firstContent = stream.findIndex(slide => slide.data.kind !== 'intro');
+    stream.splice(firstContent, 0, { id: screens.doc().id, data: {
+      kind: 'agenda', title: 'Harmonogram', text: '', moderatorNote: '', options: [], correctAnswer: '', media: [],
+      presentation: {}, isQuestion: false, automaticAgenda: true, generatedAgendaSlide: true,
+    } });
+  }
+  if (stream.length > maximumSlideCount) throw new QuizEditorError('failed-precondition', 'Quiz slide limit reached.');
+  return { slides: orderedWithPositions(stream), headerId: header.id };
+}
+
+function storedRoundName(members: readonly StoredEditorSlide[]): string | undefined {
+  const header = members.find(slide => isRoundKind(storedKind(slide))) ?? members.find(isStoredRoundHeader);
+  const heading = typeof header?.data.title === 'string' ? header.data.title : undefined;
+  if (heading?.trim() && header?.data.customRoundHeading !== true) return heading;
+  if (typeof header?.data.roundTitle === 'string' && header.data.roundTitle.trim()) return header.data.roundTitle;
+  return members.map(slide => slide.data.roundTitle).find((name): name is string => typeof name === 'string' && !!name.trim()) ?? heading;
+}
+
 function orderedWithPositions(slides: readonly StoredEditorSlide[]): readonly StoredEditorSlide[] {
   const positioned: StoredEditorSlide[] = slides.map((slide, index) => ({
     id: slide.id,
@@ -178,10 +210,7 @@ function orderedWithPositions(slides: readonly StoredEditorSlide[]): readonly St
   }
   for (const group of groups.values()) {
     const questions = group.filter((slide) => slide.data.isQuestion === true);
-    const header = group.find((slide) => isRoundKind(storedKind(slide))) ?? group.find((slide) => storedKind(slide) === 'intro' && slide.data.isQuestion !== true);
-    const existingTitle = group.map((slide) => slide.data.roundTitle).find((value): value is string => typeof value === 'string');
-    const roundTitle = typeof header?.data.title === 'string' && header.data.title.trim().length > 0
-      ? header.data.title : existingTitle;
+    const roundTitle = storedRoundName(group);
     group.forEach((slide) => {
       if (roundTitle !== undefined) slide.data.roundTitle = roundTitle;
       const questionIndex = questions.findIndex((question) => question.id === slide.id);
@@ -232,9 +261,9 @@ function writeDerivedState(
       design: isObject(header?.data.design) ? normalizeSlideDesign(header.data.design) : FieldValue.delete(),
       sourceSlideStart: group[0]?.data.position,
       sourceSlideEnd: group[group.length - 1]?.data.position,
-      ...(header === undefined
-        ? {}
-        : { title: typeof header.data.title === 'string' ? header.data.title : `Kolo ${roundPosition}` }),
+      ...(header === undefined && storedRoundIds.has(roundId) ? {} : {
+        title: header?.data.roundTitle ?? header?.data.title ?? group[0]?.data.roundTitle ?? `${roundPosition}. kolo`,
+      }),
     }, { merge: true });
 
     questions.forEach((slide, index) => {
@@ -280,17 +309,6 @@ function writeQuizState(
   slides: readonly StoredEditorSlide[],
   actor: AdminActor,
 ): EditorQuizMutationResponse {
-  const thankYou = slides.find(slide => storedKind(slide) === 'thank-you');
-  if (thankYou) {
-    // Keep the screen at the finale boundary after additions and reordering.
-    const program = slides.filter(slide => slide.id !== thankYou.id);
-    const closingIndex = program.findIndex(slide => slide.data.hidden !== true && storedKind(slide).toLowerCase() === 'end');
-    const position = closingIndex < 0 ? program.length : closingIndex;
-    if (slides[position]?.id !== thankYou.id) {
-      program.splice(position, 0, thankYou);
-      slides = orderedWithPositions(program);
-    }
-  }
   if (slides.some(slide => slide.data.automaticAgenda === true)) {
     const mapped = slides.map(slide => mapEditorSlide(slide.id, slide.data));
     const model = buildSemanticQuizModel({ id: state.quizRef.id, title: '', description: '', revision: state.revision, slideCount: slides.length, roundCount: 0, questionCount: 0, slides: mapped });
@@ -673,6 +691,7 @@ export const updateQuizSlide = securedOnCall('updateQuizSlide', callableOptions,
       if (current === undefined) throw new QuizEditorError('not-found', 'Quiz slide was not found.');
       const protectedInput = protectSlideFields(current.data, input);
       const currentKind = storedKind(current);
+      if (isAutomaticScreen(current) && currentKind !== input.kind) throw new QuizEditorError('invalid-argument', 'Automatic slides must keep their type.');
       const currentIsRound = isRoundKind(currentKind);
       if (currentIsRound !== isRoundKind(input.kind)) {
         throw new QuizEditorError('invalid-argument', 'Round headers cannot be converted to another slide type.');
@@ -683,6 +702,13 @@ export const updateQuizSlide = securedOnCall('updateQuizSlide', callableOptions,
       const updated = orderedWithPositions(state.slides.map((slide) => {
         if (slide.id !== slideId) return slide;
         const data = preserveHiddenFields(slide.data, applyKnownSlideUpdate(slide.data, protectedInput));
+        if (slideRoundId(slide) !== undefined && (isStoredRoundHeader(slide) || storedKind(slide) === 'recap') && data.title !== slide.data.title) {
+          const name = storedRoundName(state.slides.filter(member => slideRoundId(member) === slideRoundId(slide)));
+          if (name !== undefined) {
+            data.roundTitle = name;
+            data.customRoundHeading = data.title !== name;
+          }
+        }
         if (slideRoundId(slide) === undefined && data.isQuestion === true) {
           data.roundId = state.quizRef.collection('rounds').doc().id;
         }
@@ -742,13 +768,16 @@ export const createQuizSlide = securedOnCall('createQuizSlide', callableOptions,
     const input = requestedSlide(request.data);
     if (!isObject(request.data)) throw new HttpsError('invalid-argument', 'Request data is required.');
     const globalSection = request.data.scope === 'quiz';
+    const firstRound = request.data.scope === 'first-round';
     const thankYou = input.kind === 'thank-you';
-    if ((request.data.scope !== undefined && !globalSection) || (thankYou && !globalSection)
+    if ((request.data.scope !== undefined && !globalSection && !firstRound) || (thankYou && !globalSection)
       || (globalSection && !['intro', 'agenda', 'rules', 'thank-you', 'end', 'title', 'info'].includes(input.kind))) {
       throw new HttpsError('invalid-argument', 'Invalid quiz-level section.');
     }
     const existingRoundId = request.data.roundId === undefined ? undefined : requiredId(request.data, 'roundId');
-    if (existingRoundId !== undefined && (globalSection || !isRoundKind(input.kind))) throw new HttpsError('invalid-argument', 'Existing round target requires a round introduction.');
+    const roundContent = isQuestionKind(input.kind) || input.kind === 'recap';
+    if (existingRoundId !== undefined && (globalSection || !(isRoundKind(input.kind) || roundContent))) throw new HttpsError('invalid-argument', 'Existing round target requires a question, recap or round introduction.');
+    if (firstRound && (!roundContent || existingRoundId !== undefined)) throw new HttpsError('invalid-argument', 'The first round needs a question or recap.');
     const quizRef = db.collection('quizzes').doc(quizId);
     const slideRef = quizRef.collection('slides').doc();
     return await runAccessTransaction(db, async (transaction) => {
@@ -762,21 +791,32 @@ export const createQuizSlide = securedOnCall('createQuizSlide', callableOptions,
       if (thankYou && state.slides.some(slide => storedKind(slide) === 'thank-you')) {
         throw new QuizEditorError('failed-precondition', 'The quiz already has a thank-you slide.');
       }
+      if (firstRound && state.slides.some(slide => slideRoundId(slide) !== undefined)) {
+        throw new QuizEditorError('failed-precondition', 'The quiz already has a round.');
+      }
       const before = state.slides[position - 2];
       const inheritedRoundId = globalSection || before === undefined ? undefined : slideRoundId(before);
-      if (existingRoundId !== undefined) validateExistingRoundHeaderTarget(state.slides, existingRoundId, position);
-      const roundId = existingRoundId ?? (isRoundKind(input.kind) || (inheritedRoundId === undefined && isQuestionKind(input.kind))
+      if (existingRoundId !== undefined && isRoundKind(input.kind)) validateExistingRoundHeaderTarget(state.slides, existingRoundId, position);
+      if (existingRoundId !== undefined && roundContent) {
+        const next = state.slides[position - 1];
+        const gapRound = questionRoundAtGap(state.slides.map(slideRoundId), position - 1, next?.data.isQuestion === true || next?.data.kind === 'recap');
+        if (existingRoundId !== gapRound) {
+          const members = state.slides.filter(slide => slideRoundId(slide) === existingRoundId);
+          const recap = members.find(slide => storedKind(slide) === 'recap');
+          const appendPosition = recap?.data.position ?? (Number(members.at(-1)?.data.position) + 1);
+          if (position !== appendPosition) throw new QuizEditorError('failed-precondition', 'Question target does not match the insertion position.');
+        }
+      }
+      const roundId = existingRoundId ?? (isRoundKind(input.kind) || (inheritedRoundId === undefined && roundContent)
         ? quizRef.collection('rounds').doc().id
         : inheritedRoundId);
       const created: StoredEditorSlide = {
         id: slideRef.id,
         data: createSlideData(input, position, roundId),
       };
-      const updated = orderedWithPositions([
-        ...state.slides.slice(0, position - 1),
-        created,
-        ...state.slides.slice(position - 1),
-      ]);
+      const updated = firstRound && roundId !== undefined
+        ? insertNativeRound(state, position - 1, roundId, '1. kolo', created).slides
+        : orderedWithPositions([...state.slides.slice(0, position - 1), created, ...state.slides.slice(position - 1)]);
       const result = writeQuizState(transaction, state, updated, actor);
       return { ...result, selectedSlideId: slideRef.id };
     });
@@ -830,10 +870,7 @@ export const deleteQuizSlide = securedOnCall('deleteQuizSlide', callableOptions,
         throw new QuizEditorError('failed-precondition', 'A quiz must keep at least one slide.');
       }
       const roundId = slideRoundId(current);
-      if (isRoundKind(storedKind(current)) && roundId !== undefined
-        && state.slides.some((slide) => slide.id !== slideId && slideRoundId(slide) === roundId)) {
-        throw new QuizEditorError('failed-precondition', 'Move or delete the slides in this round before deleting its header.');
-      }
+      if (isAutomaticScreen(current)) throw new QuizEditorError('failed-precondition', 'Automatic slides cannot be deleted individually.');
       deleteOldDerivedQuestion(transaction, state, current);
       transaction.delete(state.quizRef.collection('slides').doc(slideId));
       const updated = orderedWithPositions(state.slides.filter((slide) => slide.id !== slideId));
@@ -873,11 +910,6 @@ export const moveQuizSlide = securedOnCall('moveQuizSlide', callableOptions, asy
       const target = reordered[targetIndex];
       const current = reordered[index];
       if (target === undefined || current === undefined) throw new QuizEditorError('failed-precondition', 'Slide order is malformed.');
-      const [first, second] = direction === 1 ? [current, target] : [target, current];
-      if (storedKind(current) === 'thank-you' || (storedKind(first) === 'thank-you' && storedKind(second).toLowerCase() === 'end')
-        || (storedKind(second) === 'thank-you' && storedKind(first).toLowerCase() !== 'end')) {
-        throw new QuizEditorError('failed-precondition', 'The thank-you slide has a fixed place before the finale.');
-      }
       reordered[index] = target;
       reordered[targetIndex] = current;
       const updated = orderedWithPositions(reordered);
@@ -900,10 +932,14 @@ export const updateQuizRound = securedOnCall('updateQuizRound', callableOptions,
       const state = await loadQuizState(transaction, quizId, revision);
       const members = state.slides.filter((slide) => slideRoundId(slide) === roundId);
       if (members.length === 0) throw new QuizEditorError('not-found', 'Quiz round was not found.');
+      const previous = storedRoundName(members);
       const updated = orderedWithPositions(state.slides.map((slide) => {
         if (slideRoundId(slide) !== roundId) return slide;
         const data: Record<string, unknown> = { ...slide.data, roundTitle: title };
-        if (isStoredRoundHeader(slide)) data.title = title;
+        if (isStoredRoundHeader(slide) || storedKind(slide) === 'recap') {
+          if (slide.data.customRoundHeading === true || (slide.data.title && slide.data.title !== previous)) data.customRoundHeading = true;
+          else data.title = title;
+        }
         return { ...slide, data };
       }));
       const result = writeQuizState(transaction, state, updated, actor);
@@ -1005,8 +1041,7 @@ export const duplicateQuizRound = securedOnCall('duplicateQuizRound', callableOp
         throw new QuizEditorError('failed-precondition', 'Duplicated round would make the quiz too large.');
       }
       const newRoundId = state.quizRef.collection('rounds').doc().id;
-      const currentTitle = source.find((slide) => typeof slide.data.roundTitle === 'string')?.data.roundTitle
-        ?? source.find((slide) => isStoredRoundHeader(slide) && typeof slide.data.title === 'string')?.data.title;
+      const currentTitle = storedRoundName(source);
       const copiedTitle = typeof currentTitle === 'string' && currentTitle.trim() !== '' ? `${currentTitle} – kopie` : 'Kopie kola';
       const copies = source.map((slide) => ({
         id: state.quizRef.collection('slides').doc().id,
@@ -1014,7 +1049,7 @@ export const duplicateQuizRound = securedOnCall('duplicateQuizRound', callableOp
           ...slide.data,
           roundId: newRoundId,
           roundTitle: copiedTitle,
-          ...(isStoredRoundHeader(slide) ? { title: copiedTitle } : {}),
+          ...((isStoredRoundHeader(slide) || storedKind(slide) === 'recap') && !slide.data.customRoundHeading && (!slide.data.title || slide.data.title === currentTitle) ? { title: copiedTitle } : {}),
         },
       }));
       const sourceLastIndex = state.slides.reduce((found, slide, index) => slideRoundId(slide) === roundId ? index : found, -1);
@@ -1114,18 +1149,12 @@ export const createQuizRound = securedOnCall('createQuizRound', callableOptions,
     const revision = expectedRevision(request.data), title = requestedRoundTitle(request.data);
     return await runAccessTransaction(db, async transaction => {
       const state = await loadQuizState(transaction, quizId, revision);
-      if (state.slides.length + 3 > maximumSlideCount) throw new QuizEditorError('failed-precondition', 'Quiz slide limit reached.');
       const roundId = state.quizRef.collection('rounds').doc().id;
-      const headerId = state.quizRef.collection('slides').doc().id, recapId = state.quizRef.collection('slides').doc().id;
-      const index = state.slides.findIndex(slide => slide.data.kind === 'thank-you' || slide.data.kind === 'end');
-      const at = index < 0 ? state.slides.length : index;
-      const basic = { title, text: '', moderatorNote: '', options: [], media: [], correctAnswer: '', presentation: {}, roundId, isQuestion: false };
-      const stream = [...state.slides.slice(0,at), { id: headerId, data: { ...basic, kind: 'round', position: at + 1 } }, { id: recapId, data: { ...basic, kind: 'recap', position: at + 2 } }, ...state.slides.slice(at)];
-      if (!stream.some(slide => slide.data.kind === 'agenda')) {
-        const agendaAt = stream.findIndex(slide => slide.data.kind !== 'intro');
-        stream.splice(agendaAt < 0 ? 0 : agendaAt, 0, { id: state.quizRef.collection('slides').doc().id, data: { title: 'Harmonogram', text: '', moderatorNote: '', options: [], correctAnswer: '', media: [], presentation: {}, kind: 'agenda', isQuestion: false, automaticAgenda: true, position: 1 } });
-      }
-      const slides = orderedWithPositions(stream);
+      const closing = state.slides.findIndex(slide => slide.data.kind === 'thank-you' || slide.data.kind === 'end');
+      const at = isObject(request.data) && request.data.position !== undefined ? requestedPosition(request.data) - 1
+        : closing < 0 ? state.slides.length : closing;
+      if (at > state.slides.length) throw new QuizEditorError('invalid-argument', 'Round position is outside the quiz range.');
+      const { slides, headerId } = insertNativeRound(state, at, roundId, title);
       const result = writeQuizState(transaction, state, slides, actor);
       return { ...result, selectedSlideId: headerId };
     });

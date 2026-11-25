@@ -80,10 +80,10 @@ Optional `defaultDesign`, `resultTemplates` and `printTemplate` on the quiz root
 
 Private, globally ordered presentation source. It preserves every V1 slide, including non-question intro, agenda, recap, round content, and end slides. Fields include `position`, `kind`, `isQuestion`, title/text, options, classified media, presentation controls, optional `roundId`, moderator-only fields, and private `legacy.raw`. A private `correctAnswer` may be present for question slides. Public and projector clients never read this collection directly.
 
-The separate slide stream is intentionally lossless, presentation-oriented, and authoritative for editor order. The nested rounds/questions remain an operational projection for the library and future scoring logic. The editor derives its round-first facade rather than migrating this stream. Trusted slide, round, and question Functions refresh known derived fields after every structural mutation while merge-preserving private legacy extensions.
+The separate slide stream is intentionally lossless, presentation-oriented, and authoritative for editor order. The nested rounds/questions remain an operational projection for the library and future scoring logic. The editor displays this stream in projection order. The optional boolean `customRoundHeading` preserves a manually edited round introduction or recap heading when the round name changes. The optional boolean `generatedAgendaSlide` identifies a generated agenda after its entries have been edited. Opening an older quiz or locked event does not backfill either field. Trusted slide, round, and question Functions refresh known derived fields after every structural mutation while merge-preserving private legacy extensions.
 
 The optional `thank-you` slide is a standalone non-question stored once per
-quiz, before the closing slide when one exists. Event snapshots retain the
+quiz at the author's chosen position. Event snapshots retain the
 authored screen. Its upcoming dates are read from published `publicEvents` at
 display time.
 

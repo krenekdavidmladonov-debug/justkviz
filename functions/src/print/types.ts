@@ -29,6 +29,8 @@ export interface PrintRound {
 export interface PrintQuiz {
   title: string;
   rounds: PrintRound[];
+  /** Consecutive question groups when the evening revisits an earlier round. */
+  questionBlocks?: PrintRound[];
   printTemplate?: PrintTemplate;
 }
 

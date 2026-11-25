@@ -97,8 +97,8 @@ test('round-first editor supports semantic editing and responsive panel navigati
   await expect(page.getByText('Starší typ Pravda / Lež')).toBeVisible();
   await expect(page.getByRole('radio', { name: 'Pravda' })).toBeVisible();
 
-  await page.getByRole('button', { name: '+ Přidat otázku' }).click();
-  await page.getByRole('dialog', { name: /Typ otázky/u }).getByRole('button', { name: 'Volná odpověď' }).click();
+  await page.locator('.outline-round').first().locator('.outline-insert').last().click();
+  await page.getByRole('dialog', { name: /Přidat do osnovy/u }).getByRole('button', { name: 'Volná odpověď' }).click();
   await page.getByLabel('Otázka *').fill('Nová syntetická volná otázka');
   await page.getByLabel('Správná odpověď *').fill('Nová syntetická odpověď');
   await expect(page.locator('.round-editor-preview')).toContainText('Nová syntetická volná otázka');
