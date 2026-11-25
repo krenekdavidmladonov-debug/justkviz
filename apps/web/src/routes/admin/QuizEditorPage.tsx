@@ -1,3 +1,4 @@
+import { AnswerLengthWarning } from '../../features/preflight/AnswerLengthMeasurement';
 import { canHideInfoSlide, resolveSlideDesign, resolveLegacySlideAppearance, type SlideDesign, type ResultTemplates, type PrintTemplate } from '@filmovy-kviz/quiz-domain';
 import { SlideDesignFields, legacySlideDesign } from '../../features/editor/SlideDesignFields';
 import { ResultTemplatePreview } from '../../features/editor/ResultTemplatePreview';
@@ -999,6 +1000,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
                 onNext={selectedRound === undefined ? undefined : () => void createQuestion(selectedRound.id)}
                 onTouch={(field) => setTouched((current) => new Set(current).add(field))}
                 onChange={(value) => { setDraft(value); setDirtySlide(true); setSaveFailed(false); }} />
+              {can('quiz.answers.read') && previewSlide?.isQuestion && <AnswerLengthWarning slide={previewSlide} quizTitle={title || quiz.title} />}
               <div className="question-save-actions" data-preflight-field="authoringStatus">
                 {draft.authoringStatus === 'draft' && <><p role="status">Koncept otázky — zatím není označená jako dokončená.</p><button type="button" className="primary-button" disabled={editingDisabled || saving || uploading} onClick={() => void saveAll(selectedKey, 'ready')}>Dokončit otázku</button></>}
               </div>
@@ -1053,7 +1055,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
             <p>Nejdřív přidejte kolo a otázku. Prázdný rozpracovaný kvíz zůstává bezpečně uložený.</p>
           </aside>
         ) : (
-          <EditorPreview onEdit={() => { setActivePanel('content'); requestAnimationFrame(() => document.querySelector<HTMLElement>('.round-editor-content input, .round-editor-content textarea, .round-editor-content summary')?.focus()); }} slide={previewSlide} quizTitle={title || quiz.title} showAnswer={showAnswer && can('quiz.answers.read')} onShowAnswer={value => { if (can('quiz.answers.read')) setShowAnswer(value); }} />
+          <EditorPreview answersReadable={can('quiz.answers.read')} onEdit={() => { setActivePanel('content'); requestAnimationFrame(() => document.querySelector<HTMLElement>('.round-editor-content input, .round-editor-content textarea, .round-editor-content summary')?.focus()); }} slide={previewSlide} quizTitle={title || quiz.title} showAnswer={showAnswer && can('quiz.answers.read')} onShowAnswer={value => { if (can('quiz.answers.read')) setShowAnswer(value); }} />
         )}
       </section>
     </article></MediaAuthoringContext.Provider>

@@ -1,10 +1,10 @@
 import { ProjectorMotionContext, ProjectorWords } from '../show-mode/ProjectorMotion';
-import { useContext } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { Brand } from '../../ui/Brand';
 import { parseQuizAsset } from '@filmovy-kviz/quiz-domain';
-import { AssetImage } from '../media/AssetImage';
+import { AssetImage as LiveImage } from '../media/AssetImage';
+import { observeRecapFit } from './recapFit';
 import type { ImageTiming, LocalMediaTiming } from './mediaTiming';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { productConfig } from '../../config/product';
 import { buildSlideRenderModel, defaultRules, isSafeHttpUrl, projectorMediaPlan, recapAnswer } from './model';
@@ -14,6 +14,15 @@ import type { MediaDiagnosticReason, MediaDiagnosticSignal, MediaDiagnosticTarge
 import { slideDesignStyle } from './design';
 import { ThankYouSlideContent } from './ThankYouSlideContent';
 import './presentation.css';
+
+/** The preflight measures the same layout without requesting any media. */
+export const RecapMeasurementContext = createContext(false);
+
+function AssetImage(props: ComponentProps<typeof LiveImage>) {
+  return useContext(RecapMeasurementContext)
+    ? <img alt="" width="1" height="1" />
+    : <LiveImage {...props} />;
+}
 
 function QuestionHeader({ number, count, legacyPl }: { readonly number?: number; readonly count?: number; readonly legacyPl: boolean }) {
   return (
@@ -106,6 +115,7 @@ export function SlideRenderer({
   onMediaPlaybackState,
   onMediaDiagnostic,
   onMediaTiming,
+  onRecapFit,
 }: {
   readonly slide: SlideRenderInput;
   readonly mediaSessionId?: string;
@@ -117,6 +127,7 @@ export function SlideRenderer({
   readonly introGeneration?: number;
   readonly compact?: boolean;
   readonly mediaEnabled?: boolean;
+  readonly onRecapFit?: ((tooSmall: boolean) => void) | undefined;
   readonly liveEventsEnabled?: boolean;
   readonly playPrivateAudio?: boolean;
   readonly onMediaFinished?: (generation: number) => void;
@@ -177,10 +188,14 @@ export function SlideRenderer({
   const sharedMediaRecap = model.mediaSource !== undefined && (model.contentKind === 'video' || model.contentKind === 'audio');
   const answerFocus = showAnswer && model.answerImage !== undefined && !sharedMediaRecap;
   const photoQuestion = fixedPhotoQuestion && !standalonePhoto && !answerFocus;
+  const stage = useRef<HTMLElement>(null);
   const photoCopy = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
+    if (showAnswer && stage.current) return observeRecapFit(stage.current, onRecapFit);
+  }, [model, compact, showAnswer, onRecapFit]);
+  useLayoutEffect(() => {
     const column = photoCopy.current;
-    if (!(photoQuestion || answerFocus) || !column) return;
+    if (showAnswer || !photoQuestion || !column) return;
     function fitText(element: HTMLDivElement) {
       for (const scale of [1, .92, .84, .76, .68, .6]) {
         element.style.setProperty('--photo-fit', String(scale));
@@ -198,7 +213,7 @@ export function SlideRenderer({
       column.removeEventListener('load', fit, true);
       document.fonts?.removeEventListener('loadingdone', fit);
     };
-  }, [photoQuestion, answerFocus, model, compact]);
+  }, [photoQuestion, showAnswer, model, compact]);
   const design = fixedQuestion || standalonePhoto
     ? { ...model.design, textAlign: 'left' as const, textWidth: 45, mediaFit: 'contain' as const }
     : model.design;
@@ -344,7 +359,7 @@ export function SlideRenderer({
   }
 
   return (
-    <article data-media-playback-mode={model.mediaPlaybackMode} style={slideDesignStyle(design)} className={`slide-renderer ${projectorMotion ? `pm-projector ${projectorMotion.animated ? `pm-animate pm-${projectorMotion.phase}` : 'pm-static'}` : ''} mode-${visibleMode} kind-${model.contentKind} layout-${layout} align-${design.textAlign ?? 'left'} density-${density}${design.backgroundColor ? ' has-custom-background' : ''} image-layout-${fixedQuestion ? 'split' : slide.imageLayout ?? 'split'}${photoQuestion ? ' fixed-photo-question' : ''}${answerFocus ? ' answer-focus' : ''}${compact ? ' is-compact' : ''}`}>
+    <article ref={stage} data-media-playback-mode={model.mediaPlaybackMode} style={slideDesignStyle(design)} className={`slide-renderer ${projectorMotion ? `pm-projector ${projectorMotion.animated ? `pm-animate pm-${projectorMotion.phase}` : 'pm-static'}` : ''} mode-${visibleMode} kind-${model.contentKind} layout-${layout} align-${design.textAlign ?? 'left'} density-${density}${design.backgroundColor ? ' has-custom-background' : ''} image-layout-${fixedQuestion ? 'split' : slide.imageLayout ?? 'split'}${photoQuestion ? ' fixed-photo-question' : ''}${answerFocus ? ' answer-focus' : ''}${compact ? ' is-compact' : ''}`}>
       {!standalonePhoto && <>
         <div className="slide-background" aria-hidden="true">{model.backgroundImage && <AssetImage source={model.backgroundImage} alt="" sessionId={mediaSessionId} mediaRole="background-image" {...imageDiagnostic('background-image')} />}</div>
         <div className="slide-background-overlay" style={{ opacity: model.backgroundOverlay / 100 }} aria-hidden="true" />

@@ -9,6 +9,7 @@ import type { SlideRenderInput } from '../presentation/types';
 import { parseRoundPoints, pointsText } from '../scoring/model';
 import { InterimResultsPreview } from '../leaderboard/InterimResultsPreview';
 import { buildOfflineProjection } from './offlineProjection';
+import { offlineRecapChoices, validOfflineRecap } from './offlineRecap';
 import { connectOfflineProjector, openOfflineProjector, type OfflineProjectorConnection } from './offlineProjector';
 import { exportOfflineRecovery, exportStoredOfflineEvent, importOfflineEvent } from './offlinePreparation';
 import { OfflinePreparationWizard } from './OfflinePreparationWizard';
@@ -265,7 +266,10 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
   const [resolutions, setResolutions] = useState<OfflineSyncResolution[]>([]);
   const [completeRecovery, setCompleteRecovery] = useState(false);
   const [previewRecovery, setPreviewRecovery] = useState(false);
-  const [recapPosition, setRecapPosition] = useState('');
+  const [recapIdentity, setRecapIdentity] = useState('');
+  const recapChoices = offlineRecapChoices(manifest, state.slidePosition);
+  const selectedRecap = recapChoices.find(choice => choice.identity === recapIdentity);
+  useEffect(() => { setRecapIdentity(''); }, [state.slidePosition]);
   const [mediaCompletionError, setMediaCompletionError] = useState('');
   const completionBlocked = Boolean(runtime.syncedReceipt || runtime.pendingSynchronization || runtime.playBlock);
   useEffect(() => { setMediaCompletionError(''); }, [runtime, state.mediaGeneration, completionBlocked]);
@@ -298,7 +302,12 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
     if (runtime.playBlock) throw new Error(runtime.playBlock);
     return blob;
   } }), [runtime, manifest.sessionId, state.mediaGeneration]);
-  const command = (value: OfflineCommand) => void task(async () => { await runtime.append(value); setPreview(null); progress('Změna je odolně uložená na tomto počítači.'); });
+  const command = (value: OfflineCommand) => void task(async () => {
+    if (value.type === 'recap' && !validOfflineRecap(manifest, runtime.state.slidePosition, value.payload.position)) {
+      throw new Error('Vyberte otázku aktuálního kola znovu.');
+    }
+    await runtime.append(value); setPreview(null); progress('Změna je odolně uložená na tomto počítači.');
+  });
   const completionFailed = (generation: number) => {
     if (runtime.state.mediaGeneration === generation && !runtime.playBlock && !runtime.pendingSynchronization && !runtime.syncedReceipt) {
       setMediaCompletionError('Dokončení ukázky se nepodařilo uložit. Zkontrolujte místní úložiště a ukázku znovu zastavte.');
@@ -327,7 +336,8 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
   const pendingSynchronization = runtime.pendingSynchronization;
   const playable = manifest.slides.filter(slide => !slide.hidden || !canHideInfoSlide(slide));
   const index = playable.findIndex(slide => slide.position === state.slidePosition);
-  const current = manifest.slides.find(slide => slide.position === (state.revealPosition ?? state.slidePosition));
+  const revealAllowed = !state.recap || validOfflineRecap(manifest, state.slidePosition, state.revealPosition);
+  const current = manifest.slides.find(slide => slide.position === ((revealAllowed ? state.revealPosition : null) ?? state.slidePosition));
   const disabled = busy || Boolean(playBlock) || Boolean(runtime.syncedReceipt) || state.status === 'ended';
   const results = calculateOfflineResults(manifest, state.scores, roundId);
   const selectedRound = manifest.rounds.find(round => round.id === roundId)!;
@@ -359,7 +369,7 @@ function OfflineOperator({ runtime, revision, busy, task, progress, lock }: Oper
         <button disabled={disabled || !current?.isQuestion || state.status !== 'active'} onClick={() => command({ type: 'reveal', payload: { position: state.slidePosition } })}>Odhalit odpověď</button>
         <button disabled={disabled || state.status !== 'active'} onClick={() => command({ type: 'hide', payload: {} })}>Skrýt odpověď a výsledky</button>
       </div>
-      <div className="offline-actions"><label>Otázka pro rekapitulaci<select value={recapPosition} onChange={event => setRecapPosition(event.target.value)}><option value="">Vyberte předchozí otázku</option>{manifest.slides.filter(slide => slide.isQuestion && slide.position < state.slidePosition).map(slide => <option key={slide.id} value={slide.position}>{slide.position}. {slide.title}</option>)}</select></label><button disabled={disabled || !recapPosition || state.status !== 'active'} onClick={() => command({ type: 'recap', payload: { position: Number(recapPosition) } })}>Odhalit vybranou rekapitulaci</button></div>
+      <div className="offline-actions"><label>Otázka pro rekapitulaci<select value={selectedRecap?.identity ?? ''} disabled={disabled || state.status !== 'active' || recapChoices.length === 0} onChange={event => setRecapIdentity(event.target.value)}><option value="">Vyberte otázku aktuálního kola</option>{recapChoices.map(choice => <option key={choice.identity} value={choice.identity}>{choice.roundNumber}.{choice.questionNumber} {choice.slide.text || choice.slide.title}</option>)}</select></label><button disabled={disabled || !selectedRecap || state.status !== 'active'} onClick={() => { if (selectedRecap) command({ type: 'recap', payload: { position: selectedRecap.slide.position } }); }}>Odhalit vybranou rekapitulaci</button></div>
       {current && <aside className="offline-private" data-offline-private><h3>Pouze pro moderátora</h3><p><strong>Správná odpověď:</strong> {current.correctAnswer}</p><p><strong>Poznámka:</strong> {current.moderatorNote || '—'}</p></aside>}
       {!playBlock && <OfflineMediaContext.Provider value={resolver}>
         <div className="offline-preview"><PublicPresentation state={projection} mediaEnabled={false} /></div>

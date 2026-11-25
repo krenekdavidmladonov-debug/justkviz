@@ -1,15 +1,17 @@
 import { normalizeSlideDesign, resolveSlideDesign, offlineResultsPageSize, type OfflineEventManifest, type OfflineState } from '@filmovy-kviz/quiz-domain';
 import type { PublicLiveState } from '../live/types';
+import { validOfflineRecap } from './offlineRecap';
 /** Creates a fresh public allowlist. The private slide, answer design and journal never cross the window boundary. */
 export function buildOfflineProjection(manifest: OfflineEventManifest, state: OfflineState): PublicLiveState {
-    const position = state.revealPosition ?? state.slidePosition;
+    const recapAllowed = !state.recap || validOfflineRecap(manifest, state.slidePosition, state.revealPosition);
+    const position = recapAllowed ? state.revealPosition ?? state.slidePosition : state.slidePosition;
     const slide = manifest.slides.find(slide => slide.position === position);
-    const revealed = state.revealPosition !== null && Boolean(slide) && slide!.position === state.revealPosition;
+    const revealed = recapAllowed && state.revealPosition !== null && Boolean(slide) && slide!.position === state.revealPosition;
     const base: PublicLiveState = { sessionId: manifest.sessionId, quizTitle: manifest.event.title, status: state.status, slidePosition: state.slidePosition,
-        options: [], media: [], presentation: {}, presentationMode: state.recap ? 'recap' : 'slide', renderMode: 'question', mediaCommand: state.mediaCommand,
+        options: [], media: [], presentation: {}, presentationMode: 'slide', renderMode: 'question', mediaCommand: state.mediaCommand,
         mediaPlaybackState: ['play', 'replay'].includes(state.mediaCommand) ? 'preparing' : state.mediaCommand === 'finished' ? 'finished' : state.mediaCommand === 'error' ? 'error' : 'idle', mediaGeneration: state.mediaGeneration, introGeneration: 0, answerRevealed: revealed, revision: state.sequence };
-    if (state.status !== 'active' || !slide) {
-        return { ...base, answerRevealed: false, mediaCommand: 'idle' };
+    if (state.status !== 'active' || !slide || !recapAllowed) {
+        return { ...base, answerRevealed: false, mediaCommand: 'idle', mediaPlaybackState: 'idle' };
     }
     const privateReferences = new Set(manifest.slides.flatMap(item => [item.answerImage, item.answerDesign?.backgroundImage, item.answerDesign?.logoImage,
         ...item.media.filter(media => media.role === 'answer' || media.role === 'unknown').map(media => media.source)]).filter((value): value is string => typeof value === 'string'));
@@ -38,8 +40,8 @@ export function buildOfflineProjection(manifest: OfflineEventManifest, state: Of
     const mediaSource = video || (audio && revealed && state.recap) ? owned(slide.mediaSource) || legacy('prompt', video ? 'video' : 'audio') : undefined;
     const answerImage = revealed ? owned(slide.answerImage) || legacy('answer', 'image') : undefined;
     const roundNumber = manifest.rounds.find(round => round.id === slide.roundId)?.position;
-    const renderMode = revealed ? 'recap' : kind === 'intro' || ['round', 'roundheader', 'round-header', 'section'].includes(kind) ? 'roundIntro' : kind === 'agenda' ? 'agenda' : kind === 'rules' ? 'rules' : kind === 'end' ? 'end' : 'question';
-    return { ...base, ...(Number.isSafeInteger(roundNumber) && (roundNumber ?? 0) > 0 ? { roundNumber } : {}), slideKind: slide.kind, title: typeof slide.title === 'string' ? slide.title : '', text: typeof slide.text === 'string' ? slide.text : '',
+    const renderMode = revealed || kind === 'recap' ? 'recap' : kind === 'intro' || ['round', 'roundheader', 'round-header', 'section'].includes(kind) ? 'roundIntro' : kind === 'agenda' ? 'agenda' : kind === 'rules' ? 'rules' : kind === 'end' ? 'end' : 'question';
+    return { ...base, presentationMode: state.recap || kind === 'recap' ? 'recap' : 'slide', ...(Number.isSafeInteger(roundNumber) && (roundNumber ?? 0) > 0 ? { roundNumber } : {}), slideKind: slide.kind, title: typeof slide.title === 'string' ? slide.title : '', text: typeof slide.text === 'string' ? slide.text : '',
         options: slide.options.filter(option => typeof option === 'string'), media: [], presentation: {}, renderMode, design,
         ...(typeof slide.roundTitle === 'string' ? { roundTitle: slide.roundTitle } : {}), ...(slide.questionNumber === undefined ? {} : { questionNumber: slide.questionNumber }), ...(slide.questionCount === undefined ? {} : { questionCount: slide.questionCount }),
         ...(questionImage ? { questionImage } : {}), ...(backgroundImage ? { backgroundImage } : {}), ...(mediaSource ? { mediaSource } : {}),

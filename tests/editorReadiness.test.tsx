@@ -21,7 +21,17 @@ vi.mock('../apps/web/src/features/editor/editorApi', () => ({
     'updateQuizMetadata', 'updateQuizRound', 'updateQuizSlide'].map(name => [name, vi.fn()])),
 }));
 vi.mock('../apps/web/src/features/presentation/SlidePreview', () => ({ SlidePreview: () => <div className="slide-renderer" /> }));
-vi.mock('../apps/web/src/features/presentation/SlideRenderer', () => ({ SlideRenderer: vi.fn(() => <div className="practice-renderer" />) }));
+vi.mock('../apps/web/src/features/presentation/SlideRenderer', async importOriginal => {
+  const actual = await importOriginal<typeof import('../apps/web/src/features/presentation/SlideRenderer')>();
+  return { ...actual, SlideRenderer: vi.fn((props: React.ComponentProps<typeof actual.SlideRenderer>) =>
+    <div className={props.liveEventsEnabled === false ? 'measurement-renderer' : 'practice-renderer'} />) };
+});
+const lastPracticeRender = () => vi.mocked(SlideRenderer).mock.calls.filter(([props]) => props.liveEventsEnabled !== false).at(-1)!;
+vi.mock('../apps/web/src/features/preflight/AnswerLengthMeasurement', async importOriginal => {
+  const actual = await importOriginal<typeof import('../apps/web/src/features/preflight/AnswerLengthMeasurement')>();
+  // This suite measures editor focus/navigation frames. Geometry and warnings have their own renderer tests.
+  return { ...actual, AnswerLengthMeasurement: () => null, AnswerLengthWarning: () => null };
+});
 vi.mock('../apps/web/src/features/preflight/validation', async importOriginal => {
   const actual = await importOriginal<typeof import('../apps/web/src/features/preflight/validation')>();
   return { ...actual, runQuizPreflight: vi.fn(actual.runQuizPreflight) };
@@ -382,16 +392,16 @@ it('private practice navigates with arrows and space without hijacking controls 
     await act(async () => { target.dispatchEvent(new KeyboardEvent('keydown', { key, repeat, bubbles: true, cancelable: true })); });
   };
   await press(dialog, 'ArrowRight');
-  expect(vi.mocked(SlideRenderer).mock.lastCall![0].slide).toMatchObject({ id: 'q2' });
+  expect(lastPracticeRender()[0].slide).toMatchObject({ id: 'q2' });
   await press(dialog, 'ArrowLeft');
-  expect(vi.mocked(SlideRenderer).mock.lastCall![0].slide).toMatchObject({ id: 'q1' });
+  expect(lastPracticeRender()[0].slide).toMatchObject({ id: 'q1' });
   await press(dialog, ' ', true);
   await press(host.querySelector('button')!, ' ');
-  expect(vi.mocked(SlideRenderer).mock.lastCall![0].slide).toMatchObject({ id: 'q1' });
+  expect(lastPracticeRender()[0].slide).toMatchObject({ id: 'q1' });
   await press(dialog, ' ');
-  expect(vi.mocked(SlideRenderer).mock.lastCall![0].slide).toMatchObject({ id: 'q2' });
+  expect(lastPracticeRender()[0].slide).toMatchObject({ id: 'q2' });
   await press(dialog, 'ArrowRight');
-  expect(vi.mocked(SlideRenderer).mock.lastCall![0].slide).toMatchObject({ id: 'q2' });
+  expect(lastPracticeRender()[0].slide).toMatchObject({ id: 'q2' });
 });
 
 it('recap selects a private answer immediately and retains its resolved slide through playback commands', async () => {
@@ -400,12 +410,12 @@ it('recap selects a private answer immediately and retains its resolved slide th
   await act(async () => root.render(<QuizPractice quiz={{ ...quiz, slides: [recap, video] }} onClose={vi.fn()} />));
   const select = host.querySelector('select')!;
   await act(async () => { select.value = 'video'; select.dispatchEvent(new Event('change', { bubbles: true })); });
-  const selected = vi.mocked(SlideRenderer).mock.lastCall![0];
+  const selected = lastPracticeRender()[0];
   expect(selected.mode).toBe('recap');
   expect(selected.slide).toEqual(expect.objectContaining({ id: 'video', revealedAnswer: 'Soukromá odpověď', answerImage: 'https://example.test/answer.png' }));
   await act(async () => [...host.querySelectorAll('button')].find(button => button.textContent === 'Přehrát')!.click());
-  expect(vi.mocked(SlideRenderer).mock.lastCall![0].slide).toBe(selected.slide);
-  expect(vi.mocked(SlideRenderer).mock.lastCall![0].onMediaFinished).toBe(selected.onMediaFinished);
+  expect(lastPracticeRender()[0].slide).toBe(selected.slide);
+  expect(lastPracticeRender()[0].onMediaFinished).toBe(selected.onMediaFinished);
   expect(getEditorQuiz).not.toHaveBeenCalled();
 });
 
@@ -419,16 +429,16 @@ it('private practice offers full original only after reveal and resets it on hid
   await click('Odhalit odpověď ve zkoušce');
   expect(fullButton()).toBeDefined();
   await click('Přehrát celé původní video z YouTube');
-  expect(vi.mocked(SlideRenderer).mock.lastCall![0].slide).toMatchObject({ mediaPlaybackMode: 'original', mediaSource: video.originalMediaSource, clipEndSeconds: null });
+  expect(lastPracticeRender()[0].slide).toMatchObject({ mediaPlaybackMode: 'original', mediaSource: video.originalMediaSource, clipEndSeconds: null });
   await click('Skrýt odpověď');
-  expect(vi.mocked(SlideRenderer).mock.lastCall![0].slide.mediaSource).toBe(video.mediaSource);
+  expect(lastPracticeRender()[0].slide.mediaSource).toBe(video.mediaSource);
   expect(fullButton()).toBeUndefined();
   await click('Další');
   const select = host.querySelector('select')!;
   await act(async () => { select.value = video.id; select.dispatchEvent(new Event('change', { bubbles: true })); });
   await click('Přehrát celé původní video z YouTube');
   await act(async () => { select.value = ''; select.dispatchEvent(new Event('change', { bubbles: true })); });
-  expect(vi.mocked(SlideRenderer).mock.lastCall![0].slide).not.toHaveProperty('mediaPlaybackMode');
+  expect(lastPracticeRender()[0].slide).not.toHaveProperty('mediaPlaybackMode');
 });
 
 it('debounces edits, hides stale results and checks only the newest complete working snapshot', async () => {

@@ -442,5 +442,19 @@
 }
 .slide-renderer.answer-focus .answer-focus-image img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; background: transparent; border-radius: 0; }
 
+.slide-renderer.mode-recap .slide-safe-area { grid-template-rows: auto minmax(0, 1fr); }
+/* Font fitting needs the final glyph metrics even when reduced-motion sets a transition duration on every element. */
+.slide-renderer.mode-recap .slide-layout :is(.slide-copy, .slide-answer, .slide-question-label),
+.slide-renderer.mode-recap .slide-layout :is(.slide-copy, .slide-answer, .slide-question-label) * { transition-property: none; }
+.slide-renderer.mode-recap .fixed-photo-copy { overflow: hidden; }
+.slide-renderer[data-wide-answer] .recap-layout:not(.shared-media-recap) {
+  grid-template: auto auto minmax(0, 1fr) / minmax(0, 1fr);
+  align-content: stretch;
+}
+.slide-renderer[data-wide-answer] .recap-layout:not(.shared-media-recap) > .slide-copy { grid-area: 2 / 1; }
+.slide-renderer[data-wide-answer] .recap-layout:not(.shared-media-recap) > .slide-answer { grid-area: 3 / 1; }
+.slide-renderer[data-wide-answer] .shared-media-recap { grid-template-columns: minmax(0, .7fr) minmax(0, 1.3fr); }
+.slide-renderer[data-wide-answer] :is(.fixed-photo-grid, .answer-focus-grid) { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+
 @keyframes slide-reveal { from { opacity: .35; transform: translateY(.65cqi); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .slide-renderer .vinyl-disc, .slide-renderer .slide-answer, .slide-renderer .answer-focus-image, .slide-renderer .round-intro-content.intro-running { animation: none; } .slide-renderer .question-image-overlay { transition: none; } }
