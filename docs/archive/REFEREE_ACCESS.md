@@ -16,7 +16,7 @@
    Nula je platný výsledek; prázdné pole je nezadáno. Oprava má vlastní důvod
    u týmu. Vrácení na nezadáno je výslovně označené a potvrzené při uložení.
    Přepnutí kola chrání rozepsané hodnoty; během ukládání se kolo nepřepíná.
-   Potvrzené hodnoty se zobrazí hned; další skóre se obnovuje po pěti sekundách.
+   Potvrzené hodnoty se zobrazí hned; na otevřené stránce se další skóre obnovuje po pěti sekundách. Po návratu ze zhasnutého displeje nebo jiné aplikace se stránka hned dorovná.
 6. Moderátor otevře **Průběžné výsledky**, vybere kolo, **Načíst náhled výsledků**
    a po kontrole **Zobrazit výsledky**. Součty a pořadí počítá server.
    Chybějící body publikaci blokují. Poslední kolo patří do finálního vyhlášení.
@@ -51,7 +51,9 @@ This is a bearer capability. Its holder may share it. Fragment removal does not 
 
 Expiry is server-clock based (default UI 24 hours, server maximum 30 days). Referee reads/writes are allowed only for ready/live/finalizing events; cancellation/archival denies work. Each read and score transaction reads the grant and event again, including idempotent receipts. Revocation/rotation writes that same grant document. Firestore transaction conflicts serialize a competing score save: a save may commit before revocation; after confirmed revocation any subsequently started old-key request fails. Rotation replaces the verifier and increments the version, invalidating every old tab without waiting for a Firebase token to expire. Already delivered information cannot be recalled.
 
-The UI refreshes its minimal view every five seconds, disables work on an unverified view, and shows “Přístup vypršel / byl odebrán” on denial. Draft input remains distinguishable from acknowledged scores. Revocation is enforced by the next request immediately, regardless of this display refresh interval.
+The visible page checks access every five seconds. Polling pauses while hidden and resumes immediately on return. Each read still validates the grant, issuer and event. Old clients receive the full view. A client requesting `sync: true` receives a full view on first use or when its snapshot, ordered accepted roster or scoring epoch differs. Otherwise its cursor selects just the accepted cells committed since the last view. Revocation disables scoring while preserving the draft for inspection.
+
+The cursor uses Firestore commit times. Within an epoch each saved cell advances its revision, including a correction to an empty value. A bounded instance cache uses the score count and sum of revisions to skip rereading score documents on quiet polls. Those aggregates stay on the server. A cold instance reconstructs the same view from the stored scores. The per-IP rate limit is shared across instances and checked on every request.
 
 ## Shared scoring and uncertain responses
 

@@ -4,6 +4,7 @@ import { Brand } from '../../ui/Brand';
 import { RoundScoreForm } from '../../features/scoring/RoundScoreForm';
 import { consumeRefereeAccess, forgetReferee, rememberReferee, refereeAccessMessages, refereeAccessReason } from '../../features/referee/sharing';
 import { readReferee, writeRefereeRound, historyReferee, type RefereeEvent } from '../../features/referee/api';
+import { applyRefereeRead } from '../../features/referee/sync';
 import '../../features/scoring/scoring.css';
 import '../../features/referee/referee-page.css';
 
@@ -17,6 +18,8 @@ export function RefereePage() {
 function RefereeEventPage({ eventId }: { readonly eventId: string }) {
   const [{ credential, reason: initialReason }] = useState(() => consumeRefereeAccess(eventId));
   const previousView = useRef<RefereeEvent | null>(null);
+  const cursor = useRef<string | undefined>(undefined);
+  const refresh = useRef<(immediate?: boolean) => void>(() => {});
   const [data, setData] = useState<RefereeEvent | null>(null);
   const [roundId, setRoundId] = useState('');
   const [blocked, setBlocked] = useState(!credential);
@@ -33,7 +36,7 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
   }, []);
   const blocker = useBlocker(hasDirty || pending);
   const onDirty = useCallback((value: boolean) => { if (mounted.current) setDirty(value); }, []);
-  const onPending = useCallback((value: boolean) => { if (mounted.current) { pendingWrite.current = value; setPending(value); } }, []);
+  const onPending = useCallback((value: boolean) => { if (mounted.current) { pendingWrite.current = value; setPending(value); if (!value) refresh.current(); } }, []);
   const failure = useCallback((issue: unknown) => {
     // A late failure must not erase a newly acquired credential after A → B → A.
     if (!mounted.current) return;
@@ -53,26 +56,57 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
   }, []);
   useEffect(() => {
     if (!credential || blocked || !connected) return;
-    let active = true, busy = false;
-    const poll = async () => {
-      if (busy || pendingWrite.current) return;
-      busy = true;
+    let active = true, busy = false, immediate = false, generation = 0;
+    let timer: number | undefined;
+    const visible = () => document.visibilityState !== 'hidden';
+    const poll = async (requested = false) => {
+      if (!active || !visible()) return;
+      if (busy || pendingWrite.current) { if (requested) immediate = true; return; }
+      immediate = false; busy = true;
       const version = writeVersion.current;
+      const attempt = ++generation;
       try {
-        const next = await readReferee(credential);
-        if (!active || version !== writeVersion.current || pendingWrite.current) return;
-        rememberReferee(credential, next.expiresAt);
+        const response = cursor.current === undefined ? await readReferee(credential) : await readReferee(credential, cursor.current);
+        if (!active || attempt !== generation || version !== writeVersion.current || pendingWrite.current) return;
         const previous = previousView.current;
+        const next = applyRefereeRead(previous, response);
+        rememberReferee(credential, next.expiresAt);
         if (previous && (previous.snapshotId !== next.snapshotId || (previous.scoringEpoch ?? 0) !== (next.scoringEpoch ?? 0))) {
+          cursor.current = undefined;
           setVerifiedAt(null); setError('Kvíz nebo generace bodování se změnily. Staré rozepsané body nelze uložit. Před obnovením stránky je zkontrolujte.'); return;
         }
+        cursor.current = response.cursor;
         previousView.current = next; setData(next); setRoundId(old => old || next.rounds[0]?.id || '');
         setVerifiedAt(new Date()); setError('');
-      } catch (issue) { if (active && version === writeVersion.current && !pendingWrite.current) failure(issue); }
-      finally { busy = false; }
+      } catch (issue) {
+        if (active && attempt === generation && version === writeVersion.current && !pendingWrite.current) {
+          if (refereeAccessReason(issue)) immediate = false;
+          failure(issue);
+        }
+      }
+      finally {
+        if (attempt === generation) {
+          busy = false;
+          if (active && immediate && visible() && !pendingWrite.current) void poll();
+        }
+      }
     };
-    void poll(); const timer = window.setInterval(() => void poll(), 5000);
-    return () => { active = false; clearInterval(timer); };
+    refresh.current = (requested = false) => {
+      if (requested) immediate = true;
+      if (immediate) void poll(true);
+    };
+    const visibility = () => {
+      clearInterval(timer); timer = undefined;
+      if (!visible()) { generation++; busy = false; return; }
+      void poll(true);
+      timer = window.setInterval(() => void poll(), 5000);
+    };
+    document.addEventListener('visibilitychange', visibility);
+    visibility();
+    return () => {
+      active = false; clearInterval(timer); refresh.current = () => {};
+      document.removeEventListener('visibilitychange', visibility);
+    };
   }, [credential, blocked, connected, failure]);
   useEffect(() => {
     if (!hasDirty && !pending) return;
@@ -93,7 +127,12 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
         if (!mounted.current) return confirmed;
         writeVersion.current += 1;
         // Apply the acknowledged transaction immediately; ignore an older in-flight read.
-        setData(old => old && ({ ...old, scores: [...old.scores.filter(score => score.roundId !== request.roundId || !confirmed.scores.some(next => next.teamId === score.teamId)), ...confirmed.scores.map(score => ({ ...score, roundId: request.roundId }))] }));
+        const previous = previousView.current;
+        if (previous) {
+          const next = { ...previous, scores: [...previous.scores.filter(score => score.roundId !== request.roundId || !confirmed.scores.some(next => next.teamId === score.teamId)), ...confirmed.scores.map(score => ({ ...score, roundId: request.roundId }))] };
+          previousView.current = next; setData(next);
+        }
+        refresh.current(true);
         setVerifiedAt(new Date()); setError(''); return confirmed;
       } catch (issue) {
         if ((issue as { code?: string } | null)?.code !== 'functions/aborted') failure(issue);
@@ -119,7 +158,8 @@ function RefereeEventPage({ eventId }: { readonly eventId: string }) {
         if (pendingWrite.current || (hasDirty && !window.confirm('Změnit kolo a zahodit neuložené body?'))) return;
         setDirty(false); setRoundId(event.target.value);
       }}>{data.rounds.map((round, index) => <option key={round.id} value={round.id}>{index + 1}. {round.title}</option>)}</select></label>
-      {data.teams.length === 0 ? <p role="status">Na soupisce zatím nejsou žádné týmy.</p> : roundId && <RoundScoreForm key={JSON.stringify([data.snapshotId, roundId])} eventId={eventId} snapshotId={data.snapshotId} scoringEpoch={data.scoringEpoch} roundId={roundId}
+      {data.teams.length === 0 && <p role="status">Na soupisce zatím nejsou žádné týmy.</p>}
+      {roundId && (data.teams.length > 0 || hasDirty || pending) && <RoundScoreForm preserveRemovedDrafts key={JSON.stringify([data.snapshotId, roundId])} eventId={eventId} snapshotId={data.snapshotId} scoringEpoch={data.scoringEpoch} roundId={roundId}
         roundTitle={round?.title ?? 'Kolo'} questionCount={round?.questionCount} teams={data.teams}
         scores={Object.fromEntries(data.scores.filter(score => score.roundId === roundId).map(score => [score.teamId, score]))} disabled={!editable} onDirty={onDirty} onPending={onPending} transport={transport} />}
       {data.rounds.length === 0 && <p>Připravený kvíz zatím nemá žádná kola.</p>}

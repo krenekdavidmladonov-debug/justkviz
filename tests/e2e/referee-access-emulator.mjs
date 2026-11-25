@@ -41,6 +41,11 @@ try {
  // A legacy frozen round with no stored aggregate still counts only its question slides.
  await frozenRound.ref.update({ questionCount: FieldValue.delete() });
  const payload=await anon.call('readRefereeEvent',c);assert.deepEqual(Object.keys(payload).sort(),['eventId','expiresAt','label','rounds','scores','scoringEpoch','snapshotId','teams','title']);assert.equal(payload.expiresAt,grant.expiresAt);assert.equal(payload.scoringEpoch,0);assert.deepEqual(Object.keys(payload.teams[0]).sort(),['id','name']);assert.deepEqual(Object.keys(payload.rounds[0]).sort(),['id','questionCount','title']);assert.equal(payload.rounds[0].questionCount,1);assert(!JSON.stringify(payload).includes('private-contact'));assert.equal(anon.auth.currentUser,null);pass();
+ const sync = (cursor, credential=c) => anon.call('readRefereeEvent',{...credential,sync:true,...(cursor ? {cursor} : {})});
+ const {sync:mode,cursor:firstCursor,...firstView}=await sync();
+ assert.equal(mode,'full');assert.deepEqual(firstView,payload);
+ assert.deepEqual(await sync(firstCursor),{sync:'unchanged',cursor:firstCursor,scores:[]});
+ assert.equal((await sync('invalid-cursor')).sync,'full');pass();
  await terminal(anon.call('readRefereeEvent',{...c,eventId:b.eventId}),'not-found');await terminal(anon.call('readRefereeEvent',{...c,key:'x'.repeat(43)}),'not-found');await terminal(anon.call('readRefereeEvent',{...c,accessId:'missing'}),'not-found');await denied(anon.call('listRefereeAccess',{eventId:a.eventId,...c}),'unauthenticated');
  assert.deepEqual(await holder.call('readRefereeEvent',c),payload);pass();
  for(const endpoint of ['updateEvent','lockEventQuiz','createLiveSession','createQuizSlide','adminAddEventTeam'])await assert.rejects(anon.call(endpoint,{...c,credential:c,eventId:a.eventId}),e=>['functions/permission-denied','functions/unauthenticated'].includes(e.code));pass();
@@ -51,6 +56,9 @@ try {
  await denied(save(c,score({halfPoints:7})),'invalid-argument');await denied(save(c,score({halfPoints:.5})),'invalid-argument');await denied(save(c,score({actorLabel:'forged',halfPoints:7,reason:'forged'})),'invalid-argument');await denied(save(c,score({eventId:b.eventId})),'invalid-argument');
  await denied(save(c,score({teamId:b.teamId,reason:'foreign'})),'not-found');
  await save(c,score({halfPoints:7,reason:'Referee correction'}));revision=2;
+ const delta=await sync(firstCursor);
+ assert.equal(delta.sync,'delta');assert.deepEqual(delta.scores,[{teamId:a.teamId,roundId,revision:2,halfPoints:7}]);
+ assert(!('teams' in delta || 'rounds' in delta));assert.equal((await sync(delta.cursor)).sync,'unchanged');pass();
  const historyRef=db.collection(`events/${a.eventId}/scores/${one.scoreId}/history`);let h=(await historyRef.orderBy('revision').get()).docs.map(d=>d.data());assert.equal(h.length,2);assert(h.every(x=>x.actorAccessId===c.accessId&&x.actorLabel==='Rozhodčí A'&&!('actorUid'in x)));pass();
  const safeHistory=await anon.call('readRefereeHistory',{...c,teamId:a.teamId,roundId});assert.deepEqual(Object.keys(safeHistory[0]).sort(),['actorLabel','createdAt','halfPoints','previousHalfPoints','reason','revision']);assert(!JSON.stringify(safeHistory).includes(staff.auth.currentUser.uid));pass();
  assert.deepEqual(await holder.call('readRefereeHistory',{...c,teamId:a.teamId,roundId}),safeHistory);
@@ -62,6 +70,8 @@ try {
  await teamRef.update({status:'cancelled'});await denied(anon.call('readRefereeHistory',{...c,teamId:a.teamId,roundId}),'failed-precondition');await teamRef.update({status:'accepted'});
  await denied(anon.call('readRefereeHistory',{...c,teamId:a.teamId,roundId:'missing'}),'failed-precondition');
  const assignment=(await a.ref.get()).data().quizAssignment;
+ await a.ref.update({quizAssignment:{...assignment,snapshotId:b.snapshotId}});
+ const newQuiz=await sync(delta.cursor);assert.equal(newQuiz.sync,'full');assert.equal(newQuiz.snapshotId,b.snapshotId);
  await a.ref.update({quizAssignment:{}});await denied(anon.call('readRefereeEvent',c),'failed-precondition');await a.ref.update({quizAssignment:assignment});pass();
  const grant2=await staff.call('issueRefereeAccess',{...issueData,requestId:randomUUID(),label:'Rozhodčí B'}), c2={...c,accessId:grant2.accessId,key:grant2.key};
  for(const contenders of [()=>[save(c,score({halfPoints:8,reason:'first'})),staff.call('saveEventScore',score({halfPoints:9,reason:'staff'}))],()=>[save(c,score({halfPoints:10,reason:'ref one'})),save(c2,score({halfPoints:11,reason:'ref two'}))]]){const results=await Promise.allSettled(contenders());assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(results.find(r=>r.status==='rejected').reason.code,'functions/aborted');revision++;}pass();
@@ -75,9 +85,16 @@ try {
  const staffRoster = await staff.call('readAccessData', { operation: 'roster', eventId: a.eventId });
  assert.deepEqual(refereeTeams.map(team => team.id), [a.teamId, registration.registrationId, ...batchTeams]);
  assert.deepEqual(refereeTeams.map(team => team.id), staffRoster.filter(team => team.data.status === 'accepted').map(team => team.id));
+ const rosterChange=await sync(delta.cursor);assert.equal(rosterChange.sync,'full');assert.deepEqual(rosterChange.teams,refereeTeams);pass();
  const roundInput={eventId:a.eventId,snapshotId:a.snapshotId,roundId,requestId:randomUUID(),scores:batchTeams.map((teamId,index)=>({teamId,expectedRevision:0,halfPoints:index===0?0:5,reason:''}))};
  const saveRound=(credential,input=roundInput)=>anon.call('saveRefereeScore',{credential,score:input});
  const batch=await saveRound(c);assert.equal(batch.scores.length,2);assert.deepEqual(await saveRound(c),batch);
+ const batchDelta=await sync(rosterChange.cursor);assert.equal(batchDelta.sync,'delta');
+ assert.deepEqual(batchDelta.scores.map(row=>row.teamId).sort(),[...batchTeams].sort());
+ const renamed=await db.doc(`events/${a.eventId}/registrations/${a.teamId}`).get();
+ await renamed.ref.update({teamName:'Renamed synthetic team'});
+ const newRoster=await sync(batchDelta.cursor);assert.equal(newRoster.sync,'full');assert.equal(newRoster.teams[0].name,'Renamed synthetic team');
+ await renamed.ref.update({teamName:renamed.data().teamName});pass();
  for(const item of batch.scores){const history=(await db.collection(`events/${a.eventId}/scores/${item.scoreId}/history`).get()).docs.map(doc=>doc.data());assert.equal(history.length,1);assert.equal(history[0].actorAccessId,c.accessId);assert(!('actorUid'in history[0]));}
  await denied(saveRound(c,{...roundInput,eventId:b.eventId}),'invalid-argument');
  assert.deepEqual(await holder.call('saveRefereeScore',{credential:c,score:roundInput}),batch);
@@ -90,9 +107,15 @@ try {
  const capabilityVersion=(await a.ref.get()).data().capabilityVersion??0;
  await a.ref.update({capabilityVersion:capabilityVersion+1});await terminal(anon.call('readRefereeEvent',c),'event-closed');await a.ref.update({capabilityVersion});pass();
  const rotated=await staff.call('changeRefereeAccess',{eventId:a.eventId,accessId:c.accessId,expectedVersion:1,action:'rotate',expiresAt:expiry()});await terminal(anon.call('readRefereeEvent',c),'not-found');await terminal(save(c,initial),'not-found');await terminal(saveRound(c),'not-found');c.key=rotated.key;await anon.call('readRefereeEvent',c);await denied(staff.call('changeRefereeAccess',{eventId:a.eventId,accessId:c.accessId,expectedVersion:1,action:'rotate',expiresAt:expiry()}),'aborted');pass();
- const grantRef=db.doc(`events/${a.eventId}/refereeAccess/${c.accessId}`);await grantRef.update({expiresAt:null});await denied(anon.call('readRefereeEvent',c),'failed-precondition');await grantRef.update({expiresAt:require('firebase-admin/firestore').Timestamp.fromMillis(Date.now()-1)});await terminal(anon.call('readRefereeEvent',c),'expired');await terminal(anon.call('readRefereeEvent',{...c,key:'x'.repeat(43)}),'not-found');await terminal(save(c,initial),'expired');await terminal(saveRound(c),'expired');await grantRef.update({expiresAt:require('firebase-admin/firestore').Timestamp.fromMillis(Date.now()+60000)});pass();
+ const grantRef=db.doc(`events/${a.eventId}/refereeAccess/${c.accessId}`);await grantRef.update({expiresAt:null});await denied(anon.call('readRefereeEvent',c),'failed-precondition');await grantRef.update({expiresAt:require('firebase-admin/firestore').Timestamp.fromMillis(Date.now()-1)});await terminal(anon.call('readRefereeEvent',c),'expired');await terminal(sync(batchDelta.cursor),'expired');await terminal(anon.call('readRefereeEvent',{...c,key:'x'.repeat(43)}),'not-found');await terminal(save(c,initial),'expired');await terminal(saveRound(c),'expired');await grantRef.update({expiresAt:require('firebase-admin/firestore').Timestamp.fromMillis(Date.now()+60000)});pass();
  const hashBefore=(await grantRef.get()).data().keyHash;
  const race=await Promise.allSettled([save(c,score({halfPoints:14,reason:'racing revoke'})),staff.call('changeRefereeAccess',{eventId:a.eventId,accessId:c.accessId,expectedVersion:2,action:'revoke'})]);assert.equal(race[1].status,'fulfilled');if(race[0].status==='rejected')assert.equal(race[0].reason.details.refereeAccess,'revoked');assert.equal((await grantRef.get()).data().keyHash,hashBefore);await terminal(save(c,score({halfPoints:15,reason:'after revoke'})),'revoked');await terminal(anon.call('readRefereeEvent',c),'revoked');await terminal(anon.call('readRefereeEvent',{...c,key:'x'.repeat(43)}),'not-found');await terminal(anon.call('readRefereeHistory',{...c,teamId:a.teamId,roundId}),'revoked');assert((await historyRef.get()).size>=4);pass();
+ await terminal(sync(batchDelta.cursor),'revoked');
+ const beforeReset=await sync(undefined,c2);
+ const reset=await staff.call('resetEventScores',{eventId:a.eventId,expectedRevision:(await a.ref.get()).data().revision,requestId:randomUUID(),confirm:'SMAZAT'});
+ const afterReset=await sync(beforeReset.cursor,c2);
+ assert.equal(afterReset.sync,'full');assert.equal(afterReset.scoringEpoch,reset.scoringEpoch);assert.deepEqual(afterReset.scores,[]);
+ await denied(save(c2,score({scoringEpoch:beforeReset.scoringEpoch,expectedRevision:0})),'aborted');pass();
  await staff.call('cancelEvent',{eventId:a.eventId,expectedRevision:(await a.ref.get()).data().revision});await terminal(anon.call('readRefereeEvent',c2),'event-closed');await terminal(anon.call('readRefereeEvent',{...c2,key:'x'.repeat(43)}),'not-found');await staff.call('archiveEvent',{eventId:a.eventId,expectedRevision:(await a.ref.get()).data().revision});await terminal(save(c2,score({reason:'archived'})),'event-closed');pass();
  const counters = await db.collection('refereeRateLimits').get();assert(counters.size > 0);
  for(const counter of counters.docs)await counter.ref.update({count:180,until:Date.now()+60000});
