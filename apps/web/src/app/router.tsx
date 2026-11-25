@@ -2,7 +2,7 @@ import { loadPublicEvent } from '../features/events/publicEventRead';
 import { PrivacyPage } from '../routes/PrivacyPage';
 import { lazyAdminRoute } from './lazyAdminRoute';
 import { lazy, Suspense } from 'react';
-import { createBrowserRouter, type RouteObject } from 'react-router-dom';
+import { createBrowserRouter, useMatches, type RouteObject } from 'react-router-dom';
 
 import { AdminLoading } from '../routes/admin/AdminLoading';
 import { NotFoundPage } from '../routes/NotFoundPage';
@@ -78,7 +78,25 @@ const sessionRoutes: RouteObject[] = [
       { path: '*', element: <NotFoundPage /> },
     ],
   },
+  {
+    handle: 'public-shell',
+    element: <AppLayout />,
+    errorElement: <RouteErrorPage />,
+    HydrateFallback: PublicRouteLoading,
+    children: [
+      { path: 'admin/login', lazy: async () => ({ Component: (await import('../routes/admin/AdminLoginPage')).AdminLoginPage }) },
+      { path: 'admin/no-access', lazy: async () => ({ Component: (await import('../routes/admin/AdminNoAccessPage')).AdminNoAccessPage }) },
+      { path: 'events/:eventId/registration/manage', lazy: async () => ({ Component: (await import('../routes/events/ManageRegistrationPage')).ManageRegistrationPage }) },
+      { path: 'account', lazy: lazyAccountRoute },
+      { path: 'invite/:inviteId', lazy: lazyAccountRoute },
+    ],
+  },
 ];
+
+function SessionLoading() {
+  const publicShell = useMatches().some(match => match.handle === 'public-shell');
+  return publicShell ? <AppLayout><PublicRouteLoading /></AppLayout> : <AdminLoading />;
+}
 
 const sessionLayout = async () => ({ Component: (await import('./SessionLayout')).SessionLayout });
 const eventsRoute = async () => ({ Component: (await import('../routes/events/EventsPage')).EventsPage });
@@ -86,7 +104,7 @@ const eventsRoute = async () => ({ Component: (await import('../routes/events/Ev
 export const router = createBrowserRouter([
   {
     lazy: sessionLayout,
-    HydrateFallback: AdminLoading,
+    HydrateFallback: SessionLoading,
     errorElement: <RouteErrorPage />,
     children: sessionRoutes,
   },
@@ -94,17 +112,6 @@ export const router = createBrowserRouter([
     element: <AppLayout />,
     errorElement: <RouteErrorPage />,
     children: [
-      {
-        lazy: sessionLayout,
-        HydrateFallback: PublicRouteLoading,
-        children: [
-          { path: 'admin/login', lazy: async () => ({ Component: (await import('../routes/admin/AdminLoginPage')).AdminLoginPage }) },
-          { path: 'admin/no-access', lazy: async () => ({ Component: (await import('../routes/admin/AdminNoAccessPage')).AdminNoAccessPage }) },
-          { path: 'events/:eventId/registration/manage', lazy: async () => ({ Component: (await import('../routes/events/ManageRegistrationPage')).ManageRegistrationPage }) },
-          { path: 'account', lazy: lazyAccountRoute },
-          { path: 'invite/:inviteId', lazy: lazyAccountRoute },
-        ],
-      },
       { index: true, lazy: eventsRoute, HydrateFallback: PublicRouteLoading },
       { path: 'privacy', element: <PrivacyPage /> },
       { path: 'events', lazy: eventsRoute, HydrateFallback: PublicRouteLoading },

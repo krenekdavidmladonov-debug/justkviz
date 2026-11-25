@@ -13,7 +13,14 @@ vi.mock('react-router-dom', async original => ({
   ...await original<typeof import('react-router-dom')>(),
   createBrowserRouter: (routes: RouteObject[]) => { routing.routes = routes; return {}; },
 }));
-vi.mock('../apps/web/src/app/SessionLayout', async () => ({ SessionLayout: (await import('react-router-dom')).Outlet }));
+const session = vi.hoisted(() => ({ mounted: vi.fn(), unmounted: vi.fn() }));
+vi.mock('../apps/web/src/app/SessionLayout', async () => {
+  const { Outlet } = await import('react-router-dom');
+  return { SessionLayout: function SessionLayout() {
+    React.useEffect(() => { session.mounted(); return () => { session.unmounted(); }; }, []);
+    return <Outlet />;
+  } };
+});
 vi.mock('../apps/web/src/auth/AuthProvider', () => ({ useAuth: () => ({
   currentUser: access.signedIn ? { uid: 'synthetic-staff' } : null, role: access.staff ? 'admin' : null,
   loading: false, can: (permission: string) => permission !== 'users.manage' || access.manageUsers,
@@ -96,6 +103,15 @@ it('keeps users.manage before mounting the users page while allowing staff setti
   await act(async () => router.navigate('/admin/users'));
   expect(host.textContent).toContain('Přístupy spolupracovníků');
   expect(mounted.users).toHaveBeenCalled();
+});
+
+it('keeps the same session when leaving sign-in for the admin dashboard', async () => {
+  session.mounted.mockClear(); session.unmounted.mockClear();
+  await render('/admin/login');
+  await act(async () => router.navigate('/admin'));
+  expect(host.textContent).toContain('Administrace');
+  expect(session.mounted).toHaveBeenCalledTimes(1);
+  expect(session.unmounted).not.toHaveBeenCalled();
 });
 
 it.each(['signedIn', 'staff'] as const)('keeps RequireStaff checking %s for settings deep links', async field => {
