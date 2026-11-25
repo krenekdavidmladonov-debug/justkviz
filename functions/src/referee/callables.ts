@@ -1,3 +1,4 @@
+import { currentScores, fingerprint, parseCursor } from './sync.js';
 import { isWarmupPing, warmupResponse } from '../warmup/ping.js';
 import { assertEventOperational } from '../events/guards.js';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -119,21 +120,35 @@ function snapshotIn(event: Record<string, unknown>): string {
 }
 export const readRefereeEvent = onCall(options, async request => {
   if (isWarmupPing(request.data)) return warmupResponse();
-  const c = credential(request.data); await throttle(request);
+  const data = record(request.data);
+  const c = credential(data); await throttle(request);
   return db().runTransaction(async transaction => {
     const { grant, event } = await accessIn(transaction, c);
     const snapshotId = snapshotIn(event);
+    const scoringEpoch = eventScoringEpoch(event.scoring);
+    const meta = { title: String(event.title), label: String(grant.label), expiresAt: (grant.expiresAt as Timestamp).toDate().toISOString() };
+    const root = db().doc('events/' + c.eventId);
+    const registrations = await transaction.get(root.collection('registrations').where('status', '==', 'accepted').select('teamName', 'createdAt'));
+    const teams = registrationOrder(registrations.docs).map(d => ({ id: d.id, name: String(d.data().teamName) }));
+    const sync = data.sync === true;
+    const shape = sync ? fingerprint([c.eventId, c.accessId, snapshotId, scoringEpoch, teams]) : undefined;
+    const scores = await currentScores(transaction, root.collection('scores'), new Set(teams.map(team => team.id)), shape);
+    let cursor: string | undefined;
+    if (shape) {
+      const previous = parseCursor(data.cursor);
+      const metadata = fingerprint(meta);
+      cursor = [shape, scores.version, metadata].join('.');
+      if (previous && previous.shape === shape && previous.version <= scores.version) {
+        const changed = previous.version === scores.version ? [] : scores.rows.filter(row => row.version > previous.version).map(row => row.score);
+        return { sync: changed.length ? 'delta' : 'unchanged', cursor, scores: changed, ...(previous.metadata !== metadata ? meta : {}) };
+      }
+    }
     const snapshot = db().doc(`quizSnapshots/${snapshotId}`);
     const rounds = await transaction.get(snapshot.collection('rounds').orderBy('position'));
     const counts = await snapshotRoundQuestionCounts(transaction, snapshot.collection('slides'), rounds.docs);
-    const teams = await transaction.get(db().collection(`events/${c.eventId}/registrations`).where('status', '==', 'accepted'));
-    const scores = await transaction.get(db().collection(`events/${c.eventId}/scores`));
-    const accepted = new Set(teams.docs.map(d => d.id));
-    return { eventId: c.eventId, title: String(event.title), label: String(grant.label), expiresAt: (grant.expiresAt as Timestamp).toDate().toISOString(), snapshotId,
-      scoringEpoch: eventScoringEpoch(event.scoring),
+    return { eventId: c.eventId, ...meta, snapshotId, scoringEpoch,
       rounds: rounds.docs.map(d => ({ id: d.id, title: String(d.data().title ?? 'Kolo'), questionCount: counts.get(d.id)! })),
-      teams: registrationOrder(teams.docs).map(d => ({ id: d.id, name: String(d.data().teamName) })),
-      scores: scores.docs.filter(d => accepted.has(d.data().teamId as string)).map(d => { const s = d.data(); return { teamId: s.teamId as string, roundId: s.roundId as string, halfPoints: s.halfPoints as number | null, revision: s.revision as number }; }) };
+      teams, scores: scores.rows.map(row => row.score), ...(cursor ? { sync: 'full', cursor } : {}) };
   });
 });
 export const readRefereeHistory = onCall(options, async request => {

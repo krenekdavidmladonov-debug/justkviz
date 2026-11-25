@@ -5,6 +5,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RefereePage } from '../apps/web/src/routes/referee/RefereePage';
 import { historyReferee, readReferee, writeRefereeRound, type RefereeEvent } from '../apps/web/src/features/referee/api';
+import { applyRefereeRead } from '../apps/web/src/features/referee/sync';
 import { forgetReferee } from '../apps/web/src/features/referee/sharing';
 import type { RoundScoreResponse } from '../apps/web/src/features/scoring/api';
 
@@ -15,6 +16,7 @@ vi.mock('../apps/web/src/features/referee/sharing', async importOriginal => ({
 }));
 vi.mock('../apps/web/src/features/scoring/api', () => ({ saveRoundScores: vi.fn(), loadHistory: vi.fn() }));
 let host: HTMLDivElement, root: Root;
+let visibilityState: DocumentVisibilityState;
 const confirm = vi.fn<(message?: string) => boolean>();
 function fixture(): RefereeEvent {
   return { eventId: 'event', title: 'Filmový večer', label: 'Rozhodčí', expiresAt: '2026-11-23T13:00:00.000Z', snapshotId: 'snapshot',
@@ -37,6 +39,8 @@ async function render(data = fixture()) {
 }
 beforeEach(() => {
   vi.clearAllMocks(); vi.useFakeTimers(); vi.setSystemTime(new Date('2026-11-23T12:00:00Z')); Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  visibilityState = 'visible';
+  vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibilityState);
   vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true); window.confirm = confirm.mockReset().mockReturnValue(false);
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });
@@ -63,7 +67,7 @@ describe('round-first referee workflow', () => {
     ] }));
     expect(host.textContent).toContain('Body kola jsou uložené. Potvrzeno serverem.');
     expect(host.textContent).toContain('3 / 3 týmů má uložené body');
-    expect(readReferee).toHaveBeenCalledTimes(1);
+    expect(readReferee).toHaveBeenCalledTimes(2);
   });
   it('warns on scores above the selected snapshot round count and saves only after confirmation', async () => {
     await render();
@@ -251,4 +255,166 @@ it('removes cancelled referee teams after polling while preserving remaining uns
   vi.mocked(writeRefereeRound).mockResolvedValue({ scores: [{ teamId: 'b', revision: 3, halfPoints: 2 }] });
   await click('Uložit body celého kola');
   expect(writeRefereeRound).toHaveBeenCalledExactlyOnceWith(expect.anything(), expect.objectContaining({ scores: [{ teamId: 'b', expectedRevision: 2, halfPoints: 2, reason: '' }] }));
+});
+
+
+async function visibility(value: DocumentVisibilityState) {
+  await act(async () => { visibilityState = value; document.dispatchEvent(new Event('visibilitychange')); });
+}
+
+describe('referee incremental synchronization', () => {
+  it('merges changed cells and unchanged metadata without replacing other rounds or drafts', async () => {
+    await render({ ...fixture(), sync: 'full', cursor: 'first' });
+    await input('Beta', '4');
+    vi.mocked(readReferee).mockResolvedValueOnce({ sync: 'delta', cursor: 'second', scores: [
+      { teamId: 'b', roundId: 'r1', halfPoints: 2, revision: 3 },
+      { teamId: 'c', roundId: 'r1', halfPoints: 0, revision: 1 },
+    ] });
+    await poll();
+    expect(vi.mocked(readReferee).mock.calls.at(-1)?.[1]).toBe('first');
+    expect(points('Beta').value).toBe('4');
+    expect(points('Alfa').value).toBe('0');
+    expect(points('Gama').value).toBe('0');
+    expect(host.textContent).toContain('Aktuálně uloženo:');
+    vi.mocked(readReferee).mockResolvedValueOnce({ sync: 'unchanged', cursor: 'third', scores: [], title: 'Nový název' });
+    await poll();
+    expect(vi.mocked(readReferee).mock.calls.at(-1)?.[1]).toBe('second');
+    expect(host.textContent).toContain('Nový název');
+    expect(points('Beta').value).toBe('4');
+    expect(points('Gama').value).toBe('0');
+  });
+
+  it('accepts legacy full responses and reuses unchanged score arrays and metadata', () => {
+    const previous = fixture();
+    expect(applyRefereeRead(null, previous)).toBe(previous);
+    expect(applyRefereeRead(previous, { sync: 'unchanged', cursor: 'next', scores: [] })).toBe(previous);
+    const renamed = applyRefereeRead(previous, { sync: 'unchanged', cursor: 'next', scores: [], title: 'Nový název' });
+    expect(renamed.title).toBe('Nový název');
+    expect(renamed.scores).toBe(previous.scores);
+  });
+  it('does no hidden polling, retains drafts and catches up immediately on visibility', async () => {
+    await render({ ...fixture(), sync: 'full', cursor: 'first' });
+    await input('Beta', '3');
+    await visibility('hidden');
+    await act(async () => { await vi.advanceTimersByTimeAsync(120000); });
+    expect(readReferee).toHaveBeenCalledTimes(1);
+    vi.mocked(readReferee).mockResolvedValueOnce({ sync: 'delta', cursor: 'second', scores: [{ teamId: 'c', roundId: 'r1', halfPoints: 8, revision: 1 }] });
+    await visibility('visible');
+    expect(readReferee).toHaveBeenCalledTimes(2);
+    expect(points('Beta').value).toBe('3');
+    expect(points('Gama').value).toBe('4');
+  });
+
+  it('waits for first visibility when the page is initially hidden', async () => {
+    visibilityState = 'hidden';
+    await render();
+    await act(async () => { await vi.advanceTimersByTimeAsync(20000); });
+    expect(readReferee).not.toHaveBeenCalled();
+    await visibility('visible');
+    expect(readReferee).toHaveBeenCalledTimes(1);
+    expect(points('Beta').disabled).toBe(false);
+  });
+
+  it.each(['resolve', 'reject'])('starts a fresh read immediately on return and ignores the old read %s', async outcome => {
+    await render({ ...fixture(), sync: 'full', cursor: 'first' });
+    let finish!: (value: RefereeEvent) => void, fail!: (error: unknown) => void;
+    vi.mocked(readReferee).mockImplementationOnce(() => new Promise((resolve, reject) => { finish = resolve; fail = reject; }));
+    await poll();
+    await visibility('hidden');
+    vi.mocked(readReferee).mockResolvedValueOnce({ sync: 'delta', cursor: 'third', scores: [{ teamId: 'c', roundId: 'r1', halfPoints: 6, revision: 1 }] });
+    await visibility('visible');
+    expect(readReferee).toHaveBeenCalledTimes(3);
+    expect(vi.mocked(readReferee).mock.calls.at(-1)?.[1]).toBe('first');
+    expect(points('Gama').value).toBe('3');
+    await act(async () => {
+      if (outcome === 'resolve') finish({ ...fixture(), sync: 'full', cursor: 'second' });
+      else fail({ code: 'functions/permission-denied', details: { refereeAccess: 'revoked' } });
+    });
+    expect(points('Gama').value).toBe('3');
+    expect(forgetReferee).not.toHaveBeenCalled();
+    vi.mocked(readReferee).mockResolvedValueOnce({ sync: 'unchanged', cursor: 'fourth', scores: [] });
+    await poll();
+    expect(vi.mocked(readReferee).mock.calls.at(-1)?.[1]).toBe('third');
+  });
+
+  it('waits for an active save on visibility return and immediately catches up after acknowledgement', async () => {
+    await render({ ...fixture(), sync: 'full', cursor: 'first' });
+    await input('Beta', '3');
+    let finish!: (value: RoundScoreResponse) => void;
+    vi.mocked(writeRefereeRound).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await click('Uložit body celého kola');
+    await visibility('hidden');
+    await visibility('visible');
+    expect(readReferee).toHaveBeenCalledTimes(1);
+    vi.mocked(readReferee).mockResolvedValueOnce({ sync: 'delta', cursor: 'second', scores: [{ teamId: 'c', roundId: 'r1', halfPoints: 8, revision: 1 }] });
+    await act(async () => finish({ scores: [{ teamId: 'b', halfPoints: 6, revision: 3 }] }));
+    expect(readReferee).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(readReferee).mock.calls.at(-1)?.[1]).toBe('first');
+    expect(points('Beta').value).toBe('3');
+    expect(points('Gama').value).toBe('4');
+  });
+  it('refreshes with the previous cursor after saving, including a write acknowledged while hidden', async () => {
+    await render({ ...fixture(), sync: 'full', cursor: 'first' });
+    await input('Beta', '3');
+    let finish!: (value: RoundScoreResponse) => void;
+    vi.mocked(writeRefereeRound).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await click('Uložit body celého kola');
+    await visibility('hidden');
+    await act(async () => finish({ scores: [{ teamId: 'b', halfPoints: 6, revision: 3 }] }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+    expect(readReferee).toHaveBeenCalledTimes(1);
+    vi.mocked(readReferee).mockResolvedValueOnce({ sync: 'delta', cursor: 'second', scores: [{ teamId: 'c', roundId: 'r1', halfPoints: 8, revision: 1 }] });
+    await visibility('visible');
+    expect(vi.mocked(readReferee).mock.calls.at(-1)?.[1]).toBe('first');
+    expect(points('Beta').value).toBe('3');
+    expect(points('Gama').value).toBe('4');
+  });
+
+  it('retains the old draft disabled when an incremental session changes epoch', async () => {
+    await render({ ...fixture(), scoringEpoch: 0, sync: 'full', cursor: 'first' });
+    await input('Beta', '3');
+    vi.mocked(readReferee).mockResolvedValue({ ...fixture(), scoringEpoch: 1, sync: 'full', cursor: 'new-epoch' });
+    await poll();
+    expect(points('Beta').value).toBe('3');
+    expect(points('Beta').disabled).toBe(true);
+    await poll();
+    expect(vi.mocked(readReferee).mock.calls.at(-1)).toHaveLength(1);
+    expect(points('Beta').disabled).toBe(true);
+    expect(writeRefereeRound).not.toHaveBeenCalled();
+  });
+});
+
+
+it('retains removed-team drafts as copyable readonly rows and saves only current teams', async () => {
+  await render();
+  await input('Alfa', '3');
+  await input('Beta', '2');
+  const next = fixture();
+  next.teams = next.teams.filter(team => team.id !== 'a');
+  next.scores = next.scores.filter(score => score.teamId !== 'a');
+  vi.mocked(readReferee).mockResolvedValue(next);
+  await poll();
+  const retained = () => host.querySelector<HTMLInputElement>('.referee-removed-drafts input')!;
+  expect(points('Alfa')).toBeNull();
+  expect(retained().value).toBe('3');
+  expect(retained().readOnly).toBe(true);
+  expect(retained().disabled).toBe(false);
+  expect(host.textContent).toContain('nebudou se ukládat');
+  expect(points('Beta').value).toBe('2');
+  vi.mocked(writeRefereeRound).mockResolvedValue({ scores: [{ teamId: 'b', halfPoints: 4, revision: 3 }] });
+  await click('Uložit body celého kola');
+  expect(writeRefereeRound).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ scores: [{ teamId: 'b', expectedRevision: 2, halfPoints: 4, reason: '' }] }));
+  expect(retained().value).toBe('3');
+  expect([...host.querySelectorAll('button')].find(button => button.textContent === 'Uložit body celého kola')!.disabled).toBe(true);
+});
+
+it('keeps removed drafts mounted even after the last team leaves the roster', async () => {
+  await render();
+  await input('Beta', '3');
+  vi.mocked(readReferee).mockResolvedValue({ ...fixture(), teams: [], scores: [] });
+  await poll();
+  expect(host.textContent).toContain('Na soupisce zatím nejsou žádné týmy');
+  expect(host.querySelector<HTMLInputElement>('.referee-removed-drafts input')?.value).toBe('3');
+  expect([...host.querySelectorAll('button')].find(button => button.textContent === 'Uložit body celého kola')!.disabled).toBe(true);
+  expect(writeRefereeRound).not.toHaveBeenCalled();
 });

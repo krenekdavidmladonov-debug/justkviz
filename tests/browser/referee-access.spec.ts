@@ -129,9 +129,35 @@ test('organizer issues private QR, referee scores, corrections survive and revoc
     expect(history.result.every(item => Object.keys(item).every(key => ['revision','halfPoints','previousHalfPoints','reason','createdAt','actorLabel'].includes(key)))).toBe(true);
     expect(history.result.map(item => item.revision).sort()).toEqual([1, 2]); await expect(row).toContainText('Rozhodčí browser'); await expect(row.locator('li')).toHaveCount(2);
     await page.getByRole('link', { name: 'Otevřít bodování' }).click(); await expect(page.getByLabel('Body — Referee team', { exact: true })).toHaveValue('3,5');
+    const setVisibility = (value: DocumentVisibilityState) => referee.evaluate(state => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: state });
+      performance.setResourceTimingBufferSize(2000);
+      const changedAt = performance.now();
+      document.dispatchEvent(new Event('visibilitychange'));
+      return changedAt;
+    }, value);
+    await setVisibility('hidden');
+    let hiddenReads = 0;
+    const countRead = (request: import('@playwright/test').Request) => {
+      if (request.method() === 'POST' && request.url().endsWith('/readRefereeEvent')) hiddenReads++;
+    };
+    referee.on('request', countRead);
     await points.fill('5'); await page.getByLabel('Body — Referee team', { exact: true }).fill('4'); await page.getByLabel('Důvod opravy — Referee team').fill('Organizer conflict');
     page.once('dialog', dialog => dialog.accept());
     await page.getByRole('button', { name: 'Uložit body celého kola', exact: true }).click();
+    // Cover a whole five-second polling interval while the organizer changes the cell.
+    await referee.waitForTimeout(5200);
+    expect(hiddenReads).toBe(0);
+    referee.off('request', countRead);
+    const catchUp = referee.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/readRefereeEvent'));
+    const changedAt = await setVisibility('visible');
+    const catchUpBody = await (await catchUp).json() as { result: { sync: string; scores: unknown[] } };
+    expect(catchUpBody.result.sync).toBe('delta');
+    expect(catchUpBody.result.scores).toHaveLength(1);
+    await expect.poll(() => referee.evaluate(start => {
+      const fetch = performance.getEntriesByType('resource').find(entry => entry.name.endsWith('/readRefereeEvent') && entry.startTime >= start);
+      return fetch ? fetch.startTime - start : Infinity;
+    }, changedAt)).toBeLessThan(1000);
     await expect(row).toContainText('Aktuálně uloženo: 4 body'); await expect(points).toHaveValue('5'); await expect(save).toBeDisabled();
     await row.getByRole('button', { name: 'Připravit opravu aktuální revize' }).click(); await referee.getByLabel('Důvod opravy — Referee team').fill('Resolution');
     referee.once('dialog', dialog => dialog.accept());

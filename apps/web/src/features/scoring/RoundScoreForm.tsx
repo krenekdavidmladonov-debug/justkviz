@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { loadHistory, saveRoundScores, type RoundScoreRequest, type RoundScoreResponse } from './api';
 import { emptyScore, parseRoundPoints, pointsText, scoreLabel, type Score, type ScoreHistory } from './model';
 
-type Draft = { text: string; reason: string; clear: boolean; base: Score };
+type Draft = { text: string; reason: string; clear: boolean; base: Score; teamName: string };
 interface Props {
   eventId: string; snapshotId: string; scoringEpoch?: number | undefined; roundId: string; roundTitle: string; questionCount?: number | undefined;
   teams: { id: string; name: string; accepted?: boolean }[]; scores: Record<string, Score>; disabled: boolean;
+  preserveRemovedDrafts?: boolean;
   onDirty: (dirty: boolean) => void; onPending: (pending: boolean) => void;
   transport?: { save: (request: RoundScoreRequest) => Promise<RoundScoreResponse>; history: typeof loadHistory };
 }
@@ -18,7 +19,7 @@ function draftPoints(draft: Draft) {
   catch (error) { return { error: (error as Error).message }; }
 }
 
-export function RoundScoreForm({ eventId, snapshotId, scoringEpoch, roundId, roundTitle, questionCount, teams, scores, disabled, onDirty, onPending, transport }: Props) {
+export function RoundScoreForm({ eventId, snapshotId, scoringEpoch, roundId, roundTitle, questionCount, teams, scores, disabled, onDirty, onPending, transport, preserveRemovedDrafts = false }: Props) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const form = useRef<HTMLFormElement>(null);
@@ -31,11 +32,18 @@ export function RoundScoreForm({ eventId, snapshotId, scoringEpoch, roundId, rou
   useEffect(() => {
     const accepted = new Set(teams.filter(team => team.accepted !== false).map(team => team.id));
     if (!Object.keys(drafts).some(id => !accepted.has(id))) return;
+    if (preserveRemovedDrafts) {
+      if (retry.current?.scores.some(score => !accepted.has(score.teamId))) retry.current = null;
+      return;
+    }
     setDrafts(current => Object.fromEntries(Object.entries(current).filter(([id]) => accepted.has(id))));
     retry.current = null;
     setError('Soupiska se změnila. Rozepsané body vyřazených týmů byly odstraněny; ostatní zůstávají.');
-  }, [teams, drafts]);
+  }, [teams, drafts, preserveRemovedDrafts]);
   const dirty = Object.keys(drafts).length > 0;
+  const accepted = new Set(teams.filter(team => team.accepted !== false).map(team => team.id));
+  const activeDrafts = Object.entries(drafts).filter(([id]) => !preserveRemovedDrafts || accepted.has(id));
+  const removedDrafts = preserveRemovedDrafts ? Object.entries(drafts).filter(([id]) => !accepted.has(id)) : [];
   useEffect(() => { onDirty(dirty || pending); }, [dirty, pending, onDirty]);
   const current = (id: string) => [scores[id] ?? emptyScore, confirmed[id], conflicts[id]].reduce<Score>((latest, score) => score && score.revision > latest.revision ? score : latest, emptyScore);
   function change(id: string, patch: Partial<Draft>) {
@@ -43,19 +51,19 @@ export function RoundScoreForm({ eventId, snapshotId, scoringEpoch, roundId, rou
     if ('text' in patch || 'clear' in patch) setFieldErrors(old => {
       const next = { ...old }; delete next[id]; return next;
     });
-    setDrafts(old => ({ ...old, [id]: { ...(old[id] ?? { text: pointsText(current(id).halfPoints), reason: '', clear: false, base: current(id) }), ...patch } }));
+    setDrafts(old => ({ ...old, [id]: { ...(old[id] ?? { text: pointsText(current(id).halfPoints), reason: '', clear: false, base: current(id), teamName: teams.find(team => team.id === id)?.name ?? id }), ...patch } }));
   }
-  const stale = Object.entries(drafts).some(([id, draft]) => draft.base.revision !== current(id).revision);
+  const stale = activeDrafts.some(([id, draft]) => draft.base.revision !== current(id).revision);
   const warning = questionCount === undefined ? '' : `Víc bodů než otázek v kole (${questionCount}) – opravdu?`;
   const exceedsQuestions = (halfPoints: number | null | undefined) =>
     questionCount !== undefined && halfPoints != null && halfPoints > questionCount * 2;
   async function save() {
-    if (busy.current || disabled || !dirty || (stale && !retry.current)) return;
+    if (busy.current || disabled || !activeDrafts.length || (stale && !retry.current)) return;
     let request = retry.current;
     try {
       if (!request) {
         const eligible = teams.filter(team => team.accepted !== false && Object.hasOwn(drafts, team.id));
-        if (eligible.length !== Object.keys(drafts).length) throw new Error('Soupiska se změnila. Zkontrolujte rozepsané body.');
+        if (eligible.length !== activeDrafts.length) throw new Error('Soupiska se změnila. Zkontrolujte rozepsané body.');
         const changed: RoundScoreRequest['scores'] = [];
         const errors = new Map<string, string>();
         const overLimit: string[] = [];
@@ -90,7 +98,9 @@ export function RoundScoreForm({ eventId, snapshotId, scoringEpoch, roundId, rou
     try {
       const response = await (transport?.save ?? saveRoundScores)(request);
       setConfirmed(old => ({ ...old, ...Object.fromEntries(response.scores.map(score => [score.teamId, score])) }));
-      retry.current = null; setDrafts({}); setConflicts({}); setHistories({});
+      retry.current = null;
+      setDrafts(current => preserveRemovedDrafts ? Object.fromEntries(Object.entries(current).filter(([id]) => !accepted.has(id))) : {});
+      setConflicts({}); setHistories({});
       setNotice('Body kola jsou uložené. Potvrzeno serverem.');
     } catch (issue) {
       const failure = issue as { code?: string; details?: RoundScoreResponse };
@@ -132,8 +142,15 @@ export function RoundScoreForm({ eventId, snapshotId, scoringEpoch, roundId, rou
         </div>;
       })}
     </div>
+    {removedDrafts.length > 0 && <section className="referee-removed-drafts" aria-label="Rozepsané body vyřazených týmů">
+      <p role="status">Tým byl vyřazen ze soupisky. Jeho rozepsané body zůstávají k přečtení a zkopírování a nebudou se ukládat.</p>
+      {removedDrafts.map(([id, draft]) => <div key={id}>
+        <label className="form-field">Rozepsané body — {draft.teamName}<input readOnly value={draft.clear ? 'Nezadáno' : draft.text} /></label>
+        {draft.reason && <label className="form-field">Důvod opravy — {draft.teamName}<input readOnly value={draft.reason} /></label>}
+      </div>)}
+    </section>}
     {error && <p role="alert">{error}</p>}{notice && <p role="status" className="event-notice">{notice}</p>}
-    <div className="round-score-save"><p role="status">{pending ? 'Ukládám celé kolo…' : `${saved} / ${teams.filter(team => team.accepted !== false).length} týmů má uložené body`}{dirty && !pending && ' · rozepsané změny'}</p><button className="primary-button" type="submit" disabled={disabled || pending || !dirty || (stale && !retry.current)}>{pending ? 'Ukládám…' : 'Uložit body celého kola'}</button>
+    <div className="round-score-save"><p role="status">{pending ? 'Ukládám celé kolo…' : `${saved} / ${teams.filter(team => team.accepted !== false).length} týmů má uložené body`}{dirty && !pending && ' · rozepsané změny'}</p><button className="primary-button" type="submit" disabled={disabled || pending || !activeDrafts.length || (stale && !retry.current)}>{pending ? 'Ukládám…' : 'Uložit body celého kola'}</button>
       {dirty && <button type="button" className="secondary-button" disabled={pending} onClick={() => { if (!window.confirm('Zahodit rozepsané body tohoto kola?')) return; setDrafts({}); setFieldErrors({}); retry.current = null; setError(''); }}>Zahodit změny</button>}
     </div>
   </form>;
