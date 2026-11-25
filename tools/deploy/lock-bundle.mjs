@@ -25,7 +25,9 @@ import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { getApp } from 'firebase-admin/app';
 import * as functions from './lib/index.js';
+assert.equal(getApp().name, '[DEFAULT]');
 assert.equal(process.versions.node.split('.')[0], '22');
 assert.deepEqual(Object.keys(functions), [${JSON.stringify(name)}]);
 const fn = functions[${JSON.stringify(name)}];
@@ -81,6 +83,9 @@ export async function buildLockZip(sha, name = 'lockEventQuiz') {
   const domain = json('packages/quiz-domain/package.json');
   delete domain.scripts;
   closure('functions', 'lib/', entry, Object.keys(sourcePackage.dependencies));
+  // In the full index other callable modules initialize Admin. Isolated HTTP/Drive exports need it too.
+  files.set('lib/d2-admin.js', "import { getApps, initializeApp } from 'firebase-admin/app';\nif (!getApps().some(app => app.name === '[DEFAULT]')) initializeApp();\n");
+  files.set('lib/index.js', "import './d2-admin.js';\n" + entry);
   closure('packages/quiz-domain', 'vendor/quiz-domain/lib/', null, []);
   files.set('vendor/quiz-domain/package.json', JSON.stringify(domain));
   files.set('package.json', JSON.stringify(pkg));

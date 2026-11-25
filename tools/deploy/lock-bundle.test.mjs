@@ -22,6 +22,10 @@ test('verification executes and rejects a changed trigger or additional root exp
   const root = mkdtempSync(path.join(tmpdir(), 'justkviz-d2-trigger-'));
   t.after(() => { assert.equal(path.dirname(root), tmpdir()); rmSync(root, { recursive: true, force: true }); });
   mkdirSync(path.join(root, 'lib'));
+  const admin = path.join(root, 'node_modules/firebase-admin');
+  mkdirSync(admin, { recursive: true });
+  writeFileSync(path.join(admin, 'package.json'), JSON.stringify({ type: 'module', exports: { './app': './app.js' } }));
+  writeFileSync(path.join(admin, 'app.js'), "export const getApp = () => ({ name: '[DEFAULT]' });");
   writeFileSync(path.join(root, 'package.json'), '{"type":"module"}');
   for (const name of ['readQuizMedia', 'lockEventQuiz', 'processDriveMediaImport']) {
     const trigger = d2Trigger(name);
