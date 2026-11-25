@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { FirebaseError } from 'firebase/app';
 import { Timestamp } from 'firebase/firestore';
-import { accessCall, invalidatePrivateAccess } from '../apps/web/src/features/access/api';
+import { accessCall, invalidatePrivateAccess, watchPrivate } from '../apps/web/src/features/access/api';
 
 const sdk = vi.hoisted(() => ({ invoke: vi.fn(), clear: vi.fn() }));
 vi.mock('firebase/functions', () => ({ httpsCallable: () => sdk.invoke }));
@@ -48,4 +48,23 @@ it('provides operation and error code when the SDK rejects a non-Error value', a
   await expect(result).rejects.toBeInstanceOf(Error);
   await expect(result).rejects.toMatchObject({ code: 'functions/unavailable' });
   await expect(result).rejects.toThrow('createAccessInvitation');
+});
+
+
+it('keeps existing watcher invalidation silent while explicit readers receive a synchronous cleanup', async () => {
+  vi.useFakeTimers();
+  try {
+    const finishes: ((value: unknown) => void)[] = [];
+    sdk.invoke.mockImplementation(() => new Promise(resolve => { finishes.push(resolve); }));
+    const receive = vi.fn(), fail = vi.fn(), invalidated = vi.fn();
+    watchPrivate('snapshotSlides', { snapshotId: 'old' }, receive, fail);
+    watchPrivate('snapshotSlides', { snapshotId: 'new' }, receive, fail, 2000, invalidated);
+    invalidatePrivateAccess();
+    expect(invalidated).toHaveBeenCalledOnce();
+    expect(fail).not.toHaveBeenCalled();
+    for (const finish of finishes) finish({ data: ['old private response'] });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(receive).not.toHaveBeenCalled();
+    expect(sdk.invoke).toHaveBeenCalledTimes(2);
+  } finally { invalidatePrivateAccess(); vi.useRealTimers(); }
 });

@@ -33,8 +33,34 @@ export function subscribeLiveControlSlides(
   onValue: (value: readonly LiveControlSlide[]) => void,
   onError: ErrorHandler,
   snapshotId?: string,
+  sessionId?: string,
 ): Unsubscribe {
-  return watchPrivate<EditorSlide[]>(snapshotId ? 'snapshotSlides' : 'quizSlides', snapshotId ? { snapshotId } : { quizId }, slides => onValue(slides.map(item => mapLiveControlSlide(item.id, { ...item }))), onError);
+  let version: string | undefined;
+  const clear = () => { version = undefined; onValue([]); };
+  const fail = (error: Error) => { version = undefined; onError(error); };
+  const invalidated = () => fail(new Error('Přihlášení nebo oprávnění se změnilo.'));
+  const mapSlides = (slides: EditorSlide[]) => slides.map(item => mapLiveControlSlide(item.id, { ...item }));
+  const stop = snapshotId === undefined
+    ? watchPrivate<EditorSlide[]>('quizSlides', { quizId }, slides => onValue(mapSlides(slides)), fail, 2000, invalidated)
+    : watchPrivate<EditorSlide[] | { version: string; slides?: EditorSlide[] }>('snapshotSlides', () => ({
+      snapshotId, ...(sessionId === undefined ? {} : { sessionId }), ...(version === undefined ? {} : { knownVersion: version }),
+    }), result => {
+      if (Array.isArray(result)) {
+        version = undefined;
+        onValue(mapSlides(result));
+        return;
+      }
+      if (typeof result.version !== 'string' || !result.version) throw new Error('Chybí potvrzená verze obsahu kvízu.');
+      if (result.slides === undefined) {
+        if (version !== result.version) throw new Error('Aktuální obsah kvízu je potřeba znovu načíst.');
+        return;
+      }
+      if (!Array.isArray(result.slides)) throw new Error('Obsah kvízu má neplatný formát.');
+      const slides = mapSlides(result.slides);
+      version = result.version;
+      onValue(slides);
+    }, fail, 2000, invalidated);
+  return () => { stop(); clear(); };
 }
 
 export function subscribePublicLiveState(
