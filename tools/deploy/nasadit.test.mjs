@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { verifyMain, storageBucketExists, functionSourcePatch, listDeployedFunctions, functionTargets, deployFunctionPlan } from './nasadit.mjs';
+import { fastJobs, longJobs, repository } from './ci-proof.mjs';
 import { deploymentConfig, prepareFunctionCreation } from './artefakt.mjs';
 
 const head = 'a'.repeat(40);
@@ -19,6 +20,7 @@ function fixture({ branch = 'main', status = '', tracking = head, remote = head,
         ['branch --show-current', branch],
         ['status --porcelain=v1 --untracked-files=all --ignore-submodules=none', status],
         ['rev-parse HEAD', head],
+        ['rev-parse HEAD^{tree}', 'f'.repeat(40)],
         ['rev-parse refs/remotes/origin/main', tracking],
         ['ls-remote --exit-code origin refs/heads/main', remote + '\trefs/heads/main\n'],
         ['remote get-url origin', origin],
@@ -29,10 +31,15 @@ function fixture({ branch = 'main', status = '', tracking = head, remote = head,
       if (endpoint.startsWith('actions/workflows/')) {
         return { workflow_runs: [{
           id: 42, run_attempt: 2, head_sha: head, head_branch: 'main', event: 'push',
-          status: 'completed', conclusion: 'success', ...run,
+          status: 'completed', conclusion: 'success', path: '.github/workflows/ci.yml',
+          repository: { full_name: repository }, head_repository: { full_name: repository }, ...run,
         }] };
       }
-      return { jobs: [{ name: 'Quality gate', status: 'completed', conclusion: 'success', ...gate }] };
+      const jobs = [...fastJobs, ...longJobs, 'Quality gate'].map(name => ({ name, head_sha: head, run_id: 42, run_attempt: 2,
+        status: 'completed', conclusion: 'success', ...(name === 'Quality gate' && {
+          steps: [{ name: 'Full main suite', status: 'completed', conclusion: 'success' }], ...gate }),
+      }));
+      return { jobs, total_count: jobs.length };
     },
   };
 }
@@ -83,6 +90,11 @@ test('ověřuje přesný push na main a Quality gate z aktuálního pokusu', () 
     'actions/workflows/ci.yml/runs?branch=main&event=push&head_sha=' + head + '&per_page=1',
     'actions/runs/42/attempts/2/jobs?per_page=100',
   ]);
+});
+
+test('NASADIT odmítne zelený main, pokud Quality gate nedoloží vykonání plné sady', () => {
+  const mock = fixture({ gate: { steps: [] } });
+  assert.throws(() => verifyMain(mock.git, mock.gh), /nelze doložit/u);
 });
 
 test('povolí jen určený Hosting a výslovně přidané Rules', () => {
