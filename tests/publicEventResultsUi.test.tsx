@@ -5,7 +5,7 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { PublicEventPage } from '../apps/web/src/routes/events/PublicEventPage';
 const api = vi.hoisted(() => ({ event:vi.fn(), results:vi.fn() }));
-vi.mock('../apps/web/src/features/events/eventRepository', () => ({ getPublicEvent:api.event }));
+vi.mock('../apps/web/src/features/events/publicEventRead', () => ({ getPublicEvent:api.event }));
 vi.mock('../apps/web/src/features/events/publicEventResults', () => ({ getPublicEventResults:api.results }));
 vi.mock('../apps/web/src/features/events/registrationApi', () => ({ newRegistrationRetryKey:() => 'synthetic-retry', createEventRegistration:vi.fn(), registrationActionError:() => 'error' }));
 const result = { eventId:'event', title:'Syntetická dokončená akce', startsAt:new Date('2030-01-01'), timeZone:'Europe/Prague', venueName:'Sál', publicLocation:'Město', lifecycleStatus:'completed', rows:[{ rank:1, teamName:'Alfa', halfPoints:21 }, { rank:1, teamName:'Beta', halfPoints:21 }, { rank:2, teamName:'Gama', halfPoints:18 }] };

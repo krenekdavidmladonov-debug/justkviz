@@ -1,7 +1,5 @@
 import {
   collection,
-  doc,
-  getDocFromServer,
   getDocsFromServer,
   onSnapshot,
   where,
@@ -51,16 +49,6 @@ export function subscribePublishedEvents(onChange: (events: readonly PublicEvent
     });
     onChange(events);
   }, () => onChange(null));
-}
-
-export async function getPublicEvent(eventId: string): Promise<PublicEventRecord | null> {
-  try {
-    const snapshot = await getDocFromServer(doc(getFirebaseFirestore(), 'publicEvents', eventId));
-    return snapshot.exists() && snapshot.data().registrationPublished === true ? mapPublicEvent(snapshot.id, snapshot.data()) : null;
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'permission-denied') return null;
-    throw error;
-  }
 }
 
 export async function listEventRegistrations(eventId: string): Promise<readonly RegistrationRecord[]> {

@@ -13,6 +13,14 @@ vi.mock('react-router-dom', async original => ({
   ...await original<typeof import('react-router-dom')>(),
   createBrowserRouter: (routes: RouteObject[]) => { routing.routes = routes; return {}; },
 }));
+const session = vi.hoisted(() => ({ mounted: vi.fn(), unmounted: vi.fn() }));
+vi.mock('../apps/web/src/app/SessionLayout', async () => {
+  const { Outlet } = await import('react-router-dom');
+  return { SessionLayout: function SessionLayout() {
+    React.useEffect(() => { session.mounted(); return () => { session.unmounted(); }; }, []);
+    return <Outlet />;
+  } };
+});
 vi.mock('../apps/web/src/auth/AuthProvider', () => ({ useAuth: () => ({
   currentUser: access.signedIn ? { uid: 'synthetic-staff' } : null, role: access.staff ? 'admin' : null,
   loading: false, can: (permission: string) => permission !== 'users.manage' || access.manageUsers,
@@ -48,16 +56,10 @@ function copyRoutes(routes: RouteObject[]): RouteObject[] {
   return routes.map(route => route.children ? { ...route, children: copyRoutes(route.children) } : { ...route });
 }
 function routeAt(routes: RouteObject[], path: string): RouteObject {
-  for (const route of routes) {
+  const pending = [...routes];
+  for (const route of pending) {
     if (route.path === path) return route;
-    if (route.children) {
-      const child = route.children.find(item => item.path === path);
-      if (child) return child;
-      for (const nested of route.children) {
-        const match = nested.children?.find(item => item.path === path);
-        if (match) return match;
-      }
-    }
+    if (route.children) pending.push(...route.children);
   }
   throw new Error('Missing tested route ' + path);
 }
@@ -65,7 +67,16 @@ async function render(initial: string, configure?: (routes: RouteObject[]) => vo
   const routes = copyRoutes(routing.routes);
   configure?.(routes);
   router = createMemoryRouter(routes, { initialEntries: [initial] });
-  await act(async () => root.render(<RouterProvider router={router} />));
+  await act(async () => {
+    root.render(<RouterProvider router={router} />);
+    if (!configure && !router.state.initialized) {
+      await new Promise<void>(resolve => {
+        const unsubscribe = router.subscribe(state => {
+          if (state.initialized) { unsubscribe(); resolve(); }
+        });
+      });
+    }
+  });
 }
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
@@ -75,10 +86,10 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); router?.dispose(); host.remove(); vi.unstubAllGlobals(); });
 
-it('does not import account, users or settings modules for the public events page', async () => {
+it('does not import referee, account, users or settings modules for the public events page', async () => {
   await render('/');
   expect(host.textContent).toContain('Veřejné akce');
-  expect(loaded).toEqual({ referee: 1, account: 0, users: 0, settings: 0 });
+  expect(loaded).toEqual({ referee: 0, account: 0, users: 0, settings: 0 });
 });
 
 it('keeps users.manage before mounting the users page while allowing staff settings', async () => {
@@ -92,6 +103,15 @@ it('keeps users.manage before mounting the users page while allowing staff setti
   await act(async () => router.navigate('/admin/users'));
   expect(host.textContent).toContain('Přístupy spolupracovníků');
   expect(mounted.users).toHaveBeenCalled();
+});
+
+it('keeps the same session when leaving sign-in for the admin dashboard', async () => {
+  session.mounted.mockClear(); session.unmounted.mockClear();
+  await render('/admin/login');
+  await act(async () => router.navigate('/admin'));
+  expect(host.textContent).toContain('Administrace');
+  expect(session.mounted).toHaveBeenCalledTimes(1);
+  expect(session.unmounted).not.toHaveBeenCalled();
 });
 
 it.each(['signedIn', 'staff'] as const)('keeps RequireStaff checking %s for settings deep links', async field => {

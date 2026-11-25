@@ -3,7 +3,7 @@ import { Link, useLocation, useParams } from 'react-router-dom';
 
 import { cancelManagedRegistration, getManagedRegistration, registrationActionError, updateManagedRegistration, type RegistrationFormValues } from '../../features/events/registrationApi';
 import type { RegistrationMutationResponse, PublicEventRecord } from '../../features/events/types';
-import { getPublicEvent } from '../../features/events/eventRepository';
+import { getPublicEvent } from '../../features/events/publicEventRead';
 import { RegistrationForm, type RegistrationDraftValues } from '../../features/registrations/RegistrationForm';
 
 const LOAD_ERRORS = {

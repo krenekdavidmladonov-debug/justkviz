@@ -12,7 +12,7 @@ export default defineConfig({
     name: 'registration-input-synthetic-fixture',
     enforce: 'pre',
     resolveId(source) {
-      if (source.endsWith('events/registrationApi') || source.endsWith('events/eventRepository')) return mocks;
+      if (source.endsWith('events/registrationApi') || source.endsWith('events/publicEventRead')) return mocks;
     },
     configureServer(server) {
       server.middlewares.use((req, _res, next) => {
