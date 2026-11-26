@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { d2Names, exceptions } from './d2-functions.mjs';
+import { verifyFunctionRelease } from './release-verification.mjs';
 import { LIMIT } from './lock-bundle.mjs';
 
 export const REGION_PATH = 'projects/filmovy-kviz-v2-staging/locations/europe-west1';
@@ -40,14 +41,15 @@ export function baseline(fn, name) {
 }
 
 // No create, IAM, Hosting, Rules or general deployment callback is available here.
-export async function publishD2({ name, head, bytes, verifyCI, client, confirm, upload, wait, savePrevious, expected, log = console.log }) {
+export async function publishD2({ name, head, bytes, verifyCI, client, confirm, upload, wait, readRevision, savePrevious, expected, log = console.log }) {
   const target = resource(name);
   assert(!exceptions[name], exceptions[name]);
   const evidence = { sha: head, digest: createHash('sha256').update(bytes).digest('hex'), size: bytes.length };
   assert.match(head, /^[a-f0-9]{40}$/u);
   assert(bytes.length > 0 && bytes.length < LIMIT);
   assert.deepEqual(verifyCI(), evidence, 'Místní ZIP neodpovídá ověřenému Linuxovému sestavení.');
-  const before = baseline((await client.get(target)).body, name);
+  const previous = (await client.get(target)).body;
+  const before = baseline(previous, name);
   log('D2 pouze ' + target + '\nCommit ' + head + ', ZIP ' + bytes.length + ' B, SHA-256 ' + evidence.digest);
   log('Předchozí revize ' + before.revision + ', zdroj ' + JSON.stringify(before.old) + ', updateTime ' + before.updateTime);
   if (expected) assert.deepEqual(before, expected, 'Cíl D2 se od výběru změnil.');
@@ -62,13 +64,11 @@ export async function publishD2({ name, head, bytes, verifyCI, client, confirm, 
   await unchanged();
   const { body: op } = await client.patch(target, { name: target, buildConfig: { source: { storageSource: source } } },
     { queryParams: { updateMask: SOURCE_MASK } });
-  const completed = baseline(await wait(op), name);
+  const result = await wait(op);
+  baseline(result, name);
   const after = (await client.get(target)).body;
   const deployed = baseline(after, name);
-  assert.deepEqual(deployed, completed, 'Stav funkce neodpovídá dokončené operaci D2.');
-  assert(deployed.updateTime !== before.updateTime && deployed.revision !== before.revision, 'Nelze potvrdit novou revizi.');
-  // GCF can copy the upload into a managed source bucket, giving it a new object name.
-  assert.notDeepEqual(deployed.old, before.old, 'Nelze potvrdit změnu zdroje.');
+  await verifyFunctionRelease(target, { previous, result, startedAt: op.metadata?.createTime }, after, readRevision);
   log('D2 dokončeno: ' + deployed.revision + ', zdroj ' + JSON.stringify(deployed.old));
   return deployed;
 }

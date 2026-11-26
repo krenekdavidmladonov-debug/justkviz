@@ -38,7 +38,7 @@ export function releaseHistory(directory) {
   };
 }
 
-export async function releaseSelection({ choice, root, head, client, history, build, proof, confirm, upload, wait,
+export async function releaseSelection({ choice, root, head, client, history, build, proof, confirm, upload, wait, readRevision,
   log = console.log, analyze = analyzeFunctionImpact }) {
   assert(choice === 'vše' || d2Names.includes(choice), 'Neplatný výběr D2.');
   if (exceptions[choice]) throw new Error(exceptions[choice]);
@@ -75,7 +75,7 @@ export async function releaseSelection({ choice, root, head, client, history, bu
   }
   for (const [name, { bytes, evidence }] of artifacts) {
     const state = await publishD2({ name, head, bytes, expected: states.get(name), client, verifyCI: () => proof(name),
-      confirm, upload, wait, log, savePrevious: (...args) => log('Doklad pro návrat: ' + history.previous(...args)) });
+      confirm, upload, wait, readRevision, log, savePrevious: (...args) => log('Doklad pro návrat: ' + history.previous(...args)) });
     history.complete(name, state, evidence);
   }
   for (const name of unchanged) assert.deepEqual(baseline((await client.get(resource(name))).body, name), states.get(name),

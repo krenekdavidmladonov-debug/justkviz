@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
-import { verifyMain, storageBucketExists, functionSourcePatch, listDeployedFunctions, functionTargets, deployFunctionPlan, chooseFunctionPlan, describeFunctionPlan, finishFunctionRelease, menuAction } from './nasadit.mjs';
+import { createdFunctionOperations } from './release-verification.mjs';
+import { finishOption2, verifyMain, storageBucketExists, functionSourcePatch, listDeployedFunctions, functionTargets, deployFunctionPlan, chooseFunctionPlan, describeFunctionPlan, finishFunctionRelease, menuAction } from './nasadit.mjs';
 import { fastJobs, longJobs, repository } from './ci-proof.mjs';
 import { deploymentConfig, prepareFunctionCreation } from './artefakt.mjs';
 
@@ -406,4 +407,76 @@ test('attest completed updates only after independently checking changed and unt
   finishFunctionRelease(ordinary, new Map([['one', undefined]]), after, head, assert.fail, text => warnings.push(text));
   assert.equal(warnings.length, 2);
   assert.ok(warnings.every(text => text.includes('plné nasazení')));
+});
+
+const startedAt = '2026-11-26T08:00:00.000000001Z';
+function webRelease(create = false) {
+  const name = 'health', target = functionLocation + name, service = target.replace('/functions/', '/services/');
+  const result = activeFunction(name, { updateTime: startedAt,
+    serviceConfig: { service, revision: 'health-00002', serviceAccountEmail: 'runtime@example.test' },
+    buildConfig: { runtime: 'nodejs22', entryPoint: name, build: 'build-2',
+      sourceProvenance: { resolvedStorageSource: { bucket: 'bucket', object: 'health.zip', generation: '2' } } } });
+  const previous = structuredClone(result);
+  previous.serviceConfig.revision = 'health-00001';
+  previous.buildConfig.sourceProvenance.resolvedStorageSource.generation = '1';
+  const live = { ...structuredClone(result), updateTime: '2026-11-26T08:01:00Z' };
+  const steps = [];
+  const plan = { missing: create ? [name] : [], existing: create ? [] : [{ entryPoint: name }], special: [] };
+  const options = { plan, inventory: plan, head, entryPoints: [name],
+    operations: new Map([[name, { result, previous: create ? undefined : previous, startedAt }]]),
+    functions: { get: () => ({ body: { functions: [live] } }) },
+    readRevision: path => {
+      assert.equal(path, service + '/revisions/health-00002');
+      steps.push('READY');
+      return { name: path, conditions: [{ type: 'Ready', state: 'CONDITION_SUCCEEDED' }] };
+    },
+    record: () => steps.push('origin'), publishHosting: () => steps.push('hosting') };
+  return { options, live, result, previous, steps };
+}
+
+test('option 2 publishes Hosting after verifying an updated or newly created function with a later updateTime', async () => {
+  for (const create of [false, true]) {
+    const f = webRelease(create);
+    await finishOption2(f.options);
+    assert.deepEqual(f.steps, ['READY', 'origin', 'hosting']);
+  }
+});
+
+test('option 2 stops before Hosting and provenance on a different release or incomplete evidence', async () => {
+  for (const change of [
+    f => { f.live.state = 'FAILED'; },
+    f => { f.live.serviceConfig.revision = 'health-00003'; },
+    f => { f.live.serviceConfig.service += 'x'; },
+    f => { f.live.serviceConfig.serviceAccountEmail = 'other@example.test'; },
+    f => { f.live.buildConfig.build = 'other'; },
+    f => { f.live.buildConfig.runtime = 'nodejs20'; },
+    f => { f.live.buildConfig.entryPoint = 'other'; },
+    ...['bucket', 'object', 'generation'].map(key => f => { f.live.buildConfig.sourceProvenance.resolvedStorageSource[key] = '3'; }),
+    f => { f.live.updateTime = '2026-11-26T08:00:00Z'; },
+    f => { f.result.updateTime = '2026-11-26T08:00:00Z'; },
+    f => { f.options.readRevision = name => ({ name, conditions: [{ type: 'Ready', state: 'CONDITION_FAILED' }] }); },
+    f => { f.options.readRevision = () => ({ name: 'another-revision', conditions: [{ type: 'Ready', state: 'CONDITION_SUCCEEDED' }] }); },
+    f => { f.previous.serviceConfig.revision = f.result.serviceConfig.revision; },
+    f => { f.options.operations.clear(); },
+  ]) {
+    const f = webRelease();
+    change(f);
+    await assert.rejects(finishOption2(f.options));
+    assert(!f.steps.includes('hosting') && !f.steps.includes('origin'));
+  }
+});
+
+test('CLI CREATE requires exactly one completed operation for each target within the release window', async () => {
+  const f = webRelease(true), target = f.result.name, location = target.split('/functions/')[0];
+  const op = { done: true, metadata: { target, verb: 'create', createTime: startedAt }, response: f.result };
+  const lookup = ops => createdFunctionOperations({ get: (_path, { queryParams }) => ({
+    body: queryParams.pageToken ? { operations: ops } : { operations: [
+      { ...op, metadata: { ...op.metadata, createTime: '2026-11-25T00:00:00Z' } },
+      { ...op, metadata: { ...op.metadata, verb: 'update' } }], nextPageToken: '2' }
+  }) }, location, ['health'], startedAt);
+  const records = await lookup([op]);
+  assert.deepEqual(records.get(target), { startedAt, result: f.result });
+  for (const ops of [[], [op, op], [{ ...op, done: false }], [{ ...op, error: {} }], [{ ...op, response: undefined }]]) {
+    await assert.rejects(lookup(ops));
+  }
 });

@@ -14,9 +14,9 @@ function fixture() {
   const saved = [], patched = [], completed = [], uploaded = [], phrases = [];
   const states = new Map(available.map(name => [resource(name), {
     name: resource(name), environment: 'GEN_2', state: 'ACTIVE', updateTime: '2026-11-01T01:00:00Z',
-    buildConfig: { entryPoint: name, runtime: 'nodejs22', environmentVariables: { GOOGLE_NODE_RUN_SCRIPTS: 'gcp-build' },
+    buildConfig: { build: 'build-reference', entryPoint: name, runtime: 'nodejs22', environmentVariables: { GOOGLE_NODE_RUN_SCRIPTS: 'gcp-build' },
       source: { storageSource: { bucket: 'source', object: name + '.zip', generation: '1' } } },
-    serviceConfig: { revision: name.toLowerCase() + '-00001', service: REGION_PATH + '/services/' + name.toLowerCase() },
+    serviceConfig: { serviceAccountEmail: 'runtime@example.test', revision: name.toLowerCase() + '-00001', service: REGION_PATH + '/services/' + name.toLowerCase() },
   }]));
   const client = {
     get: target => ({ body: structuredClone(states.get(target)) }),
@@ -31,7 +31,7 @@ function fixture() {
       fn.updateTime = '2026-11-02T02:00:00Z';
       fn.serviceConfig.revision = name.toLowerCase() + '-00002';
       patched.push(name);
-      return { body: { target } };
+      return { body: { target, metadata: { createTime: '2026-11-02T01:59:00Z' } } };
     },
   };
   const options = { choice: 'vše', head, root: '.', client, log() {}, history: {
@@ -42,7 +42,8 @@ function fixture() {
     proof: name => ({ sha: head, size: name.length, digest: createHash('sha256').update(name).digest('hex') }),
     confirm: phrase => { phrases.push(phrase); return phrase; },
     upload: (_, bytes) => { const name = bytes.toString(); uploaded.push(name); return { bucket: 'source', object: name + '.zip', generation: '2' }; },
-    wait: op => states.get(op.target) };
+    readRevision: name => ({ name, conditions: [{ type: 'Ready', state: 'CONDITION_SUCCEEDED' }] }),
+    wait: op => ({ ...states.get(op.target), updateTime: op.metadata.createTime }) };
   return { options, patched, completed, uploaded, phrases, states };
 }
 
