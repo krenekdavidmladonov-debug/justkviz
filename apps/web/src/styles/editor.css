@@ -89,3 +89,9 @@
 .outline-drop-end { height:22px; box-sizing:border-box; margin:0 8px; padding:2px 4px; border-color:transparent; }
 .editor-outline.is-dragging .outline-drop-end { border-color:var(--color-border-strong); }
 .editor-outline.is-dragging .outline-drop-end.drop-active { border-color:var(--color-focus); }
+
+.editor-more-actions { position:relative; }
+.editor-more-actions > summary { display:grid; place-items:center; min-width:44px; min-height:44px; border:1px solid var(--color-border); border-radius:8px; list-style:none; cursor:pointer; font-weight:700; }
+.editor-more-actions > summary::-webkit-details-marker { display:none; }
+.editor-more-panel { position:absolute; top:100%; right:0; z-index:5; width:max-content; max-width:calc(100vw - 32px); display:grid; gap:8px; padding:12px; border:1px solid var(--color-border); border-radius:8px; background:var(--color-surface); box-shadow:0 6px 20px #0003; }
+.round-editor-save .editor-more-panel .technical-details { display:block; }

@@ -1,4 +1,5 @@
 /* global window, document */
+import { seedEmptyQuiz } from '../e2e/legacy-quiz-fixture.mjs';
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -19,7 +20,7 @@ test('STRESS browser evening: four clients, ten tied teams, reveal, pages, recon
   await setup(context);page.on('pageerror',e=>errors.push(e.message));
   let fixture={};const call=async(name,data)=>{network.push(name);return identity.call(name,data);};
   try {
-    const {quizId}=await call('createQuiz',{title,requestId:randomUUID()});const quiz=async()=>(await identity.db.doc('quizzes/'+quizId).get()).data();
+    const {quizId}=await seedEmptyQuiz(identity.db, title);const quiz=async()=>(await identity.db.doc('quizzes/'+quizId).get()).data();
     const slides=async()=>(await identity.db.collection('quizzes/'+quizId+'/slides').orderBy('position').get()).docs.map(d=>({id:d.id,...d.data()}));
     await call('updateQuizMetadata',{quizId,expectedRevision:(await quiz()).revision,quiz:{title,description:'',printTemplate:{layout:'compact',title:'Frozen paper title stress',instructions:'Synthetic print instructions',footer:'Frozen footer'}}});
     const add=async(kind,extra={},position)=>call('createQuizSlide',{quizId,expectedRevision:(await quiz()).revision,position:position??(await slides()).length+1,...(['intro','end'].includes(kind)?{scope:'quiz'}:{}),slide:mediaSlide(kind,{title:'Synthetic '+kind,text:'Synthetic '+kind+' prompt',...extra})});

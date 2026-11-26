@@ -1,3 +1,4 @@
+import { seedEmptyQuiz } from './legacy-quiz-fixture.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID, createHash } from 'node:crypto';
 import { initializeApp, deleteApp } from 'firebase/app';
@@ -28,7 +29,7 @@ const fingerprint = async ref => {
   await walk(ref); return createHash('sha256').update(JSON.stringify(entries)).digest('hex');
 };
 try {
-  const { quizId } = await owner.call('createQuiz', { title: prefix + 'shared library', requestId: randomUUID() }); roots.add('quizzes/' + quizId);
+  const { quizId } = await seedEmptyQuiz(db, prefix + 'shared library'); roots.add('quizzes/' + quizId);
   let revision = 0;
   for (const kind of ['intro', 'round', 'free', 'recap', 'end']) { const next = await owner.call('createQuizSlide', { quizId, expectedRevision: revision, position: revision + 1, slide: mediaSlide(kind, { title: kind, text: kind === 'free' ? 'QA prompt' : '', correctAnswer: kind === 'free' ? 'QA_PRIVATE_ANSWER' : '', ...(kind === 'free' ? { answerMode: 'open', authoringStatus: 'ready' } : {}) }) }); revision = next.revision; }
   const lock = async id => { const r = await owner.call('lockEventQuiz', { eventId: id, expectedRevision: (await data(id)).revision, quizId, expectedQuizRevision: revision, acknowledgeWarnings: true }); roots.add('quizSnapshots/' + r.snapshotId); return r.snapshotId; };

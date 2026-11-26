@@ -28,7 +28,7 @@ async function login(page: Page, baseURL: string | undefined): Promise<void> {
 }
 
 async function discardBySelectingRoot(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Zahodit změny…' }).click();
+  await page.getByLabel('Další akce kvízu',{exact:true}).click();await page.getByRole('button', { name: 'Zahodit změny…' }).click();
   const dialog = page.getByRole('dialog', { name: 'Máte neuložené změny.' });
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: 'Pokračovat bez uložení' }).click();

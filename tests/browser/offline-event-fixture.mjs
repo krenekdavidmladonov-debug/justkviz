@@ -1,3 +1,4 @@
+import { seedEmptyQuiz } from '../e2e/legacy-quiz-fixture.mjs';
 import assert from 'node:assert/strict';
 import { createHash, createPublicKey, randomUUID, verify } from 'node:crypto';
 import { createServer, request as httpRequest } from 'node:http';
@@ -53,7 +54,7 @@ export async function offlineEventFixture({ assets = [], imageOnly = false, lock
     await identity.dispose();
   }
   try {
-    ({ quizId } = await call('createQuiz', { title: 'Syntetický úplný offline kvíz', requestId: randomUUID() }));
+    ({ quizId } = await seedEmptyQuiz(identity.db, 'Syntetický úplný offline kvíz'));
     const media = [];
     for (const [index, asset] of assets.entries()) {
       // Synthetic trusted-worker output only. Real MP4 bytes use the existing owned MP4 boundary;

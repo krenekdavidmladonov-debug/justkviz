@@ -79,25 +79,25 @@ it('isolates the editor during a failed quiz switch and writes only to the retri
   vi.mocked(createQuizRound).mockRejectedValue(new Error('Synthetic write stopped'));
   const router = await render('');
   expect(host.querySelector('.round-editor-title strong')?.textContent).toBe(quiz.title);
-  expect(host.querySelector('.editor-get-started button')).not.toBeNull();
+  expect(host.querySelector('.add-round-button')).not.toBeNull();
 
   await act(async () => router.navigate('/admin/quizzes/other/edit'));
   expect(router.state.location.pathname).toBe('/admin/quizzes/other/edit');
   expect(getEditorQuiz).toHaveBeenLastCalledWith('other');
   expect(host.textContent).toContain('Načítám editor kvízu');
   expect(host.textContent).not.toContain(quiz.title);
-  expect(host.querySelector('.editor-get-started button')).toBeNull();
+  expect(host.querySelector('.add-round-button')).toBeNull();
 
   await act(async () => rejectOther(Object.assign(new Error('Synthetic quiz denied'), { code: 'functions/permission-denied' })));
   expect(host.querySelector('[role="alert"]')?.textContent).toContain('nemáte oprávnění');
   expect(host.textContent).not.toContain(quiz.title);
-  expect(host.querySelector('.editor-get-started button')).toBeNull();
+  expect(host.querySelector('.add-round-button')).toBeNull();
   expect(createQuizRound).not.toHaveBeenCalled();
 
   await act(async () => host.querySelector<HTMLButtonElement>('[role="alert"] button')!.click());
   expect(host.querySelector('.round-editor-title strong')?.textContent).toBe(otherQuiz.title);
   expect(getEditorQuiz).toHaveBeenLastCalledWith('other');
-  await act(async () => host.querySelector<HTMLButtonElement>('.editor-get-started button')!.click());
+  await act(async () => host.querySelector<HTMLButtonElement>('.add-round-button')!.click());
   expect(createQuizRound).toHaveBeenCalledExactlyOnceWith('other', 8, '2. kolo');
 });
 
@@ -184,11 +184,14 @@ it('visiting a missing system screen does not add its pristine local draft to au
   expect(vi.mocked(runQuizPreflight).mock.lastCall?.[1]).toEqual({ source: 'SAVED_QUIZ', hasUnsavedChanges: false });
 });
 
-it('shows question and round trash controls without opening an extra menu and confirms the actual question', async () => {
+it('keeps question and round trash controls inside item menus and confirms the actual question', async () => {
   await render();
-  const remove = host.querySelector<HTMLButtonElement>('[data-question-id="q1"] .outline-delete-button')!;
-  expect(remove.getAttribute('aria-label')).toContain('Zadání q1'); expect(remove.closest('details')).toBeNull();
-  expect(host.querySelector('.outline-round-header .outline-delete-button')?.getAttribute('aria-label')).toBe('Smazat kolo Filmy');
+  const remove = host.querySelector<HTMLButtonElement>('[data-question-id="q1"] .outline-item-actions .editor-delete-button')!;
+  expect(remove.getAttribute('aria-label')).toContain('Zadání q1'); const menu = remove.closest('details')!;
+  expect(menu.open).toBe(false);
+  await act(async () => menu.querySelector('summary')!.click());
+  expect(menu.open).toBe(true);
+  expect(host.querySelector('.outline-round-header .outline-item-actions .editor-delete-button')?.getAttribute('aria-label')).toBe('Smazat kolo Filmy');
   expect(host.querySelector('.editor-selection-actions button')?.textContent).toBe('Smazat otázku…');
   remove.focus(); await act(async () => remove.click());
   expect(host.querySelector('dialog')?.textContent).toContain('Zadání q1'); expect(host.querySelector('dialog')?.textContent).toContain('Kolo: Filmy');
@@ -202,7 +205,7 @@ it('deletes once with the rendered revision, blocks cancellation while pending, 
   let resolve!: (response: { quizId: string; revision: number; slideCount: number; questionCount: number; roundCount: number }) => void;
   vi.mocked(deleteQuizSlide).mockImplementation(() => new Promise(done => { resolve = done; }));
   vi.mocked(getEditorQuiz).mockResolvedValueOnce(quiz).mockResolvedValue({ ...quiz, revision: 2, slideCount: 1, questionCount: 1, slides: [{ ...question('q2', 1) }] });
-  await render(); await act(async () => host.querySelector<HTMLButtonElement>('[data-question-id="q1"] .outline-delete-button')!.click());
+  await render(); await act(async () => host.querySelector<HTMLButtonElement>('[data-question-id="q1"] .outline-item-actions .editor-delete-button')!.click());
   const confirm = host.querySelector<HTMLButtonElement>('dialog .danger-button')!;
   await act(async () => { confirm.click(); confirm.click(); });
   expect(deleteQuizSlide).toHaveBeenCalledExactlyOnceWith('quiz', 1, 'q1'); expect(confirm.disabled).toBe(true);
@@ -227,7 +230,7 @@ it('names the round before deletion and preserves the existing move-questions op
   const q3 = { ...question('q3', 3), roundId: 'r2', roundTitle: 'Seriály' };
   vi.mocked(getEditorQuiz).mockResolvedValue({ ...quiz, slideCount: 3, questionCount: 3, roundCount: 2, slides: [...quiz.slides, q3] });
   vi.mocked(removeQuizRound).mockRejectedValue(new Error('stale'));
-  await render(); await act(async () => host.querySelector<HTMLButtonElement>('[data-round-id="r1"] .outline-round-header .outline-delete-button')!.click());
+  await render(); await act(async () => host.querySelector<HTMLButtonElement>('[data-round-id="r1"] .outline-round-header .outline-item-actions .editor-delete-button')!.click());
   expect(host.querySelector('dialog h2')?.textContent).toBe('Smazat kolo „Filmy“?');
   expect(host.querySelector('dialog')?.textContent).toContain('Smazat kolo včetně 2 otázek');
   await act(async () => [...host.querySelectorAll<HTMLButtonElement>('dialog button')].find(button => button.textContent === 'Přesunout otázky a smazat kolo')!.click());
@@ -237,7 +240,7 @@ it('names the round before deletion and preserves the existing move-questions op
 
 it('uses the existing round deletion operation and retains the modal after failure', async () => {
   vi.mocked(removeQuizRound).mockRejectedValue(new Error('offline'));
-  await render(); await act(async () => host.querySelector<HTMLButtonElement>('.outline-round-header .outline-delete-button')!.click());
+  await render(); await act(async () => host.querySelector<HTMLButtonElement>('.outline-round-header .outline-item-actions .editor-delete-button')!.click());
   await act(async () => host.querySelector<HTMLButtonElement>('dialog .danger-button')!.click());
   expect(removeQuizRound).toHaveBeenCalledExactlyOnceWith('quiz', 1, 'r1', 'delete');
   expect(host.querySelector('dialog [role="alert"]')?.textContent).toContain('nepodařilo uložit');
@@ -245,9 +248,9 @@ it('uses the existing round deletion operation and retains the modal after failu
 
 it('disables deletion without permission and while edits remain unsaved', async () => {
   access.denied = ['quiz.delete']; await render();
-  expect([...host.querySelectorAll<HTMLButtonElement>('.outline-delete-button, .editor-selection-actions button')].every(button => button.disabled)).toBe(true);
+  expect([...host.querySelectorAll<HTMLButtonElement>('.outline-item-actions .editor-delete-button, .editor-selection-actions button')].every(button => button.disabled)).toBe(true);
   access.denied = []; await render(); await setText('prompt', 'Rozepsané zadání');
-  expect([...host.querySelectorAll<HTMLButtonElement>('.outline-delete-button, .editor-selection-actions button')].every(button => button.disabled)).toBe(true);
+  expect([...host.querySelectorAll<HTMLButtonElement>('.outline-item-actions .editor-delete-button, .editor-selection-actions button')].every(button => button.disabled)).toBe(true);
   expect(deleteQuizSlide).not.toHaveBeenCalled(); expect(removeQuizRound).not.toHaveBeenCalled();
 });
 
@@ -468,7 +471,7 @@ it('debounces edits, hides stale results and checks only the newest complete wor
   expect(host.textContent).toContain('Před hraním uložte rozepsané změny');
   expect(host.textContent).not.toContain('Vyžaduje opravu');
   expect(host.textContent).not.toContain('Chybí zadání otázky');
-  const practice = [...host.querySelectorAll('button')].find(button => button.textContent === 'Soukromá zkouška');
+  const practice = [...host.querySelectorAll('button')].find(button => button.textContent === 'Zkouška');
   expect(practice?.disabled).toBe(true);
 });
 

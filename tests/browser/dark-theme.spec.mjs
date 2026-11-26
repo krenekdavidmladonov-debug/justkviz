@@ -44,7 +44,7 @@ test('real editor controls, modal focus, media and light content remain separate
     await page.goto('/admin/login');await page.getByLabel('E-mail').fill(identity.email);await page.getByLabel('Heslo').fill(identity.password);await page.getByRole('button',{name:'Přihlásit se'}).click();await expect(page).toHaveURL(/\/admin$/);
     await page.goto('/admin/quizzes');await audit(page,'library-empty');await page.getByRole('link',{name:'+ Nový kvíz',exact:true}).first().click();await audit(page,'create-quiz');
     await page.getByLabel('Název kvízu').fill('QA-DarkMode — světlý obsah');await page.getByRole('button',{name:'Vytvořit',exact:true}).click();await expect(page).toHaveURL(/\/edit$/);quizId=page.url().split('/').at(-2);
-    await page.getByRole('button',{name:'+ Přidat kolo',exact:true}).click();await page.getByLabel('Název kola *').fill('QA první kolo');await save(page);
+    await page.locator('.outline-round-select').click();await page.getByLabel('Název kola *').fill('QA první kolo');await save(page);
     await page.locator('.outline-round').first().locator('.outline-insert').last().click();await audit(page,'question-type-menu');await page.getByRole('dialog',{name:/Přidat do osnovy/}).getByRole('button',{name:'Výběr z možností (ABCD)',exact:true}).click();
     await page.getByLabel('Otázka *',{exact:true}).fill('QA kontrast odpovědí');for(let i=0;i<4;i++)await page.getByLabel('Možnost '+String.fromCharCode(65+i),{exact:true}).fill('QA možnost '+(i+1));await page.getByLabel('Označit možnost B jako správnou').check();await save(page);
     expect(await page.getByLabel('Označit možnost B jako správnou').isChecked()).toBe(true);
@@ -67,7 +67,7 @@ test('real editor controls, modal focus, media and light content remain separate
     expect(changedContentPixels).toBe(0);
     await override.evaluate(el=>el.remove());
     expect(await slide.locator('.slide-background img').evaluate(el=>getComputedStyle(el).filter)).toBe('none');
-    await page.getByLabel('Otázka *',{exact:true}).fill('QA neuložená změna');await page.getByRole('button',{name:'Zahodit změny…',exact:true}).click();
+    await page.getByLabel('Otázka *',{exact:true}).fill('QA neuložená změna');await page.getByLabel('Další akce kvízu',{exact:true}).click();await page.getByRole('button',{name:'Zahodit změny…',exact:true}).click();
     const dialog=page.getByRole('dialog',{name:'Máte neuložené změny.'});await expect(dialog).toBeVisible();await expect(dialog.getByRole('button',{name:'Zrušit',exact:true})).toBeFocused();await audit(page,'unsaved-dialog');
     expect(await dialog.evaluate(el=>el.matches(':modal'))).toBe(true);
     const tabOrder=[];

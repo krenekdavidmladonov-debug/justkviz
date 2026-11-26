@@ -1,3 +1,4 @@
+import { seedEmptyQuiz } from './legacy-quiz-fixture.mjs';
 import { seedEmulatorMembership } from '../../functions/lib/dev/seed-membership.js';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
@@ -33,7 +34,7 @@ export async function mediaFixture() {
   }
   const admin=await client(f.loginEmail,f.loginPassword), anonymous=await client();
   async function roleClient(role) { const email='media-'+randomUUID()+'@example.test',password=randomUUID();const user=await authAdmin.createUser({email,password});users.push(user.uid);await authAdmin.setCustomUserClaims(user.uid,{role});await seedEmulatorMembership(user.uid, role);return client(email,password); }
-  const {quizId}=await admin.call('createQuiz',{title:'Syntetická vlastní média',requestId:'media-'+randomUUID()});
+  const {quizId}=await seedEmptyQuiz(f.db, 'Syntetická vlastní média', { uid: admin.auth.currentUser.uid });
   const quizRef=f.db.collection('quizzes').doc(quizId);
   const ids={}; let revision=0;
   for(const kind of ['intro','round','image','audio','recap','end']) {const result=await admin.call('createQuizSlide',{quizId,expectedRevision:revision,position:revision+1,slide:mediaSlide(kind,{title:kind==='round'?'Média':kind==='intro'?'Vlastní média':''})});revision=result.revision;ids[kind]=result.selectedSlideId;}

@@ -1,3 +1,5 @@
+import { seedEmptyQuiz } from './legacy-quiz-fixture.mjs';
+import { quizCreationIdentity } from '../../functions/lib/editor/model.js';
 import { strict as assert } from 'node:assert';
 import { createRequire } from 'node:module';
 const require = createRequire(new URL('../../functions/package.json', import.meta.url));
@@ -224,6 +226,34 @@ async function run() {
   );
 
   const createRequestId = `editor-core-create-${Date.now().toString(36)}`;
+  const starterRequest = { title: 'Nový večer', requestId: createRequestId + '-starter' };
+  const [starter, retry] = await Promise.all([invoke('createQuiz', starterRequest), invoke('createQuiz', starterRequest)]);
+  assert.deepEqual(starter, retry);
+  assert.deepEqual(starter, { quizId: starter.quizId, revision: 0, slideCount: 8, roundCount: 1, questionCount: 1 });
+  const root = adminDb.doc('quizzes/' + starter.quizId);
+  const programAtCreation = (await root.collection('slides').orderBy('position').get()).docs;
+  assert.deepEqual(programAtCreation.map(doc => doc.get('kind')), ['intro', 'rules', 'agenda', 'round', 'free', 'recap', 'thank-you', 'end']);
+  assert.deepEqual(programAtCreation.map(doc => doc.get('position')), [1, 2, 3, 4, 5, 6, 7, 8]);
+  const roundDocs = await root.collection('rounds').get(), question = programAtCreation[4];
+  assert.equal(roundDocs.size, 1);
+  assert.equal(roundDocs.docs[0].id, question.get('roundId'));
+  const questions = await roundDocs.docs[0].ref.collection('questions').get();
+  assert.equal(questions.size, 1);
+  assert.equal(questions.docs[0].id, question.id);
+  assert.deepEqual([question.get('authoringStatus'), question.get('answerMode'), question.get('text'), question.get('correctAnswer')], ['draft', 'open', '', '']);
+  await expectFunctionError(() => invoke('updateQuizSlide', {
+    quizId: starter.quizId, slideId: question.id, expectedRevision: 0,
+    slide: editorSlide({ kind: 'free', title: '', text: '', correctAnswer: '', options: [], answerMode: 'open', authoringStatus: 'ready' }),
+  }), 'functions/invalid-argument');
+  const saved = await invoke('updateQuizSlide', { quizId: starter.quizId, slideId: question.id, expectedRevision: 0,
+    slide: editorSlide({ kind: 'free', title: '', text: 'Zachované zadání', correctAnswer: 'Odpověď', options: [], authoringStatus: 'ready', answerMode: 'open' }) });
+  assert.equal((await invoke('createQuiz', starterRequest)).revision, saved.revision);
+  assert.equal((await question.ref.get()).get('text'), 'Zachované zadání');
+  assert.equal((await root.collection('slides').get()).size, 8);
+
+  // Replaying a creation committed before templates shipped must preserve its exact empty draft.
+  const uid = auth.currentUser.uid;
+  await seedEmptyQuiz(adminDb, 'Nový syntetický kvíz', { uid, ...quizCreationIdentity(uid, createRequestId, 'Nový syntetický kvíz') });
   const [createdQuiz, concurrentCreateRetry] = await Promise.all([
     invoke('createQuiz', {
       title: '  Nový syntetický kvíz  ',
@@ -719,7 +749,7 @@ async function run() {
     assert.equal(updated[index + 1].id, beforeId);
   }
 
-  const recapQuiz = await invoke('createQuiz', { title: 'Začátek rekapitulací', requestId: 'recap-' + createRequestId });
+  const recapQuiz = await seedEmptyQuiz(adminDb, 'Začátek rekapitulací');
   const firstRecap = { quizId: recapQuiz.quizId, expectedRevision: recapQuiz.revision, position: 1, scope: 'first-round',
     slide: editorSlide({ kind: 'recap', title: '1. kolo', text: '', options: [], correctAnswer: '' }) };
   const firstResult = await invoke('createQuizSlide', firstRecap);

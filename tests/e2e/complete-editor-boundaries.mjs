@@ -1,11 +1,11 @@
+import { seedEmptyQuiz } from './legacy-quiz-fixture.mjs';
 import {strict as assert} from 'node:assert';
-import {randomUUID} from 'node:crypto';
 import {editorIdentity} from './editor-identity.mjs';
 import {mediaSlide} from './media-fixture.mjs';
 const admin=await editorIdentity(),moderator=await editorIdentity('moderator'),viewer=await editorIdentity('viewer');let quizId,eventId;
 const denied=(p,code)=>assert.rejects(p,e=>e.code==='functions/'+code);
 try {
-  ({quizId}=await admin.call('createQuiz',{title:'Draft boundary synthetic',requestId:randomUUID()}));
+  ({quizId}=await seedEmptyQuiz(admin.db, 'Draft boundary synthetic'));
   const qref=admin.db.doc('quizzes/'+quizId),revision=async()=>(await qref.get()).get('revision');
   for(const actor of [moderator,viewer])await denied(actor.call('createQuizRound',{quizId,expectedRevision:0,title:'Forbidden'}),'permission-denied');
   await admin.call('createQuizRound',{quizId,expectedRevision:0,title:'First'});await denied(admin.call('createQuizRound',{quizId,expectedRevision:0,title:'First'}),'aborted');assert.equal((await qref.collection('rounds').get()).size,1);

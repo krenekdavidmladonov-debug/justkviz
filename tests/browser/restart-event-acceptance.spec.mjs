@@ -70,12 +70,11 @@ test('one authored event: quiz, immutable snapshot, public teams, scores, staged
     await page.goto('/admin/quizzes/new'); await page.getByLabel('Název kvízu').fill(title);
     await page.getByRole('button', { name: 'Vytvořit', exact: true }).click(); await expect(page).toHaveURL(/\/edit$/);
     quizId = page.url().split('/').at(-2);
-    await page.getByRole('button', { name: '+ Přidat kolo', exact: true }).click();
+    await page.locator('.outline-round-select').click();
     await page.getByLabel('Název kola *', { exact: true }).fill('Synthetic round'); await save();
-    await page.locator('.outline-round').first().locator('.outline-insert').last().click();
-    await page.getByRole('dialog', { name: 'Přidat do osnovy' }).getByRole('button', { name: 'Volná odpověď' }).click();
+    await page.locator('.outline-question').click();
     await page.getByLabel('Otázka *', { exact: true }).fill('Initial synthetic question');
-    await page.getByLabel('Správná odpověď *', { exact: true }).fill(answer); await save();
+    await page.getByLabel('Správná odpověď *', { exact: true }).fill(answer); await page.getByRole('button', { name: 'Dokončit otázku' }).click(); await expect(page.locator('.save-state')).toHaveText('Uloženo');
     await page.getByLabel('Otázka *', { exact: true }).fill(snapshotPrompt); await save();
     await page.getByRole('link', { name: '← Knihovna kvízů', exact: true }).click();
     await page.goto('/admin/quizzes/' + quizId + '/edit');

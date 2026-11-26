@@ -1,4 +1,5 @@
 /* global document, createImageBitmap */
+import { seedEmptyQuiz } from '../e2e/legacy-quiz-fixture.mjs';
 import assert from 'node:assert/strict';
 import { createDecipheriv, createHash, pbkdf2Sync, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
@@ -151,7 +152,7 @@ export async function capacityEventFixture(assets) {
     await identity.dispose();
   };
   try {
-    ({ quizId } = await call('createQuiz', { title: 'Syntetická kapacita 512 MiB', requestId: randomUUID() }));
+    ({ quizId } = await seedEmptyQuiz(identity.db, 'Syntetická kapacita 512 MiB'));
     const media = [];
     for (const [index, asset] of assets.entries()) {
       const assetId = hash(`${quizId}:${index}:${asset.sha256}`);

@@ -1,3 +1,4 @@
+import { seedEmptyQuiz } from '../e2e/legacy-quiz-fixture.mjs';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { editorIdentity } from '../e2e/editor-identity.mjs';
@@ -12,7 +13,7 @@ export async function browserFixture() {
   const ownerUser = await auth.getUserByEmail(owner.email); await db.doc(`memberships/${ownerUser.uid}`).update({ role: 'owner', permissions: [...permissions] });
   await db.doc('accessControl/state').set({ collaborationEnabled: true, revision: 0 });
   async function quiz(title) {
-    const { quizId } = await owner.call('createQuiz', { title, requestId: randomUUID() }); paths.push(`quizzes/${quizId}`);
+    const { quizId } = await seedEmptyQuiz(db, title); paths.push(`quizzes/${quizId}`);
     let revision = 0;
     for (const kind of ['intro', 'round', 'free', 'recap', 'end']) {
       const result = await owner.call('createQuizSlide', { quizId, expectedRevision: revision, position: revision + 1, slide: mediaSlide(kind, { title: kind === 'round' ? 'První kolo' : kind === 'intro' ? title : '', text: kind === 'free' ? 'Otázka pro kolegu' : '', correctAnswer: kind === 'free' ? 'ANSWER_PRIVATE_BROWSER' : '', moderatorNote: kind === 'free' ? 'NOTE_PRIVATE_BROWSER' : '', ...(kind === 'free' ? { answerMode: 'open', authoringStatus: 'ready' } : {}) }) }); revision = result.revision;
