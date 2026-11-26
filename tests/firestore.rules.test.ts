@@ -67,6 +67,27 @@ test('even a fully authorized owner cannot read or reset server registration lim
   await assertFails(deleteDoc(doc(db, path)));
 });
 
+test.each(['processing', 'complete'])('sealed registrations are inaccessible even to the owner during %s', async state => {
+  const uid = 'retention-owner';
+  await testEnvironment.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await setDoc(doc(db, 'memberships/' + uid), { uid, role: 'owner', status: 'active', version: 1, sessionValidAfter: 0,
+      permissions, quizzes: { mode: 'all', ids: [] }, events: { mode: 'all', ids: [] } });
+    await updateDoc(doc(db, privateEventPath), { contactRetention: { state } });
+    await setDoc(doc(db, privateRegistrationPath), { teamName: 'Tým', contactsAnonymizedAt: new Date() });
+  });
+  const db = testEnvironment.authenticatedContext(uid, { email_verified: true, auth_time: 2000000000 }).firestore();
+  await assertSucceeds(getDoc(doc(db, privateEventPath)));
+  await assertFails(getDoc(doc(db, privateRegistrationPath)));
+  await assertFails(getDocs(collection(db, privateEventPath + '/registrations')));
+  await assertFails(setDoc(doc(db, privateRegistrationPath), { contactEmail: 'synthetic@example.test' }));
+  await assertFails(updateDoc(doc(db, privateEventPath), { contactRetention: null }));
+  for (const path of ['retentionState/contact-scan-v1', 'retentionAudit/test']) {
+    await assertFails(getDoc(doc(db, path)));
+    await assertFails(setDoc(doc(db, path), { forged: true }));
+  }
+});
+
 describe('transactional registration email privacy', () => {
   test('even a current owner cannot inspect, redirect, inject or delete organizer notification intents', async () => {
     const uid = 'notification-owner', path = `${privateEventPath}/emailIntents/organizer-synthetic`;

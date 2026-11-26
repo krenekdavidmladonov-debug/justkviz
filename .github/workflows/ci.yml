@@ -182,7 +182,7 @@ jobs:
           pnpm exec firebase emulators:exec
           --only auth,firestore,functions
           --project demo-filmovy-kviz-v2
-          "pnpm seed:auth && pnpm seed:quizzes && pnpm test:e2e:live && pnpm test:e2e:editor && pnpm test:e2e:events && pnpm test:e2e:registrations && node tools/local-emulator-environment.mjs full tests/e2e/registration-boundaries-emulator.mjs && node tools/local-emulator-environment.mjs full tests/e2e/registration-abuse-emulator.mjs && node tools/local-emulator-environment.mjs full tests/e2e/event-team-tools-emulator.mjs && pnpm test:e2e:print"
+          "pnpm seed:auth && node tools/local-emulator-environment.mjs full tests/e2e/retention-emulator.mjs && pnpm seed:quizzes && pnpm test:e2e:live && pnpm test:e2e:editor && pnpm test:e2e:events && pnpm test:e2e:registrations && node tools/local-emulator-environment.mjs full tests/e2e/registration-boundaries-emulator.mjs && node tools/local-emulator-environment.mjs full tests/e2e/registration-abuse-emulator.mjs && node tools/local-emulator-environment.mjs full tests/e2e/event-team-tools-emulator.mjs && pnpm test:e2e:print"
 
       - name: Print Center browser E2E
         run: >-

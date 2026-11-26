@@ -48,7 +48,10 @@ function integer(value: unknown, minimum: number, message: string): number {
 function eventState(snapshot: DocumentSnapshot, publicationRequest?: unknown): EventState {
   if (!snapshot.exists) throw new HttpsError('not-found', 'Event was not found.');
   const data = record(snapshot.data(), 'Event is malformed.');
-  if (!isCompletedEventHide(data, publicationRequest)) assertEventOperational(data);
+  if (!isCompletedEventHide(data, publicationRequest)) {
+    if ('contactRetention' in data) throw new HttpsError('not-found', 'Bezpečný odkaz není platný.');
+    assertEventOperational(data);
+  }
   const teamCapacity = integer(data.teamCapacity, 1, 'Event capacity is malformed.');
   const peopleCapacity = integer(data.peopleCapacity, 1, 'Event capacity is malformed.');
   const acceptedTeams = data.acceptedTeams === undefined ? 0 : integer(data.acceptedTeams, 0, 'Event counters are malformed.');

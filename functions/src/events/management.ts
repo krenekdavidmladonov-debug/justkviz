@@ -37,6 +37,7 @@ async function transition(request: CallableRequest, action: EventManagementActio
     const problem = transitionProblem({ ...current, scoring: isObject(current.scoring) ? current.scoring : {}, hasActiveSession: active }, action);
     if (problem) throw new HttpsError('failed-precondition', problem);
     if (active && !((action === 'cancel' || action === 'complete') && data.endLive === true)) throw new HttpsError('failed-precondition', 'Běží živá relace. Výslovně potvrďte i ukončení prezentace.');
+    if (action === 'prepare' && 'contactRetention' in current) throw new HttpsError('failed-precondition', 'Po zahájení anonymizace kontaktů již nelze obnovit registrace.');
     if (action === 'prepare' && sessions.some(s => s.session.startedAt !== null)) throw new HttpsError('failed-precondition', 'Odehranou akci nelze vrátit do přípravy.');
     const publicRef = db.doc(`publicEvents/${eventId}`), previousPublic = (await tx.get(publicRef)).data();
     const now = Timestamp.now(), revision = expected + 1;

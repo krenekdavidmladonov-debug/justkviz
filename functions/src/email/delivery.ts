@@ -46,7 +46,7 @@ export async function deliverRegistrationEmail(db: Firestore, ref: DocumentRefer
   const leaseId = randomUUID();
   const claimed = await db.runTransaction(async (transaction) => {
     const event = (await transaction.get(ref.parent.parent!)).data();
-    if (!event || !eventOperational(event)) return { result: 'unchanged' as const };
+    if (!event || 'contactRetention' in event || !eventOperational(event)) return { result: 'unchanged' as const };
     const snapshot = await transaction.get(ref);
     if (!snapshot.exists) return { result: 'unchanged' as const };
     if (allowIntent && !allowIntent(snapshot.data() ?? {})) return { result: 'unchanged' as const };
@@ -130,7 +130,7 @@ export async function deliverRegistrationEmail(db: Firestore, ref: DocumentRefer
       body = registrationEmail(intent.type, intent.content, link, selectedOrigin);
     }
     const currentEvent = (await ref.parent.parent!.get()).data();
-    if (!currentEvent || !eventOperational(currentEvent) || (currentEvent.capabilityVersion ?? 0) !== (intent.capabilityVersion ?? 0)) return 'unchanged';
+    if (!currentEvent || 'contactRetention' in currentEvent || !eventOperational(currentEvent) || (currentEvent.capabilityVersion ?? 0) !== (intent.capabilityVersion ?? 0)) return 'unchanged';
     if (intent.type === 'registration-organizer-notification') {
       const activation = registrationOwnerNotificationActivation();
       const member = activation ? (await db.doc('memberships/' + activation.ownerUid).get()).data() : undefined;
@@ -146,7 +146,7 @@ export async function deliverRegistrationEmail(db: Firestore, ref: DocumentRefer
   }
   const recorded = await db.runTransaction(async (transaction) => {
     const event = (await transaction.get(ref.parent.parent!)).data();
-    if (!event || !eventOperational(event)) return false;
+    if (!event || 'contactRetention' in event || !eventOperational(event)) return false;
     const current = await transaction.get(ref);
     const registration = registrationRef ? await transaction.get(registrationRef) : null;
     if (current.data()?.leaseId !== leaseId || (event.capabilityVersion ?? 0) !== (intent.capabilityVersion ?? 0)) return false;

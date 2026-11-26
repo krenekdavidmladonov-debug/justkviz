@@ -101,4 +101,6 @@ export { previewOfflineSync, commitOfflineSync } from './offline/sync.js';
 
 export { configurePublicEventResults } from './events/public-results.js';
 
+export { runEventRetention } from './retention/scheduler.js';
+
 export { resetEventScores } from './scoring/reset.js';
