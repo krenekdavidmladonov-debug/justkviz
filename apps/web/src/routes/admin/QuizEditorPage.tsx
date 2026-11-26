@@ -519,7 +519,7 @@ function QuizEditorQuiz({ quizId }: { readonly quizId: string | undefined }) {
     };
     for (const [key, entry] of Object.entries(entries)) {
       const persisted = quiz.slides.find(slide => slide.id === entry.draft?.id);
-      if (entry.dirtySlide && entry.draft?.isQuestion && entry.draft.authoringStatus !== 'draft'
+      if (entry.dirtySlide && entry.draft?.isQuestion && (entry.draft.authoringStatus !== 'draft' || validateQuestion(entry.draft).some(issue => issue.code === 'ANSWER_YOUTUBE_INVALID'))
         && hasSaveBlockingIssues(entry.draft, persisted, !can('quiz.answers.read'))) {
         setParked(entries); setSelectedKey(key); setShowReadiness(true);
         const issue = validateQuestion(entry.draft).find(item => item.severity === 'error' && (can('quiz.answers.read') || item.field !== 'correctAnswer'));

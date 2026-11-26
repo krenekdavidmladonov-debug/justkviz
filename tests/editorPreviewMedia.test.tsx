@@ -8,6 +8,8 @@ import { MediaPlayer } from '../apps/web/src/features/presentation/MediaPlayer';
 
 import { MemoryRouter } from 'react-router-dom';
 import { mapEditorSlide, runQuizPreflight, type EditorQuiz } from '../packages/quiz-domain/src';
+import { MediaAuthoringContext } from '../apps/web/src/features/media/MediaUploadField';
+import { AnswerYoutubeField } from '../apps/web/src/features/editor/AnswerYoutubeField';
 import { EditorPreview } from '../apps/web/src/features/editor/EditorForms';
 import { AnswerLengthWarning, AnswerLengthMeasurement, answerLengthWarning, type AnswerLengthResult } from '../apps/web/src/features/preflight/AnswerLengthMeasurement';
 import { QuizPreflightPanel } from '../apps/web/src/features/preflight/QuizPreflightPanel';
@@ -157,4 +159,38 @@ test('measurement releases completed batches and rechecks all questions when bro
     if (previousFonts) Object.defineProperty(document, 'fonts', previousFonts);
     else Reflect.deleteProperty(document, 'fonts');
   }
+});
+
+test('answer clip authoring retains decimal seconds and resets after discarding the same question', async () => {
+  const original = { ...measuredQuestion('Odpověď'), answerYoutubeClip: { videoId: 'answer12345', startSeconds: 6.125, endSeconds: 12.875 } };
+  const change = vi.fn();
+  const renderField = async (question: typeof original) => act(async () => root.render(<AnswerYoutubeField slide={question} disabled={false} onChange={change} />));
+  const fill = async (input: HTMLInputElement, value: string) => act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await renderField(original);
+  const inputs = () => [...host.querySelectorAll<HTMLInputElement>('input')];
+  expect(inputs().map(input => input.value)).toEqual(['https://youtu.be/answer12345', '6.125', '12.875']);
+  await fill(inputs()[0]!, 'https://youtube.com/shorts/changed1234');
+  expect(change).toHaveBeenLastCalledWith(expect.objectContaining({ answerYoutubeClip: { videoId: 'changed1234', startSeconds: 6.125, endSeconds: 12.875 } }));
+  const changed = change.mock.lastCall![0] as typeof original;
+  await renderField(changed);
+  await fill(inputs()[1]!, '0:06.234');
+  expect(change).toHaveBeenLastCalledWith(expect.objectContaining({ answerYoutubeClip: { videoId: 'changed1234', startSeconds: 6.234, endSeconds: 12.875 } }));
+  await renderField(change.mock.lastCall![0] as typeof original);
+  await renderField(original);
+  expect(inputs().map(input => input.value)).toEqual(['https://youtu.be/answer12345', '6.125', '12.875']);
+  await fill(inputs()[0]!, 'answer12345');
+  expect((change.mock.lastCall![0] as typeof original).answerYoutubeClip.videoId).toBe('');
+});
+
+
+test('answer clip fields follow attachment permission while showing the stored clip', async () => {
+  const question = { ...measuredQuestion('Odpověď'), answerYoutubeClip: { videoId: 'answer12345' } };
+  await act(async () => root.render(<MediaAuthoringContext.Provider value={{ quizId: 'quiz', onPending: () => {}, canAttach: false }}>
+    <AnswerYoutubeField slide={question} disabled={false} onChange={vi.fn()} />
+  </MediaAuthoringContext.Provider>));
+  expect(host.querySelector('fieldset')!.disabled).toBe(true);
+  expect(host.querySelector('input')!.value).toBe('https://youtu.be/answer12345');
 });

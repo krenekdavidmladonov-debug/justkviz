@@ -218,9 +218,15 @@ export function buildPublicSessionState(session: PrivateLiveSession, slide?: Pri
   const revealedAnswer = displayAnswer(slide.correctAnswer, slide.kind);
   if (revealedAnswer === undefined) throw new LiveSessionError('failed-precondition', 'This slide has no displayable answer.');
   const originalSource = session.answerRevealed && session.mediaPlaybackMode === 'original' ? originalYoutubeSource(slide) : undefined;
+  const selectedId = session.presentationMode === 'recap' ? session.recapQuestionId : session.currentSlideId;
+  const answerClip = session.answerRevealed && session.mediaPlaybackMode === 'answer' && slide.isQuestion && slide.id === selectedId
+    ? slide.answerYoutubeClip : undefined;
+  if (session.mediaPlaybackMode === 'answer' && !answerClip) throw new LiveSessionError('failed-precondition', 'The selected answer clip is unavailable.');
   const { clipEndSeconds: savedEnd, ...revealedResult } = result; void savedEnd;
   return {
-    ...(originalSource ? revealedResult : result),
+    ...(originalSource || answerClip ? revealedResult : result),
+    ...(answerClip ? { mediaPlaybackMode: 'answer' as const, mediaSource: 'https://www.youtube.com/watch?v=' + answerClip.videoId,
+      clipStartSeconds: answerClip.startSeconds ?? 0, ...(answerClip.endSeconds === undefined ? {} : { clipEndSeconds: answerClip.endSeconds }) } : {}),
     ...(originalSource ? { mediaPlaybackMode: 'original' as const, mediaSource: originalSource, clipStartSeconds: 0 } : {}),
     answerRevealed: true,
     renderMode: 'recap',

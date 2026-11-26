@@ -1,3 +1,4 @@
+import type { AnswerYoutubeClip } from './answer-youtube.js';
 import type { SlideDesign, ResultTemplates, PrintTemplate } from './design.js';
 export const editableSlideKinds = [
   'intro', 'agenda', 'rules', 'recap', 'thank-you', 'end', 'title', 'info', 'round', 'roundheader', 'round-header', 'section',
@@ -38,6 +39,7 @@ export interface EditorSlide {
   readonly answerMode?: 'open' | 'choice';
   readonly imageLayout?: 'split' | 'stacked';
   readonly answerExplanation?: string;
+  readonly answerYoutubeClip?: AnswerYoutubeClip;
 
   readonly id: string;
   readonly position: number;
@@ -74,6 +76,7 @@ export type EditorValidationCode =
   | 'CHOICE_OPTIONS_INVALID'
   | 'QUESTION_PROMPT_MISSING'
   | 'QUESTION_RENDERER_UNSUPPORTED'
+  | 'ANSWER_YOUTUBE_INVALID'
   | 'ANSWER_MISSING'
   | 'CHOICE_OPTIONS_TOO_FEW'
   | 'CHOICE_CORRECT_MISSING'
@@ -147,6 +150,7 @@ export type PreflightIssueCode = EditorValidationCode
   | 'AGENDA_OUT_OF_DATE'
   | 'MEDIA_ONLINE_UNVERIFIED'
   | 'IMAGE_ONLINE_UNVERIFIED'
+  | 'ANSWER_YOUTUBE_ONLINE_ONLY'
   | 'MEDIA_NOT_OFFLINE'
   | 'IMAGE_WIDTH_SMALL'
   | 'IMAGE_URL_ANSWER_HINT'

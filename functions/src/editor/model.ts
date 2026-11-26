@@ -236,6 +236,13 @@ export function applyKnownSlideUpdate(
   else result.moderatorNote = keepMalformedText(current.moderatorNote, input.moderatorNote);
   if (input.correctAnswer === '' && !Object.hasOwn(current, 'correctAnswer')) delete result.correctAnswer;
   else result.correctAnswer = keepMalformedText(current.correctAnswer, input.correctAnswer);
+  if (input.answerYoutubeClip !== undefined) {
+    if (input.answerYoutubeClip === null) delete result.answerYoutubeClip;
+    else {
+      if (result.isQuestion !== true) throw new QuizEditorError('invalid-argument', 'Ukázka odpovědi patří pouze k otázce.');
+      result.answerYoutubeClip = input.answerYoutubeClip;
+    }
+  }
   const mapped = mapEditorSlide('current', { position: 1, ...current, kind: current.kind ?? input.kind });
   for (const field of ['backgroundImage', 'questionImage', 'answerImage', 'mediaSource'] as const) {
     // Equal mapped values mean no edit, retaining absent, malformed and legacy fields.
@@ -244,6 +251,11 @@ export function applyKnownSlideUpdate(
   }
   for (const field of ['authoringStatus','answerMode','imageLayout','answerExplanation'] as const) if (input[field] !== undefined) result[field] = input[field];
   if (result.authoringStatus !== undefined && result.isQuestion !== true) throw new QuizEditorError('invalid-argument', 'Only questions can be drafts.');
+  if (result.answerYoutubeClip && typeof result.answerYoutubeClip === 'object'
+    && typeof (result.answerYoutubeClip as { videoId?: unknown }).videoId === 'string'
+    && (result.answerYoutubeClip as { videoId?: unknown }).videoId === youtubeVideoId(mapEditorSlide('current', { position: 1, ...result }).mediaSource)) {
+    throw new QuizEditorError('invalid-argument', 'Ukázka odpovědi musí používat jiné YouTube video než zadání otázky.');
+  }
   const timed = ['audio', 'music', 'video', 'youtube'].includes(input.kind);
   const source = input.mediaSource;
   const newTimedSource = timed && source !== undefined && source !== '' && mapped.mediaSource !== source;

@@ -51,6 +51,7 @@ interface LiveModeratorViewProps {
   readonly onFinale?: () => void;
   readonly onSelectRecap: (position: number) => void;
   readonly onPlay: () => void;
+  readonly onPlayAnswerClip?: () => void;
   readonly onPlayOriginal?: () => void;
   readonly onStop: () => void;
   readonly onReplay: () => void;
@@ -97,6 +98,7 @@ export function LiveModeratorView({
   onFinale,
   onSelectRecap,
   onPlay,
+  onPlayAnswerClip,
   onPlayOriginal,
   onStop,
   onReplay,
@@ -119,6 +121,8 @@ export function LiveModeratorView({
     session.sessionId,
   );
   const source = session.interimResults || session.finalReveal?.visible ? undefined : liveMediaSource(presentedSlide);
+  const offerAnswerClip = !ended && !session.interimResults && !finalActive && session.answerRevealed
+    && presentedSlide?.isQuestion && presentedSlide.answerYoutubeClip && onPlayAnswerClip;
   const roundLabel = finalActive ? 'Finále' : currentRoundLabel(currentSlide);
   const questionLabel = currentQuestionLabel(session, currentSlide, presentedSlide, slides);
   const recapTitle = currentSlide?.roundTitle?.trim() || 'Aktuální kolo';
@@ -239,21 +243,22 @@ export function LiveModeratorView({
             </section>
           )}
 
-          {isMediaSlide(presentedSlide) && presentedSlide && source && (
+          {offerAnswerClip && <button className="primary-button live-wide-action" type="button" disabled={pending} onClick={onPlayAnswerClip}>Přehrát ukázku odpovědi</button>}
+          {presentedSlide && ((isMediaSlide(presentedSlide) && source) || (offerAnswerClip && session.mediaPlaybackMode === 'answer')) && (
             <section className="media-controls" aria-labelledby="media-controls-title">
               <div>
                 <span className="panel-label">Médium</span>
-                <strong id="media-controls-title">{isAudioSlide(presentedSlide) && session.presentationMode === 'slide' ? 'Audio na tomto zařízení' : 'Ovládání přehrávání'}</strong>
+                <strong id="media-controls-title">{isAudioSlide(presentedSlide) && session.presentationMode === 'slide' && !session.mediaPlaybackMode ? 'Audio na tomto zařízení' : 'Ovládání přehrávání'}</strong>
                 <p role="status">{mediaLabels[session.mediaPlaybackState]}</p>
               </div>
               <div className="media-button-row">
-                <button className="primary-button" type="button" disabled={pending || ended} onClick={onPlay}>{pendingLabel(pendingAction, 'play', 'Play')}</button>
+                {source && <button className="primary-button" type="button" disabled={pending || ended} onClick={onPlay}>{pendingLabel(pendingAction, 'play', 'Play')}</button>}
                 <button className="secondary-button" type="button" disabled={pending || ended} onClick={onStop}>{pendingLabel(pendingAction, 'stop', 'Stop')}</button>
                 <button className="secondary-button" type="button" disabled={pending || ended} onClick={onReplay}>{pendingLabel(pendingAction, 'replay', 'Pustit znovu')}</button>
               </div>
               {session.answerRevealed && originalYoutubeSource(presentedSlide) && onPlayOriginal && <button type="button" className="secondary-button" disabled={pending || ended} onClick={onPlayOriginal}>Přehrát celé původní video z YouTube</button>}
               {session.mediaPlaybackMode === 'original' && <p className="field-help">Celé původní video · přetáčení je dostupné přímo v přehrávači projektoru. Play spustí znovu připravenou ukázku.</p>}
-              {isAudioSlide(presentedSlide) && session.presentationMode === 'slide' && session.mediaPlaybackMode !== 'original' && !audioSuppressed && (
+              {isAudioSlide(presentedSlide) && session.presentationMode === 'slide' && !session.mediaPlaybackMode && source && !audioSuppressed && (
                 <MediaPlayer
                   source={source}
                   command={session.mediaCommand}

@@ -418,12 +418,12 @@ describe('trusted snapshot mapper', () => {
       { title: 'Syntetická akce' },
       { status: 'ready', quizTitle: 'Syntetický kvíz' },
       rounds,
-      slides,
+      slides.map(row => ({ ...row, data: { ...row.data, answerYoutubeClip: { videoId: 'PrintClip01', startSeconds: 3 } } })),
     );
     const json = JSON.stringify(mapped);
     expect(mapped.quiz.rounds).toHaveLength(5);
     expect(mapped.quiz.rounds.flatMap((round) => round.questions)).toHaveLength(50);
-    expect(json).not.toMatch(/TAJNÝ TEXT|TAJNÁ POZNÁMKA|TAJNÉ-MEDIA-ID|LEGACY RAW|private-slide|round-/u);
+    expect(json).not.toMatch(/TAJNÝ TEXT|TAJNÁ POZNÁMKA|TAJNÉ-MEDIA-ID|LEGACY RAW|private-slide|round-|answerYoutubeClip|PrintClip01/u);
     expect(mapped.quiz.rounds[0]?.questions[0]).toEqual({ number: 1, kind: 'choice', answerMode: 'choice', choiceCount: 3, answer: 'Možnost B', choiceLabel: 'B' });
   });
   test('uses bounded frozen print template rather than mutable event values', () => {

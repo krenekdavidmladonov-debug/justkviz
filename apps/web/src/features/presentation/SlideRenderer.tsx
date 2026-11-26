@@ -169,7 +169,8 @@ export function SlideRenderer({
   const mediaFailed = mediaCommand === 'error'
     || (locallyFailed?.generation === mediaGeneration && locallyFailed.source === model.mediaSource);
   const mediaPlan = projectorMediaPlan(model, mediaCommand, mediaPlaybackState, mediaFinished, mediaFailed);
-  const mediaTarget = model.contentKind === 'audio' ? 'audio' : 'video';
+  const answerClip = model.mediaPlaybackMode === 'answer' && model.renderMode === 'recap';
+  const mediaTarget = !answerClip && model.contentKind === 'audio' ? 'audio' : 'video';
   const showMediaError = !mediaFinished && (mediaCommand === 'play' || mediaCommand === 'replay' || mediaCommand === 'error')
     && (mediaFailed || mediaPlaybackState === 'error');
   const showAnswer = model.renderMode === 'recap' && model.revealedAnswer !== undefined;
@@ -185,7 +186,7 @@ export function SlideRenderer({
   const standaloneRole = fixedPhotoQuestion ? 'question-image' : 'background-image';
   // Revealed recap answer with its own picture: the answer picture is the hero of the slide.
   // Audio/video recaps keep their shared media layout (player + answer side by side).
-  const sharedMediaRecap = model.mediaSource !== undefined && (model.contentKind === 'video' || model.contentKind === 'audio');
+  const sharedMediaRecap = model.mediaSource !== undefined && (answerClip || model.contentKind === 'video' || model.contentKind === 'audio');
   const answerFocus = showAnswer && model.answerImage !== undefined && !sharedMediaRecap;
   const photoQuestion = fixedPhotoQuestion && !standalonePhoto && !answerFocus;
   const stage = useRef<HTMLElement>(null);
@@ -260,11 +261,11 @@ export function SlideRenderer({
   let content;
   if (model.renderMode === 'recap' && model.contentKind === 'recap') {
     content = <div className="slide-centered"><p className="slide-kicker">REKAPITULACE KOLA</p><h1>{model.title || 'Vyberte otázku'}</h1><p>{model.text || 'Moderátor postupně zobrazí vybrané odpovědi.'}</p></div>;
-  } else if (model.mediaSource && (model.contentKind === 'video' || (model.contentKind === 'audio' && (playPrivateAudio || model.renderMode === 'recap')))) {
+  } else if (model.mediaSource && (answerClip || model.contentKind === 'video' || (model.contentKind === 'audio' && (playPrivateAudio || model.renderMode === 'recap')))) {
     const recap = model.renderMode === 'recap';
     const showFrame = recap || (model.contentKind === 'video' && !mediaPlan.showQuestion);
     const mountPlayer = mediaPlan.mountPlayer || (playPrivateAudio && model.contentKind === 'audio' && !mediaFailed);
-    const sharedLayout = recap ? `recap-layout recap-${model.contentKind} shared-media-recap`
+    const sharedLayout = recap ? `recap-layout recap-${answerClip ? 'video' : model.contentKind} shared-media-recap`
       : model.contentKind === 'audio' ? 'audio-layout'
         : `video-layout ${mediaPlan.showQuestion ? 'question-layout question-video' : 'video-presentation'}`;
     content = (
@@ -273,7 +274,7 @@ export function SlideRenderer({
         <div className={`shared-media-frame ${recap ? 'recap-media-frame' : 'video-media-frame'}${showFrame ? '' : ' is-hidden'}`} aria-hidden={!showFrame} inert={!showFrame}>
           {mediaEnabled && mountPlayer && <MediaPlayer
             sessionId={mediaSessionId}
-            allowManualAutoplay={model.contentKind === 'video' || model.mediaPlaybackMode === 'original'}
+            allowManualAutoplay={model.contentKind === 'video' || model.mediaPlaybackMode !== undefined}
             source={model.mediaSource}
             command={mediaCommand}
             generation={mediaGeneration}

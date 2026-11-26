@@ -136,7 +136,9 @@ export async function authorizeOperation(name: string, request: CallableRequest,
     }
     const required: Permission[] = ['event.live'];
     if (name === 'endLiveSession' && data?.completeEvent === true) required.push('event.manage');
-    if ((name === 'revealAnswer' && data?.action !== 'hide') || name === 'selectRecapQuestion' || (name === 'playMedia' && data?.mode === 'original')) required.push(eventBound ? 'event.answers.read' : 'quiz.answers.read');
+    const controlsAnswerClip = (name === 'playMedia' && data?.mode === 'answer')
+      || (session.mediaPlaybackMode === 'answer' && ['replayMedia', 'finishMedia', 'reportMediaPlayback', 'stopMedia'].includes(name));
+    if (controlsAnswerClip || (name === 'revealAnswer' && data?.action !== 'hide') || name === 'selectRecapQuestion' || (name === 'playMedia' && data?.mode === 'original')) required.push(eventBound ? 'event.answers.read' : 'quiz.answers.read');
     return authorize(request.auth, required, eventBound ? { kind: 'event', id: resourceId(session.eventId) } : { kind: 'quiz', id: resourceId(session.quizId) }, tx);
   }
   throw new HttpsError('permission-denied', 'Operace nemá definovanou politiku přístupu.');

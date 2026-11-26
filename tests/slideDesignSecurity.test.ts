@@ -71,3 +71,40 @@ test('imported image originals keep existing editor permissions and block both p
   expect(() => protectSlideFields(saved, unchanged)).not.toThrow();
   expect(preserveHiddenFields(saved, { answerImage: source.url }).answerImage).toBe(reference);
 });
+
+
+test('answer clips require answer and attachment permission, with exact hidden preservation', () => {
+  const clip = { videoId: 'answer12345', startSeconds: 2 };
+  const source = { ...current, answerYoutubeClip: clip };
+  const visible = { correctAnswer: current.correctAnswer, answerImage: current.answerImage, answerExplanation: current.answerExplanation, answerDesign: { accentColor: '#123456', logoImage: current.answerDesign.logoImage }, answerYoutubeClip: clip };
+  expect(protectSlideFields(source, input({ answerYoutubeClip: null })).answerYoutubeClip).toEqual(clip);
+  expect(preserveHiddenFields(source, {}).answerYoutubeClip).toEqual(clip);
+  expect(() => protectSlideFields(source, input({ answerYoutubeClip: clip }))).toThrow();
+  member.permissions = ['quiz.answers.read'];
+  expect(() => protectSlideFields(source, input(visible))).not.toThrow();
+  const { answerYoutubeClip: omitted, ...olderClient } = visible;
+  void omitted;
+  expect(protectSlideFields(source, input(olderClient)).answerYoutubeClip).toEqual(clip);
+  expect(() => protectSlideFields(source, input({ ...visible, answerYoutubeClip: null }))).toThrow();
+  member.permissions.push('quiz.answers.edit');
+  expect(() => protectSlideFields(source, input({ ...visible, answerYoutubeClip: { videoId: 'changed1234' } }))).toThrow();
+  member.permissions.push('quiz.media.attach');
+  expect(() => protectSlideFields(source, input({ ...visible, answerYoutubeClip: null }))).not.toThrow();
+});
+
+test('a hidden answer clip cannot be repurposed as question media', () => {
+  member.permissions = ['quiz.media.attach'];
+  const source = { ...current, answerYoutubeClip: { videoId: 'answer12345' } };
+  for (const mediaSource of ['answer12345', 'https://youtu.be/answer12345', 'https://youtube.com/watch?v=answer12345']) expect(() => protectPrivateMedia([{ data: source }], [{ mediaSource }])).toThrow();
+});
+
+
+test('answer edit without read or attach preserves a redacted clip and rejects supplied descriptors', () => {
+  member.permissions = ['quiz.edit', 'quiz.answers.edit'];
+  const source = { position: 1, kind: 'question', isQuestion: true, title: 'Question', text: 'Prompt', options: [], media: [],
+    answerYoutubeClip: { videoId: 'answer12345', startSeconds: 2 } };
+  expect(protectSlideFields(source, input({ answerYoutubeClip: null })).answerYoutubeClip).toEqual(source.answerYoutubeClip);
+  expect(protectSlideFields(source, input()).answerYoutubeClip).toEqual(source.answerYoutubeClip);
+  expect(preserveHiddenFields(source, {}).answerYoutubeClip).toEqual(source.answerYoutubeClip);
+  for (const clip of [source.answerYoutubeClip, { videoId: 'changed1234' }]) expect(() => protectSlideFields(source, input({ answerYoutubeClip: clip }))).toThrow();
+});

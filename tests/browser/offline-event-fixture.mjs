@@ -23,7 +23,7 @@ export async function detachOfflineFixture(fixture) {
 }
 
 /** Creates only random owned demo resources through the real administrative boundary. */
-export async function offlineEventFixture({ assets = [], imageOnly = false, lockInBrowser = false } = {}) {
+export async function offlineEventFixture({ assets = [], imageOnly = false, lockInBrowser = false, answerYoutubeClip } = {}) {
   if (imageOnly) assert(assets.length === 1 && assets[0].kind === 'image' && assets[0].contentType === 'image/png', 'Single-image regression requires exactly one owned PNG.');
   const environment = requireFullEmulatorEnvironment(process.env, 'Complete offline QA fixture');
   assert.equal(environment.projectId, 'demo-filmovy-kviz-v2');
@@ -79,7 +79,7 @@ export async function offlineEventFixture({ assets = [], imageOnly = false, lock
     for (let round = 1; round <= 2; round++) {
       await call('createQuizRound', { quizId, expectedRevision: (await quiz()).revision, title: `Kolo ${round}` });
       const recap = (await slides()).filter(slide => slide.kind === 'recap').at(-1);
-      await add('free', { text: `Syntetická otázka kola ${round}` }, recap.position);
+      await add('free', { text: `Syntetická otázka kola ${round}`, ...(round === 1 && answerYoutubeClip ? { answerYoutubeClip } : {}) }, recap.position);
       if (imageOnly) {
         if (round === 1) await add('image', { questionImage: media[0].reference, answerImage: '' }, (await slides()).filter(slide => slide.kind === 'recap').at(-1).position);
       } else if (media.length) {

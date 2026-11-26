@@ -4,7 +4,7 @@ import { getApps, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore, Timestamp, type DocumentSnapshot, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError, type CallableRequest } from 'firebase-functions/v2/https';
 import { accessActor, securedOnCall, runAccessTransaction } from '../access/authorization.js';
-import { canHideInfoSlide, eventDisposition, resolveLegacySlideAppearance, normalizeResultPagination, parseShowCue } from '@filmovy-kviz/quiz-domain';
+import { parseAnswerYoutubeClip, canHideInfoSlide, eventDisposition, resolveLegacySlideAppearance, normalizeResultPagination, parseShowCue } from '@filmovy-kviz/quiz-domain';
 import { verifiedOriginalYoutubeSource } from '../media/original-source.js';
 import { resolveOriginalImages } from '../media/original-images.js';
 import { loadSnapshotClipAssets } from '../media/snapshot-clip-store.js';
@@ -158,7 +158,7 @@ export function parseSession(snapshot: DocumentSnapshot): PrivateLiveSession {
     ...(recapQuestionPosition === undefined ? {} : { recapQuestionPosition }),
     ...(recapQuestionId === undefined ? {} : { recapQuestionId }),
     mediaCommand,
-    ...(data.mediaPlaybackMode === 'original' ? { mediaPlaybackMode: 'original' as const } : {}),
+    ...(data.mediaPlaybackMode === 'original' || data.mediaPlaybackMode === 'answer' ? { mediaPlaybackMode: data.mediaPlaybackMode } : {}),
     mediaPlaybackState,
     mediaGeneration: optionalInteger(data, 'mediaGeneration') ?? 0,
     introGeneration: optionalInteger(data, 'introGeneration') ?? 0,
@@ -191,6 +191,7 @@ function parseSlide(snapshot: DocumentSnapshot, resolvedData?: Record<string, un
     options: Array.isArray(data.options) ? data.options : [],
     media: Array.isArray(data.media) ? data.media : [],
     presentation: isObject(data.presentation) ? data.presentation : {},
+    answerYoutubeClip: parseAnswerYoutubeClip(data.answerYoutubeClip),
     ...copy('backgroundImage'), ...copy('questionImage'), ...copy('answerImage'), ...copy('mediaSource'),
     ...(verifiedOriginalYoutubeSource(data) === undefined ? {} : { originalMediaSource: verifiedOriginalYoutubeSource(data) }),
     ...copy('backgroundOverlay'), ...copy('clipStartSeconds'), ...copy('clipEndSeconds'),
@@ -285,7 +286,7 @@ async function mutateSession(request: CallableRequest<unknown>, kind: MutationKi
     const requested = kind === 'go-to-slide' || kind === 'select-recap-question' ? requestedPosition(request.data) : undefined;
     const finishGeneration = kind === 'finish-media' ? requestedMediaGeneration(request.data) : undefined;
     const mode = kind === 'play-media' && isObject(request.data) ? request.data.mode : undefined;
-    if (mode !== undefined && mode !== 'clip' && mode !== 'original') throw new HttpsError('invalid-argument', 'Unsupported playback mode.');
+    if (mode !== undefined && mode !== 'clip' && mode !== 'original' && mode !== 'answer') throw new HttpsError('invalid-argument', 'Unsupported playback mode.');
     const sessionRef = db.collection('sessions').doc(sessionId);
     const publicRef = db.collection('publicSessions').doc(sessionId);
     return await runAccessTransaction(db, async (transaction) => {
@@ -395,7 +396,8 @@ export const reportMediaPlayback = securedOnCall('reportMediaPlayback', callable
       if (position === undefined || position < 1) throw new LiveSessionError('failed-precondition', 'There is no active presentation slide.');
       const slide = { ...await loadSlide(transaction, session.quizId, position, session.snapshotId),
         upcomingImages: await loadSlidePromptImages(db, transaction, session, position) };
-      if (!['audio', 'music', 'video', 'youtube'].includes(slide.kind.toLowerCase())) {
+      if (!(session.answerRevealed && session.mediaPlaybackMode === 'answer' && slide.isQuestion && slide.answerYoutubeClip)
+        && !['audio', 'music', 'video', 'youtube'].includes(slide.kind.toLowerCase())) {
         throw new LiveSessionError('failed-precondition', 'The active slide has no playable media.');
       }
       const now = Timestamp.now();

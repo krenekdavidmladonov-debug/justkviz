@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { mapEditorSlide, directMediaKind, youtubeVideoId } from '../packages/quiz-domain/src/index';
+import { mapEditorSlide, mapEditorQuiz, runQuizPreflight, validateQuestion, parseAnswerYoutubeClip, answerYoutubeVideoId, directMediaKind, youtubeVideoId } from '../packages/quiz-domain/src/index';
 import { applyKnownSlideUpdate } from '../functions/src/editor/model';
 import { validateSlideInput } from '../functions/src/editor/validation';
 import { publicMediaAllowed } from '../functions/src/media/model';
@@ -43,4 +43,61 @@ describe('media authoring boundaries', () => {
     expect(publicMediaAllowed({ ...state, status: 'ended' }, bg, 'image')).toBe(false);
     expect(publicMediaAllowed({ ...state, backgroundImage: undefined }, bg, 'image')).toBe(false);
   });
+});
+
+
+describe('independent answer YouTube clips', () => {
+  const clip = { videoId: 'answer12345', startSeconds: 6, endSeconds: 12 };
+  const question = { ...stored, kind: 'free', media: [], answerYoutubeClip: clip };
+  test('supported links normalize on the server to ID and optional times only', () => {
+    for (const url of ['https://youtube.com/watch?v=answer12345', 'https://youtu.be/answer12345?t=4', 'https://www.youtube.com/shorts/answer12345']) {
+      expect(answerYoutubeVideoId(url)).toBe(clip.videoId);
+      const input = validateSlideInput({ ...mapEditorSlide('q', question), answerYoutubeClip: { url, startSeconds: 6, endSeconds: 12 } });
+      const saved = applyKnownSlideUpdate(question, input);
+      expect(saved.answerYoutubeClip).toEqual(clip);
+      expect(JSON.stringify(saved.answerYoutubeClip)).not.toContain('https');
+    }
+    expect(parseAnswerYoutubeClip({ videoId: clip.videoId })).toEqual({ videoId: clip.videoId });
+  });
+  test('untrusted links, ancillary keys and invalid timing fail shared and server validation', () => {
+    for (const url of ['https://youtube.com.evil.test/watch?v=answer12345', 'https://user:secret@youtube.com/watch?v=answer12345', 'javascript:alert(1)', 'https://youtu.be/answer12345/extra']) {
+      expect(answerYoutubeVideoId(url)).toBeUndefined();
+      expect(() => validateSlideInput({ ...mapEditorSlide('q', question), answerYoutubeClip: { url } })).toThrow();
+    }
+    for (const invalid of [{ videoId: 'bad' }, { ...clip, endSeconds: 6 }, { ...clip, startSeconds: -1 }, { ...clip, endSeconds: Infinity }, { ...clip, raw: 'secret' }]) {
+      expect(parseAnswerYoutubeClip(invalid)).toBeUndefined();
+      expect(() => validateSlideInput({ ...mapEditorSlide('q', question), answerYoutubeClip: invalid })).toThrow();
+      expect(validateQuestion({ ...mapEditorSlide('q', question), answerYoutubeClip: invalid })).toContainEqual(expect.objectContaining({ code: 'ANSWER_YOUTUBE_INVALID' }));
+    }
+  });
+  test('changing and removing a clip preserve the separate prompt and old questions stay absent', () => {
+    const withPrompt = { ...question, kind: 'video', mediaSource: 'prompt12345', clipStartSeconds: 1, clipEndSeconds: 3 };
+    const changed = applyKnownSlideUpdate(withPrompt, validateSlideInput({ ...mapEditorSlide('q', withPrompt), answerYoutubeClip: { videoId: 'changed1234' } }));
+    expect(changed.answerYoutubeClip).toEqual({ videoId: 'changed1234' });
+    expect(changed.mediaSource).toBe('prompt12345');
+    const removed = applyKnownSlideUpdate(changed, validateSlideInput({ ...mapEditorSlide('q', changed), answerYoutubeClip: null }));
+    expect(removed).not.toHaveProperty('answerYoutubeClip');
+    expect(mapEditorSlide('q', removed)).not.toHaveProperty('answerYoutubeClip');
+    expect(applyKnownSlideUpdate(stored, validateSlideInput(mapEditorSlide('q', stored)))).not.toHaveProperty('answerYoutubeClip');
+    expect(() => applyKnownSlideUpdate({ ...question, kind: 'info', isQuestion: false }, validateSlideInput({ ...mapEditorSlide('q', question), kind: 'info' }))).toThrow();
+  });
+  test('preflight warns that the answer clip needs internet', () => {
+    const q = mapEditorSlide('q', { ...question, roundId: 'r' });
+    const round = mapEditorSlide('r', { kind: 'round', position: 2, title: 'Kolo', roundId: 'r' });
+    const quiz = mapEditorQuiz('quiz', { title: 'Kvíz', description: '', slideCount: 2, questionCount: 1, roundCount: 1 }, [q, round]);
+    expect(runQuizPreflight(quiz).issues).toContainEqual(expect.objectContaining({
+      code: 'ANSWER_YOUTUBE_ONLINE_ONLY', message: 'Ukázka odpovědi z YouTube potřebuje internet – offline se nepřehraje.',
+    }));
+  });
+});
+
+
+test('answer and prompt clips cannot share a video ID through YouTube URL aliases', () => {
+  const clip = { videoId: 'answer12345' };
+  for (const mediaSource of ['answer12345', 'https://youtube.com/watch?v=answer12345', 'https://youtu.be/answer12345', 'https://youtube.com/shorts/answer12345']) {
+    const source = { ...stored, kind: 'video', mediaSource, clipStartSeconds: 0, clipEndSeconds: 5, answerYoutubeClip: clip };
+    const mapped = mapEditorSlide('q', source);
+    expect(validateQuestion(mapped)).toContainEqual(expect.objectContaining({ code: 'ANSWER_YOUTUBE_INVALID' }));
+    expect(() => applyKnownSlideUpdate(source, validateSlideInput(mapped))).toThrow(/jiné YouTube video/);
+  }
 });

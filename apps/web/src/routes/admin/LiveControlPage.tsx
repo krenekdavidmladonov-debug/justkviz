@@ -310,7 +310,7 @@ function LiveSessionControl({ sessionId, routeSearch }: { readonly sessionId: st
     const current = sessionRef.current;
     // A server stop does not acknowledge a remote projector's physical video output.
     remoteMediaActive.current = Boolean(current && ['playing', 'preparing', 'ready'].includes(current.mediaPlaybackState)
-      && (!isAudioSlide(presentedSlide) || current.presentationMode === 'recap'));
+      && (!isAudioSlide(presentedSlide) || current.presentationMode === 'recap' || Boolean(current.mediaPlaybackMode)));
     suppressedAudioGeneration.current = current && !remoteMediaActive.current
       ? { sessionId: current.sessionId, generation: current.mediaGeneration } : null;
     setAudioSuppressed(true);
@@ -515,6 +515,7 @@ function LiveSessionControl({ sessionId, routeSearch }: { readonly sessionId: st
       onFinale={session.eventId && session.snapshotId ? () => { if (!pendingAction && queueCount === 0) void eventNavigation.current?.openFinale(); } : undefined}
       onSelectRecap={(position) => void run((id, revision) => selectRecapQuestion(id, revision, position), 'recap')}
       onPlay={() => void run(playMedia, 'play')}
+      onPlayAnswerClip={can(session.eventId ? 'event.answers.read' : 'quiz.answers.read') ? () => void run((id, revision) => playMedia(id, revision, 'answer'), 'play') : undefined}
       onPlayOriginal={() => void run((id, revision) => playMedia(id, revision, 'original'), 'play')}
       onStop={() => void run(stopMedia, 'stop')}
       onReplay={() => void run(replayMedia, 'replay')}

@@ -43,7 +43,7 @@ The separately entered offline event delegates bounded local authority for one s
 
 The local demo image backup reauthorizes the exact currently published image in the projector and the current scoped operator on every short lease. A pinned same-origin popup receives one already-authorized image through a one-use MessageChannel. Whole-file index integrity, every image digest, current snapshot/generation and expiry are independent checks. Exported answer images require `event.export`, `event.answers.read` and `event.answers.export`; the projector receives their bytes only after explicit server reveal. The confidential file stays under operator control. The implementation and limits are documented in [LOCAL_IMAGE_BACKUP.md](archive/LOCAL_IMAGE_BACKUP.md).
 
-1. Correct answers never reach public/projector clients before reveal.
+1. Correct answers never reach public/projector clients before reveal. A question’s separate YouTube answer clip requires an additional explicit moderator play command after reveal. The server resolves its ID and bounds from the active question or selected recap question, and requires scoped answer access. It never publishes the private clip descriptor.
 2. Public clients cannot read private quiz sources, registrations, contacts, or staff data.
 3. `request.auth != null` is authentication, not administrative authorization.
 4. Staff privileges require a current active server-managed membership, concrete permissions and resource scope. Legacy role claims grant no authority.

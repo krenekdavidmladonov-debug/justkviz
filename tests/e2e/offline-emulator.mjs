@@ -31,7 +31,10 @@ async function eventFingerprint(f) {
 }
 
 try {
-  const f = await fixture();
+  const answerYoutubeClip = { videoId: 'OfflineYt01', startSeconds: 4, endSeconds: 9 };
+  const f = await fixture({ answerYoutubeClip });
+  const frozen = await f.identity.db.collection('quizSnapshots/' + f.snapshotId + '/slides').get();
+  assert.deepEqual(frozen.docs.find(row => row.get('answerYoutubeClip'))?.get('answerYoutubeClip'), answerYoutubeClip);
   const require = createRequire(new URL('../../functions/package.json', import.meta.url));
   const cueBytes = syntheticAudio(5), cueAssetId = hashOffline('synthetic-offline-cue-' + randomUUID());
   const cueReference = `quiz-asset:${f.quizId}/${cueAssetId}`;
@@ -85,6 +88,7 @@ try {
   assert(prepared.manifest.baseScores.every(score => score.halfPoints === null));
   for (const team of prepared.manifest.teams) assert.deepEqual(Object.keys(team).sort(), ['id', 'name', 'revision']);
   const serialized = JSON.stringify(prepared);
+  assert(!serialized.includes(answerYoutubeClip.videoId) && !serialized.includes('answerYoutubeClip'));
   assert(serialized.includes(offlinePrivateAnswer)); assert(serialized.includes(offlinePrivateNote));
   for (const forbidden of ['contactEmail', 'managementTokenHash', 'refereeAccess', 'refreshToken', 'password', 'privatePem']) assert(!serialized.includes(forbidden), forbidden);
   scenarios.push('OFF01-real-private-prepare-P256-server-pin-safe-roster-no-store');

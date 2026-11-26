@@ -1,5 +1,5 @@
 import { parseFinalPage } from '../final-reveal/types';
-import { normalizeSlideDesign, normalizeShowPreferences, parseInterimBackdrop, parseShowCue } from '@filmovy-kviz/quiz-domain';
+import { parseAnswerYoutubeClip, normalizeSlideDesign, normalizeShowPreferences, parseInterimBackdrop, parseShowCue } from '@filmovy-kviz/quiz-domain';
 import { parsePublicLiveState } from './projectorChannel';
 import { parseResultPage } from '../leaderboard/types';
 import type { DocumentData } from 'firebase/firestore';
@@ -110,9 +110,13 @@ function presentation(value: unknown): SlidePresentationInput {
   };
 }
 
+function playbackMode(value: unknown): Pick<LiveControlState, 'mediaPlaybackMode'> {
+  return value === 'original' || value === 'answer' ? { mediaPlaybackMode: value } : {};
+}
+
 export function mapLiveControlState(id: string, data: DocumentData): LiveControlState {
   return {
-    ...(data.mediaPlaybackMode === 'original' ? { mediaPlaybackMode: 'original' as const } : {}),
+    ...playbackMode(data.mediaPlaybackMode),
     ...(data.showPreferences === undefined ? {} : { showPreferences: normalizeShowPreferences(data.showPreferences) }),
     ...(data.showCue === undefined ? {} : { showCue: parseShowCue(data.showCue) }),
     sessionId: id,
@@ -139,7 +143,9 @@ export function mapLiveControlState(id: string, data: DocumentData): LiveControl
 }
 
 export function mapLiveControlSlide(id: string, data: DocumentData): LiveControlSlide {
+  const answerClip = parseAnswerYoutubeClip(data.answerYoutubeClip);
   return {
+    ...(answerClip ? { answerYoutubeClip: answerClip } : {}),
     ...(optionalString(data, 'originalMediaSource') === undefined ? {} : { originalMediaSource: optionalString(data, 'originalMediaSource') }),
     ...(data.hidden === true ? { hidden: true } : {}),
     ...(object(data.design) ? { design: normalizeSlideDesign(data.design) } : {}),
@@ -173,12 +179,12 @@ export function mapLiveControlSlide(id: string, data: DocumentData): LiveControl
 }
 
 export function mapPublicLiveState(id: string, data: DocumentData): PublicLiveState {
-  if (data.mediaPlaybackMode !== undefined && (data.mediaPlaybackMode !== 'original' || data.answerRevealed !== true || data.renderMode !== 'recap')) throw new Error('Unsafe original video presentation.');
+  if (Object.hasOwn(data, 'answerYoutubeClip')) throw new Error('Private answer clip in public presentation.');
   if ((data.interimResults || data.finalReveal) && (data.status !== "active" || data.answerRevealed || data.mediaPlaybackState !== "idle" || data.revealedAnswer || data.recapQuestionPosition || data.mediaSource)) throw new Error("Unsafe result presentation.");
   if (data.finalReveal && data.interimResults) throw new Error("Conflicting result presentation.");
   const mapped: PublicLiveState = {
     ...(data.upcomingImages === undefined ? {} : { upcomingImages: data.upcomingImages as string[] }),
-    ...(data.mediaPlaybackMode === 'original' && data.answerRevealed === true && data.renderMode === 'recap' ? { mediaPlaybackMode: 'original' as const } : {}),
+    ...playbackMode(data.mediaPlaybackMode),
     ...(data.showCue === undefined ? {} : { showCue: parseShowCue(data.showCue) }),
     ...(data.interimBackdrop === undefined ? {} : { interimBackdrop: parseInterimBackdrop(data.interimBackdrop) }),
     ...(object(data.design) ? { design: normalizeSlideDesign(data.design) } : {}),

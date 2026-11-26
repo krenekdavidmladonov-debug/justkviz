@@ -245,11 +245,17 @@ async function run() {
     quizId: starter.quizId, slideId: question.id, expectedRevision: 0,
     slide: editorSlide({ kind: 'free', title: '', text: '', correctAnswer: '', options: [], answerMode: 'open', authoringStatus: 'ready' }),
   }), 'functions/invalid-argument');
+  const answerYoutubeClip = { videoId: 'AnswerVid01', startSeconds: 5, endSeconds: 8 };
   const saved = await invoke('updateQuizSlide', { quizId: starter.quizId, slideId: question.id, expectedRevision: 0,
-    slide: editorSlide({ kind: 'free', title: '', text: 'Zachované zadání', correctAnswer: 'Odpověď', options: [], authoringStatus: 'ready', answerMode: 'open' }) });
+    slide: editorSlide({ kind: 'free', title: '', text: 'Zachované zadání', correctAnswer: 'Odpověď', options: [], authoringStatus: 'ready', answerMode: 'open', answerYoutubeClip: { url: 'https://youtu.be/AnswerVid01', startSeconds: 5, endSeconds: 8 } }) });
   assert.equal((await invoke('createQuiz', starterRequest)).revision, saved.revision);
   assert.equal((await question.ref.get()).get('text'), 'Zachované zadání');
   assert.equal((await root.collection('slides').get()).size, 8);
+  assert.deepEqual((await question.ref.get()).get('answerYoutubeClip'), answerYoutubeClip);
+  const copiedStarter = await invoke('duplicateQuiz', { quizId: starter.quizId, expectedRevision: saved.revision,
+    title: 'Kopie s ukázkou odpovědi', requestId: createRequestId + '-clip-copy' });
+  const copiedQuestions = await adminDb.collection('quizzes/' + copiedStarter.quizId + '/slides').where('isQuestion', '==', true).get();
+  assert.deepEqual(copiedQuestions.docs[0].get('answerYoutubeClip'), answerYoutubeClip);
 
   // Replaying a creation committed before templates shipped must preserve its exact empty draft.
   const uid = auth.currentUser.uid;

@@ -12,6 +12,7 @@ export function slideView(slideId: string, data: Record<string, unknown>, answer
   const slide = mapEditorSlide(slideId, safeData);
   return { ...slide, correctAnswer: answers ? slide.correctAnswer : '', answerImage: answers ? slide.answerImage : '',
     originalMediaSource: answers ? verifiedOriginalYoutubeSource(safeData) : undefined,
+    answerYoutubeClip: answers ? slide.answerYoutubeClip : undefined,
     answerDesign: answers ? slide.answerDesign : undefined,
     answerExplanation: answers ? slide.answerExplanation : '', moderatorNote: notes ? slide.moderatorNote : '',
     media: slide.media.filter(m => m.role === 'prompt' || m.role === 'background' || (answers && m.role === 'answer')),

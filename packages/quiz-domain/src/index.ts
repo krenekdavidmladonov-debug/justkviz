@@ -19,3 +19,5 @@ export * from './scoring.js';
 export * from './media-readiness.js';
 
 export * from './event-quiz.js';
+
+export * from './answer-youtube.js';
