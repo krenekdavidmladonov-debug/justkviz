@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { stagingClient, stagingWebConfig } from '../staging/cloud.mjs';
 import { STAGING_PROJECT as PROJECT } from '../staging/guard.mjs';
+import { verifyFunctionRelease, createdFunctionOperations } from './release-verification.mjs';
 import { analyzeFunctionImpact } from './function-impact.mjs';
 import { functionIdentity, updatedFunctionIdentity, readFunctionOrigin, recordFunctionOrigin } from './function-origin.mjs';
 import { attemptJobs, checkedRun, verifyMainSuite } from './ci-proof.mjs';
@@ -133,7 +134,7 @@ export async function listDeployedFunctions(client) {
   return deployed;
 }
 
-export async function functionTargets(client, entryPoints) {
+export async function functionTargets(client, entryPoints, verify) {
   const deployed = await listDeployedFunctions(client);
   const existing = [];
   const missing = [];
@@ -162,6 +163,7 @@ export async function functionTargets(client, entryPoints) {
         fn.buildConfig.entryPoint !== entryPoint || !fn.updateTime) {
       throw new Error('Nelze bezpečně aktualizovat existující Gen 2 funkci ' + entryPoint + '.');
     }
+    if (verify) await verify(fn);
     const identity = functionIdentity(fn);
     existing.push({ name, entryPoint, updateTime: fn.updateTime, ...(identity && { identity }) });
   }
@@ -256,7 +258,7 @@ async function waitForBuild(operation) {
   return pollOperation({ apiOrigin: functionsOrigin, apiVersion: 'v2', operationResourceName: operation.name, masterTimeout: 900_000 });
 }
 
-export async function createPrivateReset(client, storageSource, wait = waitForBuild) {
+export async function createPrivateReset(client, storageSource, wait = waitForBuild, onCreated) {
   const name = location + '/functions/resetEventScores';
   const { body: scoring } = await client.get(location + '/functions/saveEventScore');
   const identity = scoring.serviceConfig?.serviceAccountEmail;
@@ -271,10 +273,11 @@ export async function createPrivateReset(client, storageSource, wait = waitForBu
   const fn = await wait(op);
   if (fn.name !== name || fn.state !== 'ACTIVE' || fn.serviceConfig?.serviceAccountEmail !== identity)
     throw new Error('Vytvoření resetEventScores nebylo potvrzeno.');
+  onCreated?.({ result: fn, startedAt: op.metadata?.createTime });
   return fn;
 }
 
-async function deployFunctions(client, targets, zip, completed) {
+async function deployFunctions(client, targets, zip, onUpdated) {
   const storageSource = await uploadSource(client, readFileSync(zip));
 
   for (let offset = 0; offset < targets.length; offset += FUNCTION_BATCH_SIZE) {
@@ -286,10 +289,7 @@ async function deployFunctions(client, targets, zip, completed) {
       const { body: operation } = await client.patch(target.name, functionSourcePatch(target.name, storageSource),
         { queryParams: { updateMask: 'buildConfig.source.storageSource' } });
       const fn = await waitForBuild(operation);
-      if (fn.name !== target.name || fn.state !== 'ACTIVE' || fn.buildConfig?.entryPoint !== target.entryPoint || !fn.updateTime || fn.updateTime === target.updateTime) {
-        throw new Error('Nelze potvrdit dokončenou aktualizaci ' + target.entryPoint + '.');
-      }
-      completed.set(target.entryPoint, updatedFunctionIdentity(body, fn));
+      await onUpdated(target, body, fn, operation);
       console.log('Functions hotovo: ' + target.entryPoint);
     }));
     const failure = batch.find(result => result.status === 'rejected');
@@ -314,6 +314,26 @@ export function finishFunctionRelease(before, completed, after, head, record = r
   }
 }
 
+// Verify the final inventory before recording it and publishing Hosting.
+export async function finishOption2({ functions, entryPoints, inventory, operations, plan, head, readRevision, publishHosting, record }) {
+  const planned = [...plan.existing.map(fn => fn.entryPoint), ...plan.missing];
+  if (planned.some(name => !operations.has(name)) || operations.size !== planned.length) {
+    throw new Error('Chybí výsledek plánované operace Functions.');
+  }
+  if (operations.size) {
+    const completed = new Map();
+    const after = await functionTargets(functions, entryPoints, async fn => {
+      const name = fn.buildConfig.entryPoint;
+      if (!operations.has(name)) return;
+      await verifyFunctionRelease(location + '/functions/' + name, operations.get(name), fn, readRevision);
+      completed.set(name, functionIdentity(fn));
+    });
+    if (completed.size !== operations.size) throw new Error('V živém inventáři chybí dokončená funkce.');
+    finishFunctionRelease(inventory, completed, after, head, record);
+  }
+  await publishHosting();
+}
+
 function checklist() {
   console.log('\nKontrola po nasazení:');
   console.log('- Titulní stránka ' + LIVE_URL + '/');
@@ -335,6 +355,9 @@ async function run() {
   if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('Vyžaduje se interaktivní terminál.');
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   try {
+    const { Client } = require('firebase-tools/lib/apiv2');
+    const runClient = new Client({ urlPrefix: 'https://run.googleapis.com', apiVersion: 'v2' });
+    const readRevision = async path => (await runClient.get(path)).body;
     const selection = options.mode === '--rollback' ? undefined : await rl.question(
       'PRODUKCE ' + LIVE_URL + '\n1) Jen web\n2) Web + Functions\n3) Web + Functions + Rules\n4) Speciální funkce D2\nVolba: ');
     if (menuAction(selection, options) === 'd2') {
@@ -353,7 +376,7 @@ async function run() {
         return record;
       };
       const client = await stagingClient(functionsOrigin, 'v2');
-      return await releaseSelection({ choice, root: ROOT, head, build: buildLockZip, proof, client, history: releaseHistory(historyDirectory()), upload: (api, data) => uploadSource(api, data, true),
+      return await releaseSelection({ choice, root: ROOT, head, build: buildLockZip, proof, client, readRevision, history: releaseHistory(historyDirectory()), upload: (api, data) => uploadSource(api, data, true),
         wait: waitForBuild, confirm: phrase => rl.question('Pro změnu jediné produkční funkce napište ' + phrase + ': ') });
     }
     const hosting = await stagingClient('https://firebasehosting.googleapis.com', 'v1beta1');
@@ -393,7 +416,6 @@ async function run() {
     const base = previousCommit(prior, options, head);
     const withFunctions = selection !== '1';
     const withRules = selection === '3';
-    const { Client } = require('firebase-tools/lib/apiv2');
     const functions = withFunctions ? new Client({ urlPrefix: functionsOrigin, apiVersion: 'v2' }) : undefined;
     const withStorageRules = withRules && await storageBucketExists(
       new Client({ urlPrefix: 'https://storage.googleapis.com', apiVersion: 'storage/v1' }));
@@ -429,30 +451,67 @@ async function run() {
       if (message) args.push('--message', message);
       execFileSync(process.execPath, args, { cwd: artifact.source, env: artifact.env, stdio: 'inherit', windowsHide: true });
     };
+    const publishHosting = async () => {
+      if (!isDeepStrictEqual(await current(), prior)) throw new Error('Aktivní Hosting se během nasazení změnil.');
+      deploy('hosting', messagePrefix + head);
+      const deployed = await current();
+      if (deployed.commit !== head || deployed.id === prior.id) throw new Error('Nové vydání Hostingu se nepodařilo potvrdit.');
+      showRelease(deployed);
+      checklist();
+    };
     try {
       await recheck();
       if (functions) {
         if (!isDeepStrictEqual(await functionTargets(functions, entryPoints), inventory)) throw new Error('Inventář Functions se od náhledu změnil.');
         const completed = new Map();
+        const operations = selection === '2' ? new Map() : undefined;
+        let creationStarted;
         await deployFunctionPlan(plan, artifact, {
-          deploy,
+          deploy: only => {
+            creationStarted = new Date().toISOString();
+            deploy(only);
+          },
           createReset: async zip => {
-            const fn = await createPrivateReset(functions, await uploadSource(functions, readFileSync(zip), true));
-            completed.set('resetEventScores', functionIdentity(fn));
+            const fn = await createPrivateReset(functions, await uploadSource(functions, readFileSync(zip), true),
+              waitForBuild, operation => operations?.set('resetEventScores', operation));
+            if (!operations) completed.set('resetEventScores', functionIdentity(fn));
           },
           verifyCreated: async created => {
+            if (operations && creationStarted) {
+              const receipts = await createdFunctionOperations(functions, location, created, creationStarted);
+              for (const name of created) operations.set(name, receipts.get(location + '/functions/' + name));
+            }
             const deployed = await listDeployedFunctions(functions);
             const absent = created.filter(entryPoint => deployed.get(location + '/functions/' + entryPoint)?.state !== 'ACTIVE');
             if (absent.length) throw new Error('Nové Functions nevznikly nebo nejsou ACTIVE: ' + absent.join(', ') + '. Web se nenasadil.');
             for (const entryPoint of created) {
               const fn = deployed.get(location + '/functions/' + entryPoint);
               if (fn.buildConfig?.entryPoint !== entryPoint) throw new Error('Nová funkce má neočekávaný entryPoint.');
-              // CLI create returns no operation receipt to this process. Only attest the original, unmodified creation.
-              if (!completed.has(entryPoint)) completed.set(entryPoint, fn.createTime && fn.createTime === fn.updateTime ? functionIdentity(fn) : undefined);
+              if (operations) {
+                await verifyFunctionRelease(location + '/functions/' + entryPoint, operations.get(entryPoint), fn, readRevision);
+              } else if (!completed.has(entryPoint)) {
+                // Option 3 retains its original CLI creation attestation.
+                completed.set(entryPoint, fn.createTime && fn.createTime === fn.updateTime ? functionIdentity(fn) : undefined);
+              }
             }
           },
-          update: (targets, zip) => deployFunctions(functions, targets, zip, completed),
+          update: (targets, zip) => deployFunctions(functions, targets, zip, async (target, previous, result, operation) => {
+            if (operations) {
+              const proof = { previous, result, startedAt: operation.metadata?.createTime };
+              await verifyFunctionRelease(target.name, proof, (await functions.get(target.name)).body, readRevision);
+              operations.set(target.entryPoint, proof);
+            } else {
+              if (result.name !== target.name || result.state !== 'ACTIVE' || result.buildConfig?.entryPoint !== target.entryPoint
+                || !result.updateTime || result.updateTime === target.updateTime) {
+                throw new Error('Nelze potvrdit dokončenou aktualizaci ' + target.entryPoint + '.');
+              }
+              completed.set(target.entryPoint, updatedFunctionIdentity(previous, result));
+            }
+          }),
         });
+        if (operations) {
+          return await finishOption2({ functions, entryPoints, inventory, operations, plan, head, readRevision, publishHosting });
+        }
         const planned = [...plan.existing.map(fn => fn.entryPoint), ...plan.missing];
         if (planned.some(name => !completed.has(name))) throw new Error('Chybí výsledek plánované operace Functions.');
         if (completed.size) {
@@ -461,12 +520,7 @@ async function run() {
         }
       }
       if (withRules) deploy(withStorageRules ? 'firestore:rules,storage' : 'firestore:rules');
-      if (!isDeepStrictEqual(await current(), prior)) throw new Error('Aktivní Hosting se během nasazení změnil.');
-      deploy('hosting', messagePrefix + head);
-      const deployed = await current();
-      if (deployed.commit !== head || deployed.id === prior.id) throw new Error('Nové vydání Hostingu se nepodařilo potvrdit.');
-      showRelease(deployed);
-      checklist();
+      await publishHosting();
     } finally {
       removeArtifact(artifact.directory);
     }

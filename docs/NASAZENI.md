@@ -20,6 +20,10 @@ Po úspěšné aktualizaci Functions ve volbě 2 nebo 3 skript porovná výsledk
 
 Volba 2 použije poslední úspěšně potvrzený záznam jen při přesné shodě živého inventáře a doloženém předkovi cílového commitu. První vydání, částečná změna po selhání nebo ruční zásah s odlišným otiskem vedou k plnému rozsahu. Pro záznam potřebuje účet v GitHub CLI oprávnění zapisovat Deployments v tomto repozitáři. Pokud zápis selže nebo nelze ověřit revizi či generaci, skript upozorní operátora. Bez odpovídajícího dokladu příští volba 2 obnoví celý běžný backend.
 
+Ve volbách 2 a 4 skript porovnává odpověď dokončené operace s nezávislým čtením funkce. Funkce musí být ACTIVE a musí souhlasit název služby, účet běhové služby, revize, build, runtime, entry point a zdrojový bucket, objekt a generace. Skript čtením konkrétní revize v Cloud Run ověří stav READY. Při aktualizaci požaduje novou revizi i změněný zdroj. Při vytvoření ověřuje výsledek CREATE pro konkrétní funkci. Pro novou funkci vytvořenou přes Firebase CLI musí najít jedinou úspěšnou operaci CREATE v časovém okně vydání.
+
+GCF může po dokončení operace posunout `updateTime`. Oba odečty proto musí být alespoň tak nové jako začátek operace. Samotný posun času umožní volbě 2 pokračovat vydáním webu a volbě 4 přejít k další potvrzené funkci. Neshoda ověřovaných údajů nebo chybějící READY revize vydání zastaví. Před zápisem se dál kontroluje, zda se funkce od náhledu změnila.
+
 ## Jak se ověřuje CI pro nasazení
 
 Každý PR projde plnou sadou na zkušebním sloučení, včetně emulátorů a prohlížečů. Každý push do `main` znovu provede typecheck, lint, build, unit testy, audit závislostí, krátké kontroly Windows a Linuxové sestavení ZIPu pro přesný commit `main`.

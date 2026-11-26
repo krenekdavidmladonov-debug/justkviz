@@ -33,8 +33,8 @@ test('D1 stops before planning an ordinary deployment of a missing or changed D2
 
 const source = { bucket: 'bucket', object: 'build.zip', generation: '11' };
 const original = { name: LOCK, state: 'ACTIVE', environment: 'GEN_2', updateTime: '2026-11-25T10:00:00Z',
-  serviceConfig: { service: REGION_PATH + '/services/lockeventquiz', revision: 'lockeventquiz-001-test' },
-  buildConfig: { runtime: 'nodejs22', entryPoint: 'lockEventQuiz', environmentVariables: { GOOGLE_NODE_RUN_SCRIPTS: 'gcp-build' },
+  serviceConfig: { serviceAccountEmail: 'runtime@example.test', service: REGION_PATH + '/services/lockeventquiz', revision: 'lockeventquiz-001-test' },
+  buildConfig: { build: 'build-reference', runtime: 'nodejs22', entryPoint: 'lockEventQuiz', environmentVariables: { GOOGLE_NODE_RUN_SCRIPTS: 'gcp-build' },
     source: { storageSource: { ...source, generation: '10' } } } };
 function scenario() {
   const before = structuredClone(original);
@@ -48,19 +48,46 @@ function scenario() {
       patch(name, body, query) {
         assert.equal(name, LOCK); assert.deepEqual(query, { queryParams: { updateMask: 'buildConfig.source.storageSource' } });
         assert.deepEqual(body, { name: LOCK, buildConfig: { source: { storageSource: source } } });
-        calls.push('patch'); return { body: { name: 'op' } };
+        calls.push('patch'); return { body: { name: 'op', metadata: { createTime: '2026-11-25T10:00:30Z' } } };
       },
     },
     upload(api, archive) { assert.equal(api, options.client); assert.equal(archive, bytes); calls.push('upload'); return source; },
-    wait(op) { assert.deepEqual(op, { name: 'op' }); calls.push('wait'); return after; },
+    readRevision: name => ({ name, conditions: [{ type: 'Ready', state: 'CONDITION_SUCCEEDED' }] }),
+    wait(op) {
+      assert.equal(op.name, 'op');
+      calls.push('wait');
+      return { ...after, updateTime: op.metadata.createTime };
+    },
   };
   return { options, before, after, calls };
 }
 test('D2 updates exactly one existing resource, then verifies its actual revision', async () => {
   const { options, calls } = scenario();
-  await publishD2(options);
+  const deployed = await publishD2(options);
+  assert.equal(deployed.updateTime, '2026-11-25T10:01:00Z');
   assert.deepEqual(calls, ['upload', 'patch', 'wait']);
 });
+test('D2 rejects independent reads with changed release fields and a revision that is not READY', async () => {
+  const changes = [
+    fn => { fn.state = 'FAILED'; }, fn => { fn.serviceConfig.revision += '-other'; },
+    fn => { fn.buildConfig.build += '-other'; }, fn => { fn.serviceConfig.serviceAccountEmail = 'other@example.test'; },
+    ...['bucket', 'object', 'generation'].map(key => fn => { fn.buildConfig.source.storageSource[key] = '12'; }),
+  ];
+  for (const change of changes) {
+    const s = scenario();
+    const get = s.options.client.get;
+    s.options.client.get = name => {
+      const fn = structuredClone(get(name).body);
+      if (s.calls.includes('wait')) change(fn);
+      return { body: fn };
+    };
+    await assert.rejects(publishD2(s.options));
+  }
+  const s = scenario();
+  s.options.readRevision = name => ({ name, conditions: [] });
+  await assert.rejects(publishD2(s.options), /READY/u);
+});
+
 test('no upload or PATCH on wrong confirmation, different ZIP, wrong service or build configuration', async () => {
   const variants = [
     s => { s.options.confirm = () => 'ANO'; }, s => { s.options.bytes = Buffer.from('another ZIP'); },
