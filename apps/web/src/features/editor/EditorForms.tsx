@@ -1,3 +1,4 @@
+import { AnswerYoutubeField } from './AnswerYoutubeField';
 import { AnswerLengthWarning } from '../preflight/AnswerLengthMeasurement';
 import { parseQuizAsset, directMediaKind, type EditorAppearance } from '@filmovy-kviz/quiz-domain';
 import { MediaUploadField } from '../media/MediaUploadField';
@@ -412,6 +413,7 @@ export function QuestionForm({
         <MediaUploadField key={slide.id + ':answer'} kind="image" label="Obrázek odpovědi (soukromý)" value={slide.answerImage} disabled={disabled || !answersEditable} onReady={value => onChange({ ...slide, answerImage: value })} />
         <label className="form-field">Vysvětlení pro hráče po odhalení<textarea disabled={disabled || !answersEditable} value={slide.answerExplanation ?? ''} onChange={event => onChange({ ...slide, answerExplanation: event.target.value })} /></label>
       </>}</EditorDisclosure>}
+      {answersReadable && <EditorDisclosure field="answerYoutubeClip" title="Ukázka odpovědi (YouTube)" busy={disabled}>{() => <AnswerYoutubeField key={slide.id} slide={slide} disabled={disabled || !answersEditable} onChange={onChange} />}</EditorDisclosure>}
       {notesReadable && <details className="editor-extra"><summary>Poznámka moderátora</summary><label className="form-field">Poznámka moderátora<textarea rows={3} disabled={disabled || !notesEditable} value={slide.moderatorNote} onChange={event => onChange({ ...slide, moderatorNote: event.target.value })} /></label></details>}
       {showAllIssues && <ReadinessSummary slide={slide} />}
     </section>

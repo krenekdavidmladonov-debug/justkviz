@@ -1,6 +1,6 @@
 import type { MediaPlaybackState } from '../presentation/types';
 import type { PublicLiveState, PublicMedia } from './types';
-import { youtubeVideoId, normalizeSlideDesign, parseInterimBackdrop, parseShowCue, type SlideDesign } from '@filmovy-kviz/quiz-domain';
+import { parseAnswerYoutubeClip, youtubeVideoId, normalizeSlideDesign, parseInterimBackdrop, parseShowCue, type SlideDesign } from '@filmovy-kviz/quiz-domain';
 import { parseResultPage } from '../leaderboard/types';
 import { parseFinalPage } from '../final-reveal/types';
 import {
@@ -168,10 +168,16 @@ export function parsePublicLiveState(value: unknown): PublicLiveState | undefine
 
   const normalAudio = data.presentationMode === 'slide'
     && (data.slideKind === 'audio' || data.slideKind === 'music');
-  if (Object.hasOwn(data, 'mediaPlaybackMode') && (data.mediaPlaybackMode !== 'original' || !data.answerRevealed || data.status !== 'active'
-    || data.renderMode !== 'recap' || typeof data.mediaSource !== 'string' || !youtubeVideoId(data.mediaSource)
-    || data.clipStartSeconds !== 0 || Object.hasOwn(data, 'clipEndSeconds'))) return undefined;
-  if (normalAudio && data.mediaPlaybackMode !== 'original' && (Object.hasOwn(data, 'mediaSource')
+  if (Object.hasOwn(data, 'mediaPlaybackMode')) {
+    if (!data.answerRevealed || data.status !== 'active' || data.renderMode !== 'recap' || typeof data.mediaSource !== 'string') return undefined;
+    const videoId = youtubeVideoId(data.mediaSource);
+    if (!videoId) return undefined;
+    if (data.mediaPlaybackMode === 'answer') {
+      if (data.mediaSource !== 'https://www.youtube.com/watch?v=' + videoId || typeof data.clipStartSeconds !== 'number'
+        || !parseAnswerYoutubeClip({ videoId, startSeconds: data.clipStartSeconds, endSeconds: data.clipEndSeconds })) return undefined;
+    } else if (data.mediaPlaybackMode !== 'original' || data.clipStartSeconds !== 0 || Object.hasOwn(data, 'clipEndSeconds')) return undefined;
+  }
+  if (normalAudio && data.mediaPlaybackMode === undefined && (Object.hasOwn(data, 'mediaSource')
     || media.some((item) => item.kind === 'audio' || item.kind === 'video'))) return undefined;
 
   const result = additions.interimResults ?? additions.finalReveal;
@@ -186,7 +192,7 @@ export function parsePublicLiveState(value: unknown): PublicLiveState | undefine
   return {
     ...additions,
     ...(data.upcomingImages === undefined ? {} : { upcomingImages: data.upcomingImages as string[] }),
-    ...(data.mediaPlaybackMode === 'original' ? { mediaPlaybackMode: 'original' as const } : {}),
+    ...(data.mediaPlaybackMode === 'original' || data.mediaPlaybackMode === 'answer' ? { mediaPlaybackMode: data.mediaPlaybackMode } : {}),
     ...(data.roundNumber === undefined ? {} : { roundNumber: data.roundNumber as number }),
     ...(data.roundTitle === undefined ? {} : { roundTitle: data.roundTitle as string }),
     ...(data.subtitle === undefined ? {} : { subtitle: data.subtitle as string }),

@@ -671,3 +671,36 @@ test('question presentation is monotonic, while a new intro-only session can sti
   expect(buildPublicSessionState(returned, intro)).not.toHaveProperty('hasPresentedQuestion');
   expect(applyLiveSessionAction(session(), { type: 'go-to-slide', position: 1, slideId: intro.id }, 1, 'staff', now, intro).hasPresentedQuestion).toBeUndefined();
 });
+
+test('answer clip is private until selected for playback and is excluded from the offline manifest', () => {
+  const answerYoutubeClip = { videoId: 'AnswerVid01', startSeconds: 5, endSeconds: 8 };
+  const slide = { ...questionSlide(), answerYoutubeClip };
+  const current = session();
+  expect(JSON.stringify(buildPublicSessionState(current, slide))).not.toContain(answerYoutubeClip.videoId);
+  const ambiguousLegacy = { ...slide, kind: 'video', mediaSource: 'https://youtu.be/PromptVid01',
+    media: [{ role: 'prompt', kind: 'video', value: 'https://youtu.be/PromptVid01', url: 'https://youtu.be/AnswerVid01' }] };
+  expect(() => buildPublicSessionState(current, ambiguousLegacy)).toThrow(/question media/);
+  const command = { type: 'play-media', mode: 'answer' } as const;
+  expect(() => applyLiveSessionAction(current, command, 1, 'staff', now, slide)).toThrow();
+  const revealed = applyLiveSessionAction(current, { type: 'reveal-answer' }, 1, 'staff', now, slide);
+  expect(JSON.stringify(buildPublicSessionState(revealed, slide))).not.toContain(answerYoutubeClip.videoId);
+  expect(() => applyLiveSessionAction(revealed, command, 2, 'staff', now, questionSlide())).toThrow();
+  const playing = applyLiveSessionAction(revealed, command, 2, 'staff', now, slide);
+  const state = buildPublicSessionState(playing, slide);
+  expect(state).toMatchObject({ mediaPlaybackMode: 'answer', clipStartSeconds: 5, clipEndSeconds: 8, revealedAnswer: slide.correctAnswer });
+  expect(state).not.toHaveProperty('answerYoutubeClip');
+  expect(() => buildPublicSessionState(playing, { ...slide, id: 'another-question' })).toThrow();
+  expect(() => mapPublicLiveState(current.sessionId, { ...buildPublicSessionState(current, slide), answerYoutubeClip })).toThrow();
+  const channel = sanitizedChannelState(mapPublicLiveState(current.sessionId, state));
+  expect(parsePublicLiveState(channel)?.mediaSource).toBe('https://www.youtube.com/watch?v=AnswerVid01');
+  for (const patch of [{ answerRevealed: false }, { status: 'ended' }, { clipEndSeconds: 4 }, { answerYoutubeClip },
+    { presentationMode: 'recap' }, { mediaSource: 'https://example.test/watch?v=AnswerVid01' }]) {
+    expect(parsePublicLiveState({ ...channel, ...patch })).toBeUndefined();
+  }
+  const hidden = applyLiveSessionAction(playing, { type: 'hide-answer' }, 3, 'staff', now, slide);
+  expect(JSON.stringify(buildPublicSessionState(hidden, slide))).not.toContain(answerYoutubeClip.videoId);
+  expect(() => applyMediaPlaybackReport(hidden, 'playing', playing.mediaGeneration, 'staff', now)).toThrow();
+  const manifest = offlineManifest({ slides: offlineSlides({}, [{ id: slide.id, data: slide }], []) });
+  expect(JSON.stringify(manifest)).not.toContain(answerYoutubeClip.videoId);
+  expect(manifest.slides[0]?.correctAnswer).toBe(slide.correctAnswer);
+});

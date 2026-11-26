@@ -263,3 +263,71 @@ test('lost quiz creation restores the same attempt on reload and permits a delib
     expect(new Set(committedIds).size).toBe(3);
   } finally { await context.close(); }
 });
+
+
+test('independent answer clip validates, survives reload, changes and can be removed @seeded', async ({ browser }) => {
+  const context = await browser.newContext();
+  await restrictToLocalhost(context);
+  const page = await context.newPage();
+  const saved: { videoId: string; startSeconds?: number; endSeconds?: number }[] = [];
+  page.on('request', request => {
+    if (request.method() === 'POST' && request.url().endsWith('/updateQuizSlide')) {
+      const data = request.postDataJSON() as { data: { slide: { answerYoutubeClip?: typeof saved[number] } } };
+      if (data.data.slide.answerYoutubeClip) saved.push(data.data.slide.answerYoutubeClip);
+    }
+  });
+  const openClip = async () => {
+    const disclosure = page.locator('details.editor-extra').filter({ has: page.locator('summary', { hasText: /^Ukázka odpovědi \(YouTube\)$/ }) });
+    if (!await disclosure.evaluate(node => (node as HTMLDetailsElement).open)) await disclosure.locator('summary').click();
+  };
+  const save = async () => {
+    await page.getByRole('button', { name: 'Uložit vše', exact: true }).click();
+    await expect(page.locator('.save-state')).toHaveText('Uloženo');
+  };
+  const reload = async () => {
+    await page.reload();
+    await selectOnlyQuestion(page);
+    await openClip();
+  };
+  try {
+    await login(page);
+    await page.goto('/admin/quizzes/new');
+    await page.getByLabel('Název kvízu').fill('Samostatná odpověď YouTube');
+    await page.getByRole('button', { name: 'Vytvořit', exact: true }).click();
+    await expect(page).toHaveURL(/\/edit$/u);
+    await selectOnlyQuestion(page);
+    await page.getByLabel('Otázka *', { exact: true }).fill('Syntetická otázka s ukázkou odpovědi');
+    await page.getByLabel('Správná odpověď *', { exact: true }).fill('Odpověď zůstává textová');
+    await page.getByRole('button', { name: 'Dokončit otázku', exact: true }).click();
+    await expect(page.locator('.save-state')).toHaveText('Uloženo');
+    await openClip();
+    const url = page.getByLabel('Odkaz na ukázku odpovědi', { exact: true });
+    await url.fill('https://youtube.com.evil.test/watch?v=answer12345');
+    await page.getByRole('button', { name: 'Uložit vše', exact: true }).click();
+    await expect(page.locator('.round-editor-error')).toContainText('Před uložením opravte');
+    expect(saved).toHaveLength(0);
+    await url.fill('https://www.youtube.com/watch?v=answer12345');
+    await page.getByLabel('Začátek ukázky odpovědi').fill('6');
+    await page.getByLabel('Konec ukázky odpovědi').fill('0:05');
+    await expect(page.getByText('Zadejte platný odkaz YouTube a časování. Konec musí být po začátku.', { exact: true })).toBeVisible();
+    await page.getByLabel('Konec ukázky odpovědi').fill('0:12');
+    await save();
+    expect(saved.at(-1)).toEqual({ videoId: 'answer12345', startSeconds: 6, endSeconds: 12 });
+    await reload();
+    await expect(page.getByLabel('Odkaz na ukázku odpovědi')).toHaveValue('https://youtu.be/answer12345');
+    await expect(page.getByLabel('Začátek ukázky odpovědi')).toHaveValue('6');
+    await expect(page.getByLabel('Konec ukázky odpovědi')).toHaveValue('12');
+    await page.getByLabel('Odkaz na ukázku odpovědi').fill('https://youtube.com/shorts/changed1234');
+    await page.getByLabel('Začátek ukázky odpovědi').fill('');
+    await page.getByLabel('Konec ukázky odpovědi').fill('');
+    await save();
+    expect(saved.at(-1)).toEqual({ videoId: 'changed1234' });
+    await reload();
+    await expect(page.getByLabel('Odkaz na ukázku odpovědi')).toHaveValue('https://youtu.be/changed1234');
+    await page.getByRole('button', { name: 'Odebrat ukázku odpovědi', exact: true }).click();
+    await save();
+    await reload();
+    await expect(page.getByLabel('Odkaz na ukázku odpovědi')).toHaveValue('');
+    await expect(page.getByLabel('Správná odpověď *', { exact: true })).toHaveValue('Odpověď zůstává textová');
+  } finally { await context.close(); }
+});

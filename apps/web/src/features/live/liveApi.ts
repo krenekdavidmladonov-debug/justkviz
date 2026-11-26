@@ -21,7 +21,7 @@ export const nextSlide = (sessionId: string, expectedRevision: number) => invoke
 export const previousSlide = (sessionId: string, expectedRevision: number) => invoke('goToSlide', { sessionId, expectedRevision, direction: -1 });
 export const revealAnswer = revisionAction('revealAnswer');
 export const hideAnswer = (sessionId: string, expectedRevision: number) => invoke('revealAnswer', { sessionId, action: 'hide', expectedHideRevision: expectedRevision });
-export const playMedia = (sessionId: string, expectedRevision: number, mode: 'clip' | 'original' = 'clip') => invoke('playMedia', { sessionId, expectedRevision, mode });
+export const playMedia = (sessionId: string, expectedRevision: number, mode: 'clip' | 'original' | 'answer' = 'clip') => invoke('playMedia', { sessionId, expectedRevision, mode });
 export const stopMedia = revisionAction('stopMedia');
 export const replayMedia = revisionAction('replayMedia');
 export const startIntro = revisionAction('startIntro');

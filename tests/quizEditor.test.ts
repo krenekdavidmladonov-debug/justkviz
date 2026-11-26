@@ -465,3 +465,10 @@ test('an automatically created agenda stays visible when its entries become manu
   expect(() => applyKnownSlideUpdate(automatic, input({ automaticAgenda: false, hidden: true }))).toThrow();
   expect(applyKnownSlideUpdate({ ...automatic, hidden: true }, input({ hidden: true })).hidden).toBe(true);
 });
+
+
+test('answer clips are private to accounts with answer read access', () => {
+  const source = { position: 1, kind: 'free', isQuestion: true, answerYoutubeClip: { videoId: 'answer12345', startSeconds: 3 } };
+  expect(slideView('q', source, true, false).answerYoutubeClip).toEqual(source.answerYoutubeClip);
+  expect(JSON.stringify(slideView('q', source, false, true))).not.toContain('answer12345');
+});

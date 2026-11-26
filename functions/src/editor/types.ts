@@ -1,3 +1,4 @@
+import type { AnswerYoutubeClip } from '@filmovy-kviz/quiz-domain';
 import type { SlideDesign } from '@filmovy-kviz/quiz-domain';
 export const editorSlideKinds = [
   'intro',
@@ -57,6 +58,7 @@ export interface EditorSlideInput {
   readonly answerMode?: 'open' | 'choice';
   readonly imageLayout?: 'split' | 'stacked';
   readonly answerExplanation?: string;
+  readonly answerYoutubeClip?: AnswerYoutubeClip | null;
 
   readonly kind: EditorSlideKind;
   readonly title: string;

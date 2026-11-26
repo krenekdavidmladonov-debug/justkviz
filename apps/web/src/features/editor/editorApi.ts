@@ -35,6 +35,7 @@ function slidePayload(slide: EditorSlide) {
     moderatorNote: slide.moderatorNote,
     options: [...slide.options],
     correctAnswer: slide.correctAnswer,
+    answerYoutubeClip: slide.answerYoutubeClip ?? null,
     media: slide.media.map((media) => ({ ...media })),
     presentation: { ...slide.presentation },
     backgroundImage: slide.backgroundImage,

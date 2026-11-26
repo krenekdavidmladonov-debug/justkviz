@@ -1,3 +1,4 @@
+import { parseAnswerYoutubeClip } from './answer-youtube.js';
 import { originalYoutubeSource } from './original-media.js';
 import {
   editableSlideKinds,
@@ -127,6 +128,7 @@ export function mapEditorSlide(id: string, data: DocumentData): EditorSlide {
     moderatorNote: optionalText(data.moderatorNote),
     options: Array.isArray(data.options) ? data.options.map(optionalText) : [],
     correctAnswer: optionalText(data.correctAnswer),
+    ...(data.isQuestion === true && parseAnswerYoutubeClip(data.answerYoutubeClip) ? { answerYoutubeClip: parseAnswerYoutubeClip(data.answerYoutubeClip)! } : {}),
     media: mapMedia(data.media),
     presentation: mappedPresentation,
     ...(Number.isInteger(data.questionNumber) ? { questionNumber: data.questionNumber as number } : {}),

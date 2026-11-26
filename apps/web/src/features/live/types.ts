@@ -1,4 +1,4 @@
-import type { FinalRevealPage, FinalRevealState, SlideDesign, InterimBackdrop, ShowCue, ShowPreferences } from '@filmovy-kviz/quiz-domain';
+import type { AnswerYoutubeClip, FinalRevealPage, FinalRevealState, SlideDesign, InterimBackdrop, ShowCue, ShowPreferences } from '@filmovy-kviz/quiz-domain';
 import type { ResultPage } from '../leaderboard/types';
 import type { MediaPlaybackCommand, MediaPlaybackState, SlidePresentationInput } from '../presentation/types';
 
@@ -7,7 +7,7 @@ export type LivePresentationMode = 'slide' | 'recap';
 export type LiveRenderMode = 'question' | 'recap' | 'roundIntro' | 'agenda' | 'rules' | 'end';
 
 export interface LiveControlState {
-  readonly mediaPlaybackMode?: 'original';
+  readonly mediaPlaybackMode?: 'original' | 'answer';
   readonly showPreferences?: ShowPreferences;
   readonly showCue?: ShowCue;
   readonly sessionId: string;
@@ -39,6 +39,7 @@ export interface LiveControlMedia {
 }
 
 export interface LiveControlSlide {
+  readonly answerYoutubeClip?: AnswerYoutubeClip;
   readonly originalMediaSource?: string;
   readonly hidden?: boolean;
   readonly design?: SlideDesign;
@@ -78,7 +79,7 @@ export interface PublicMedia {
 
 export interface PublicLiveState {
   readonly upcomingImages?: readonly string[];
-  readonly mediaPlaybackMode?: 'original';
+  readonly mediaPlaybackMode?: 'original' | 'answer';
   readonly showCue?: ShowCue;
   readonly interimBackdrop?: InterimBackdrop;
   readonly design?: SlideDesign;

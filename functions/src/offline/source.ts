@@ -63,8 +63,9 @@ export function offlineSlides(snapshot: Record<string, unknown>, slides: { id: s
       for (const field of ['role', 'kind', 'source', 'url', 'value']) if (media[field] !== undefined && typeof media[field] !== 'string') throw offlineUnavailable();
     }
     const appearance = resolveLegacySlideAppearance(snapshot.defaultAppearance, data);
-    const { originalMediaSource, ...safe } = slideView(row.id, { ...data, ...appearance, design: resolveSlideDesign(snapshot.defaultDesign, round?.design, data.design) }, true, true, { preserveStoredImages: true });
+    const { originalMediaSource, answerYoutubeClip, ...safe } = slideView(row.id, { ...data, ...appearance, design: resolveSlideDesign(snapshot.defaultDesign, round?.design, data.design) }, true, true, { preserveStoredImages: true });
     void originalMediaSource;
+    void answerYoutubeClip;
     return safe;
   });
 }

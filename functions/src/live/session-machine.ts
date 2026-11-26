@@ -46,7 +46,7 @@ function withoutShowState(session: PrivateLiveSession): PrivateLiveSession {
   const { interimReturn, showCue, ...clean } = session; void interimReturn; void showCue;
   return clean;
 }
-function withoutOriginalPlayback(session: PrivateLiveSession): PrivateLiveSession {
+function withoutMediaPlaybackMode(session: PrivateLiveSession): PrivateLiveSession {
   const { mediaPlaybackMode, ...clean } = session; void mediaPlaybackMode;
   return clean;
 }
@@ -106,7 +106,7 @@ export function applyLiveSessionAction(
       throw new LiveSessionError('failed-precondition', 'The requested recap question is unavailable.');
     }
     return {
-      ...withoutOriginalPlayback(session), ...common, hasPresentedQuestion: true, answerRevealed: true,
+      ...withoutMediaPlaybackMode(session), ...common, hasPresentedQuestion: true, answerRevealed: true,
       recapQuestionPosition: slide.position, recapQuestionId: slide.id,
       mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: session.mediaGeneration + 1,
     };
@@ -122,30 +122,34 @@ export function applyLiveSessionAction(
     if (session.presentationMode !== 'slide' || !slide.isQuestion || displayAnswer(slide.correctAnswer, slide.kind) === undefined) {
       throw new LiveSessionError('failed-precondition', 'This slide has no displayable answer.');
     }
-    return { ...withoutOriginalPlayback(session), ...common, answerRevealed: true, mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: session.mediaGeneration + 1 };
+    return { ...withoutMediaPlaybackMode(session), ...common, answerRevealed: true, mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: session.mediaGeneration + 1 };
   }
-  if (action.type === 'hide-answer') return { ...withoutOriginalPlayback(session), ...common, answerRevealed: false, mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: session.mediaGeneration + 1 };
+  if (action.type === 'hide-answer') return { ...withoutMediaPlaybackMode(session), ...common, answerRevealed: false, mediaCommand: 'idle', mediaPlaybackState: 'idle', mediaGeneration: session.mediaGeneration + 1 };
   if (action.type === 'start-intro') {
     if (!isIntroKind(slide.kind) || session.presentationMode !== 'slide') {
       throw new LiveSessionError('failed-precondition', 'The current slide has no intro animation.');
     }
     return { ...session, ...common, introGeneration: session.introGeneration + 1 };
   }
-  if (!isMediaKind(slide.kind)) throw new LiveSessionError('failed-precondition', 'The current slide has no playable media.');
+  const mode = action.type === 'play-media' ? action.mode : session.mediaPlaybackMode;
+  if (mode === 'answer') {
+    if (!session.answerRevealed || !slide.isQuestion || !slide.answerYoutubeClip) {
+      throw new LiveSessionError('failed-precondition', 'Answer clip requires a revealed question with a saved clip.');
+    }
+  } else if (!isMediaKind(slide.kind)) throw new LiveSessionError('failed-precondition', 'The current slide has no playable media.');
   const command = action.type === 'play-media' ? 'play'
     : action.type === 'replay-media' ? 'replay'
       : action.type === 'stop-media' ? 'stop'
         : action.type === 'finish-media' ? 'finished'
           : undefined;
   if (command === undefined) throw new LiveSessionError('invalid-argument', 'Unsupported live action.');
-  const mode = action.type === 'play-media' ? action.mode === 'original' ? 'original' : undefined : session.mediaPlaybackMode;
   if (mode === 'original' && (!session.answerRevealed || !slide.isQuestion || !originalYoutubeSource(slide))) {
     throw new LiveSessionError('failed-precondition', 'Original video requires an explicitly revealed answer and a supported source.');
   }
   const mediaPlaybackState = command === 'play' || command === 'replay' ? 'preparing'
     : command === 'finished' ? 'finished' : 'idle';
   const { mediaPlaybackMode, ...clean } = session; void mediaPlaybackMode;
-  return { ...clean, ...common, ...(mode ? { mediaPlaybackMode: mode } : {}), mediaCommand: command, mediaPlaybackState, mediaGeneration: session.mediaGeneration + 1 };
+  return { ...clean, ...common, ...(mode === 'answer' || mode === 'original' ? { mediaPlaybackMode: mode } : {}), mediaCommand: command, mediaPlaybackState, mediaGeneration: session.mediaGeneration + 1 };
 }
 
 export function applyMediaPlaybackReport(

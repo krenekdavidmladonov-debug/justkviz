@@ -8,11 +8,20 @@ import { assertFinalPayload } from '../e2e/final-payload.mjs';
 async function guard(context) {
   await context.route('**/*', route => ['127.0.0.1', 'localhost'].includes(new URL(route.request().url()).hostname) ? route.continue() : route.abort());
   await context.addInitScript(() => {
-    window.__winnerPlayer = { starts: 0, stops: 0, active: 0, volumes: [], startsAt: [], deny: false };
+    window.__winnerPlayer = { starts: 0, stops: 0, active: 0, volumes: [], startsAt: [], resources: [], loads: [], deny: false };
     window.YT = { PlayerState: { PLAYING: 1, ENDED: 0 }, Player: class {
-      constructor(element, options) { this.options = options; this.time = 0; this.playing = false; this.element = element; window.__winnerPlayer.active++; setTimeout(() => options.events.onReady(), 0); }
+      constructor(element, options) {
+        this.options = options;
+        this.time = 0;
+        this.playing = false;
+        this.element = element;
+        window.__winnerPlayer.resources.push(options.videoId);
+        window.__winnerPlayer.finish = () => options.events.onStateChange({ data: 0 });
+        window.__winnerPlayer.active++;
+        setTimeout(() => options.events.onReady(), 0);
+      }
       cueVideoById(options) { this.time = options.startSeconds ?? 0; }
-      loadVideoById(options) { this.time = options.startSeconds ?? 0; this.playVideo(); }
+      loadVideoById(options) { window.__winnerPlayer.loads.push(options); this.time = options.startSeconds ?? 0; this.playVideo(); }
       playVideo() {
         if (window.__winnerPlayer.deny) { this.options.events.onAutoplayBlocked?.(); return; }
         this.playing = true; window.__winnerPlayer.starts++; window.__winnerPlayer.startsAt.push(this.time); this.options.events.onStateChange({ data: 1 });
@@ -202,4 +211,71 @@ for (const superseding of ['none', 'hide', 'END', 'replacement', 'navigation', '
     if (superseding === 'none') { await expect(page.getByRole('region', { name: 'Hudba pro vítěze', exact: true })).toBeVisible(); expect(await starts(page)).toBe(1); }
     else { await expect(page.getByRole('region', { name: 'Hudba pro vítěze', exact: true })).toHaveCount(0); expect(await starts(page)).toBe(0); }
   } finally { hold?.release(); await page.evaluate(() => window.__releaseFirestore?.()).catch(() => {}); await projection?.context.close(); await f.close(); }
+});
+
+test('moderator explicitly plays a separate answer clip on direct reveal and selected recap', async ({ page, context, browser, baseURL }) => {
+  const f = await finalFixture(2);
+  const clip = { videoId: 'AnswerVid01', startSeconds: 7, endSeconds: 12 };
+  let projector;
+  try {
+    const slides = f.db.collection('quizSnapshots/' + f.snapshotId + '/slides');
+    await slides.doc('s3').update({ kind: 'video', mediaSource: 'https://www.youtube.com/watch?v=PromptVid01', answerYoutubeClip: clip });
+    await slides.doc('s4').update({ answerYoutubeClip: clip });
+    await guard(context);
+    await login(page, f);
+    projector = await display(browser, f, baseURL);
+    const screen = projector.page;
+    const play = page.getByRole('button', { name: 'Přehrát ukázku odpovědi', exact: true });
+    const answer = screen.locator('.slide-answer-value');
+    const go = async position => {
+      await f.call('goToSlide', { sessionId: f.sessionId, expectedRevision: (await f.session()).revision, position });
+      await expect(page.locator('.live-control')).toHaveAttribute('data-current-position', String(position));
+    };
+    await go(3);
+    await expect.poll(() => screen.evaluate(() => window.__winnerPlayer.resources)).toContain('PromptVid01');
+    await expect(play).toHaveCount(0);
+    expect(JSON.stringify(await f.rawPublic())).not.toContain(clip.videoId);
+    expect(await screen.evaluate(() => window.__winnerPlayer.resources)).not.toContain(clip.videoId);
+    await expect(f.call('playMedia', { sessionId: f.sessionId, expectedRevision: (await f.session()).revision, mode: 'answer' })).rejects.toMatchObject({ code: 'functions/failed-precondition' });
+    await page.getByRole('button', { name: 'Odhalit odpověď', exact: true }).click();
+    const member = f.db.doc('memberships/' + f.admin.uid);
+    const grant = (await member.get()).data();
+    await member.update({ permissions: grant.permissions.filter(p => p !== 'event.answers.read'), version: grant.version + 1 });
+    await expect(f.admin.call('playMedia', { sessionId: f.sessionId, expectedRevision: (await f.session()).revision, mode: 'answer' }))
+      .rejects.toMatchObject({ code: 'functions/permission-denied' });
+    for (const attempt of [1, 2]) {
+      await expect(answer).toHaveText('PRIVATE ANSWER SENTINEL');
+      expect(JSON.stringify(await f.rawPublic())).not.toContain(clip.videoId);
+      await play.click();
+      await expect.poll(() => screen.evaluate(() => window.__winnerPlayer.loads.filter(x => x.videoId === 'AnswerVid01'))).toHaveLength(attempt);
+      expect(await screen.evaluate(() => window.__winnerPlayer.loads.at(-1))).toEqual(clip);
+      await expect(answer).toBeVisible();
+      await expect(answer).toHaveText('PRIVATE ANSWER SENTINEL');
+      expect(await starts(page)).toBe(0);
+      if (attempt === 1) {
+        await page.getByRole('button', { name: 'Skrýt odpověď', exact: true }).click();
+        await expect(answer).toHaveCount(0);
+        expect(JSON.stringify(await f.rawPublic())).not.toContain(clip.videoId);
+        await go(5);
+        await expect(play).toHaveCount(0);
+        await page.getByRole('button', { name: 'Zobrazit odpověď na otázku 2', exact: true }).click();
+      }
+    }
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
+    await expect.poll(() => screen.evaluate(() => window.__winnerPlayer.active)).toBe(0);
+    await expect(answer).toBeVisible();
+    await page.getByRole('button', { name: 'Pustit znovu', exact: true }).click();
+    await expect.poll(() => screen.evaluate(() => window.__winnerPlayer.loads.filter(x => x.videoId === 'AnswerVid01'))).toHaveLength(3);
+    expect(await screen.evaluate(() => window.__winnerPlayer.loads.at(-1))).toEqual(clip);
+    await screen.evaluate(() => window.__winnerPlayer.finish());
+    await expect.poll(() => screen.evaluate(() => window.__winnerPlayer.active)).toBe(0);
+    await expect(answer).toBeVisible();
+    await go(1);
+    await screen.evaluate(() => window.__winnerPlayer.finish());
+    await expect(play).toHaveCount(0);
+    expect(JSON.stringify(await f.rawPublic())).not.toContain(clip.videoId);
+  } finally {
+    await projector?.context.close();
+    await f.close();
+  }
 });

@@ -96,7 +96,7 @@ export function buildSlideRenderModel(
   const presentationEnd = finiteNonNegative(input.presentation?.clipEndSeconds)
     ?? finiteNonNegative(input.presentation?.videoEnd);
   const clipStartSeconds = finiteNonNegative(input.clipStartSeconds) ?? presentationStart ?? 0;
-  const endCandidate = finiteNonNegative(input.clipEndSeconds) ?? presentationEnd;
+  const endCandidate = finiteNonNegative(input.clipEndSeconds) ?? (input.mediaPlaybackMode ? undefined : presentationEnd);
   const clipEndSeconds = endCandidate !== undefined && endCandidate > clipStartSeconds ? endCandidate : undefined;
   const promptImage = mediaSource(input.media, 'prompt', 'image');
   const promptAudio = mediaSource(input.media, 'prompt', 'audio');
@@ -123,7 +123,7 @@ export function buildSlideRenderModel(
       ? { answerImage: input.answerImage ?? mediaSource(input.media, 'answer', 'image') }
       : {}),
     ...(input.mediaSource ?? fallbackMedia ? { mediaSource: input.mediaSource ?? fallbackMedia } : {}),
-    ...(input.mediaPlaybackMode === 'original' ? { mediaPlaybackMode: 'original' as const } : {}),
+    ...(input.mediaPlaybackMode ? { mediaPlaybackMode: input.mediaPlaybackMode } : {}),
     backgroundOverlay,
     clipStartSeconds,
     ...(clipEndSeconds === undefined ? {} : { clipEndSeconds }),
@@ -168,6 +168,10 @@ export function projectorMediaPlan(
   const commanded = command === 'play' || command === 'replay';
   const failed = playbackState === 'error' || locallyFailed;
   const finished = playbackState === 'finished' || locallyFinished;
+  if (model.mediaPlaybackMode === 'answer' && model.renderMode === 'recap') {
+    return { mountPlayer: commanded && !failed && !finished && model.mediaSource !== undefined, showQuestion: true, vinylPlaying: false,
+      startSeconds: model.clipStartSeconds, ...(model.clipEndSeconds === undefined ? {} : { endSeconds: model.clipEndSeconds }) };
+  }
   if (model.renderMode === 'recap' && (model.contentKind === 'audio' || model.contentKind === 'video')) {
     const original = model.mediaPlaybackMode === 'original';
     return { mountPlayer: model.mediaSource !== undefined && !failed, showQuestion: true, vinylPlaying: false,

@@ -1,4 +1,4 @@
-import { parseQuizAsset, normalizeSlideDesign, slideDesignKeys, normalizePrintTemplate, printTemplateKeys, type PrintTemplate, type SlideDesign, type ResultTemplates } from '@filmovy-kviz/quiz-domain';
+import { answerYoutubeVideoId, parseAnswerYoutubeClip, parseQuizAsset, normalizeSlideDesign, slideDesignKeys, normalizePrintTemplate, printTemplateKeys, type PrintTemplate, type SlideDesign, type ResultTemplates } from '@filmovy-kviz/quiz-domain';
 import { HttpsError } from 'firebase-functions/v2/https';
 
 import { QuizEditorError } from './errors.js';
@@ -275,6 +275,13 @@ export function validateSlideInput(value: unknown): EditorSlideInput {
   if (value.automaticAgenda !== undefined && (typeof value.automaticAgenda !== 'boolean' || value.kind !== 'agenda')) throw new QuizEditorError('invalid-argument', 'Automatic content requires an agenda.');
   if (value.hidden !== undefined && typeof value.hidden !== 'boolean') throw new QuizEditorError('invalid-argument', 'hidden is invalid.');
   if (value.resetAppearance !== undefined && value.resetAppearance !== true) throw new QuizEditorError('invalid-argument', 'Appearance reset is invalid.');
+  const answerClipInput = value.answerYoutubeClip;
+  const answerClipWithUrl = isObject(answerClipInput) && typeof answerClipInput.url === 'string'
+    && !Object.hasOwn(answerClipInput, 'videoId')
+    ? Object.fromEntries(Object.entries(answerClipInput).map(([key, item]) => key === 'url' ? ['videoId', answerYoutubeVideoId(item as string)] : [key, item]))
+    : answerClipInput;
+  const answerYoutubeClip = answerClipInput === null ? null : parseAnswerYoutubeClip(answerClipWithUrl);
+  if (value.answerYoutubeClip !== undefined && value.answerYoutubeClip !== null && !answerYoutubeClip) throw new QuizEditorError('invalid-argument', 'Ukázka odpovědi musí obsahovat platné YouTube ID a časování.');
   const options = value.options.map((option) => boundedString(option, 'option', 1_000));
   const presentation = validatePresentation(value.presentation);
   const clipStartSeconds = value.clipStartSeconds === undefined
@@ -299,6 +306,7 @@ export function validateSlideInput(value: unknown): EditorSlideInput {
     ...(value.answerMode === undefined ? {} : { answerMode: value.answerMode as 'open' | 'choice' }),
     ...(value.imageLayout === undefined ? {} : { imageLayout: value.imageLayout as 'split' | 'stacked' }),
     ...(value.answerExplanation === undefined ? {} : { answerExplanation: boundedString(value.answerExplanation, 'answerExplanation', 5000) }),
+    ...(value.answerYoutubeClip === undefined ? {} : { answerYoutubeClip }),
     kind: value.kind as EditorSlideKind,
     title: boundedString(value.title, 'slide title', 500),
     text: boundedString(value.text, 'slide text', 20_000),
