@@ -241,6 +241,10 @@ async function run() {
   assert.equal(questions.size, 1);
   assert.equal(questions.docs[0].id, question.id);
   assert.deepEqual([question.get('authoringStatus'), question.get('answerMode'), question.get('text'), question.get('correctAnswer')], ['draft', 'open', '', '']);
+  await expectFunctionError(() => invoke('updateQuizSlide', {
+    quizId: starter.quizId, slideId: question.id, expectedRevision: 0,
+    slide: editorSlide({ kind: 'free', title: '', text: '', correctAnswer: '', options: [], answerMode: 'open', authoringStatus: 'ready' }),
+  }), 'functions/invalid-argument');
   const saved = await invoke('updateQuizSlide', { quizId: starter.quizId, slideId: question.id, expectedRevision: 0,
     slide: editorSlide({ kind: 'free', title: '', text: 'Zachované zadání', correctAnswer: 'Odpověď', options: [], authoringStatus: 'ready', answerMode: 'open' }) });
   assert.equal((await invoke('createQuiz', starterRequest)).revision, saved.revision);

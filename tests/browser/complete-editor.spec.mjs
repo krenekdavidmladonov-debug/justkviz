@@ -39,6 +39,9 @@ const select=async(p,text)=>{await openRounds(p);await p.locator('.outline-quest
 test('entire quiz from empty library through normal UI, private drafts, structure, rehearsal and immutable event',async({page,context})=>{
   const identity=await editorIdentity(), network=[], expected=[], pageErrors=[], emailChunks=[];let quizId,eventId,snapshotId,sessionId;
   page.on('pageerror',error=>pageErrors.push(error.message));context.on('request',request=>{if(request.url().includes('EventTeamMessagePanel'))emailChunks.push(request.url());});
+  let clipboardWrites = 0;
+  await page.exposeFunction('recordEditorCopy', () => { clipboardWrites++; });
+  await page.addInitScript(() => { Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: () => window.recordEditorCopy() } }); });
   await mkdir(dir,{recursive:true});const video=await readFile('tests/fixtures/media/synthetic.webm');
   await context.route('**/*',route=>['localhost','127.0.0.1'].includes(new URL(route.request().url()).hostname)?route.continue():route.abort());
   await context.route('**/qa.webm',route=>route.fulfill({contentType:'video/webm',body:video}));
@@ -115,7 +118,7 @@ test('entire quiz from empty library through normal UI, private drafts, structur
     await expect(page.getByRole('heading',{name:'Upravit akci',exact:true})).toBeVisible();
     await expect(page.locator('.event-detail-page .lead')).toContainText('Syntetická akce kompletního editoru');
     await expect(page.locator('.event-team-message-panel')).toHaveCount(0);
-    expect(network.filter(n=>n.endpoint==='createQuizRound'&&n.status===200)).toHaveLength(3);expect(network.some(n=>/Email|TeamMessage/.test(n.endpoint))).toBe(false);expect(pageErrors).toEqual([]);expect(emailChunks).toEqual([]);
+    expect(network.filter(n=>n.endpoint==='createQuizRound'&&n.status===200)).toHaveLength(3);expect(network.some(n=>/Email|TeamMessage/.test(n.endpoint))).toBe(false);expect(pageErrors).toEqual([]);expect(emailChunks).toEqual([]);expect(clipboardWrites).toBe(0);
     await writeFile(dir+'/evidence.json',JSON.stringify({eventDetailLoaded:true,teamEmailChunksLoaded:emailChunks.length,pageErrors,quizCreatedThroughUI:true,questionsCreated:17,roundsAfterOperations:3,practiceSteps:steps,storedSlides:snapshot.size,network},null,2));
   }finally{
     if(sessionId){await identity.db.doc('sessions/'+sessionId).delete();await identity.db.doc('publicSessions/'+sessionId).delete();}if(snapshotId)await identity.db.recursiveDelete(identity.db.doc('quizSnapshots/'+snapshotId));if(eventId){await identity.db.recursiveDelete(identity.db.doc('events/'+eventId));await identity.db.doc('publicEvents/'+eventId).delete();}if(quizId)await identity.db.recursiveDelete(identity.db.doc('quizzes/'+quizId));await identity.dispose();

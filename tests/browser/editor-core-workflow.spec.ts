@@ -169,6 +169,15 @@ test('library CTA creates the evening template and carries its first free questi
     expect(beforeFinale).toBe(true);
     await expect(page.locator('.outline-question')).toContainText('Je potřeba doplnit');
     await page.locator('.outline-question').click();
+    const desktop = page.viewportSize()!;
+    await page.setViewportSize({ width: 390, height: 844 });
+    const more = page.getByLabel('Další akce kvízu', { exact: true });
+    await more.click();
+    await expect(page.getByRole('button', { name: 'Zkontrolovat kvíz' })).toBeInViewport();
+    await expect(page.getByRole('button', { name: 'Uložit koncept', exact: true })).toBeInViewport();
+    await page.keyboard.press('Escape');
+    await expect(more).toBeFocused();
+    await page.setViewportSize(desktop);
     await page.getByLabel('Otázka *').fill(question);
     await page.getByLabel('Správná odpověď *').fill(answer);
     await waitForCallable(page, 'updateQuizSlide', () => page.getByRole('button', { name: 'Dokončit otázku', exact: true }).click());

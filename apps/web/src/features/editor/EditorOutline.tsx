@@ -73,7 +73,7 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
       outlineRef.current?.querySelectorAll<HTMLDetailsElement>('.outline-item-actions[open]').forEach(menu => {
         if (target instanceof Element && target.closest('dialog')) return;
         if (event instanceof KeyboardEvent || !(target instanceof Node) || !menu.contains(target)) {
-          if (event instanceof KeyboardEvent && menu.contains(target as Node)) menu.querySelector('summary')?.focus();
+          if (event instanceof KeyboardEvent && target instanceof Node && menu.contains(target)) menu.querySelector('summary')?.focus();
           menu.open = false;
         }
       });
@@ -86,6 +86,7 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
   const createLocked = creationDisabled || moving;
   const rounds = useMemo(() => model.rounds.filter(round => round.id !== 'roundless'), [model.rounds]);
   const questionCount = model.questionBySlideId.size;
+  const questionDeleteReason = deleteDisabledReason ?? (questionDeleteDisabled && !deleteDisabled ? 'Poslední snímek kvízu nelze samostatně smazat.' : undefined);
   const presentationSlides = useMemo(() => [...model.slideById.values()].sort((a, b) => a.position - b.position), [model.slideById]);
   const selectedSlide = selectedKey.startsWith('slide:') ? model.slideById.get(selectedKey.slice(6)) : undefined;
   const selectedAnnouncement = onMoveSlide && isAnnouncement(selectedSlide) ? selectedSlide : undefined;
@@ -171,8 +172,8 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
         void move(dragged.current, slide.roundId, beforeId);
       }}>
       {!draft && <button type="button" className="outline-drag-handle" draggable={!locked} disabled={locked}
-        aria-label={`Přetáhnout otázku ${number}`} title={locked ? lockedReason : 'Přetáhnout otázku. Bez myši použijte nabídku Přesunout.'}
-        onDragStart={event => startDrag(event, item)} onDragEnd={clearDrag} onClick={() => setAnnouncement('Otázku přetáhněte za úchyt, nebo otevřete nabídku Přesunout.')}>⠿</button>}
+        aria-label={`Přetáhnout otázku ${number}`} title={locked ? lockedReason : 'Přetáhnout otázku. Bez myši otevřete nabídku Další akce.'}
+        onDragStart={event => startDrag(event, item)} onDragEnd={clearDrag} onClick={() => setAnnouncement('Otázku přetáhněte za úchyt, nebo otevřete nabídku Další akce.')}>⠿</button>}
       <button id={`outline-question-${slide.id}`} type="button" className={`outline-question ${selected(key)}`} aria-current={selectedKey === key ? 'true' : undefined}
         onClick={() => onSelect(key)} onKeyDown={event => {
           if (draft || locked || !event.altKey) return;
@@ -184,13 +185,14 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
         {issue && <span className={`outline-issue ${issue.severity}`} title={issue.message} aria-label={issue.message}>!</span>}
       </button>
       {!draft && <details className="outline-item-actions"><summary aria-label={`Další akce otázky ${number}`} title="Další akce otázky">⋯</summary>
-        <div className="outline-action-panel" aria-label={`Přesun otázky ${number}`}>
+        <div className="outline-action-panel">
           <button type="button" disabled={locked || index === 0} onClick={() => void move(item, slide.roundId, round.questions[index - 1]?.slide.id)}>Posunout nahoru</button>
           <button type="button" disabled={locked || index === round.questions.length - 1} onClick={() => void move(item, slide.roundId, round.questions[index + 2]?.slide.id)}>Posunout dolů</button>
           {rounds.length > (round.id === 'roundless' ? 0 : 1) && <label>Přesunout do kola<select aria-label={`Přesunout otázku ${number} do kola`} value="" disabled={locked} onChange={event => { if (event.target.value) void move(item, event.target.value); }}>
             <option value="">Vyberte kolo…</option>{rounds.filter(target => target.id !== round.id).map(target => <option key={target.id} value={target.id}>{target.title}</option>)}
           </select></label>}
-          {onDeleteQuestion && <EditorDeleteButton label={`Smazat otázku ${number}: ${questionSummary(slide)}`} disabled={questionDeleteDisabled || moving} reason={deleteDisabledReason} onClick={() => onDeleteQuestion(slide)} />}
+          {onDeleteQuestion && <EditorDeleteButton label={`Smazat otázku ${number}: ${questionSummary(slide)}`} disabled={questionDeleteDisabled || moving} reason={questionDeleteReason} onClick={() => onDeleteQuestion(slide)} />}
+          {onDeleteQuestion && questionDeleteReason && <small>{questionDeleteReason}</small>}
           {locked && <small>{lockedReason}</small>}
         </div>
       </details>}
@@ -232,8 +234,8 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
               void move(dragged.current, undefined, event.clientY < rect.top + rect.height / 2 ? round.id : rounds[roundIndex + 1]?.id);
             }}>
             {round.id !== 'roundless' && onMoveRound && <button type="button" className="outline-drag-handle" draggable={!locked} disabled={locked}
-              aria-label={`Přetáhnout kolo ${round.title}`} title={locked ? lockedReason : 'Přetáhnout kolo. Bez myši použijte nabídku Přesunout.'}
-              onDragStart={event => startDrag(event, roundItem)} onDragEnd={clearDrag} onClick={() => setAnnouncement('Kolo přetáhněte za úchyt, nebo otevřete nabídku Přesunout.')}>⠿</button>}
+              aria-label={`Přetáhnout kolo ${round.title}`} title={locked ? lockedReason : 'Přetáhnout kolo. Bez myši otevřete nabídku Další akce.'}
+              onDragStart={event => startDrag(event, roundItem)} onDragEnd={clearDrag} onClick={() => setAnnouncement('Kolo přetáhněte za úchyt, nebo otevřete nabídku Další akce.')}>⠿</button>}
             <button id={`outline-round-${round.id}`} type="button" className={`outline-round-select ${selected(`round:${round.id}`)}`} aria-current={selectedKey === `round:${round.id}` ? 'true' : undefined} onClick={() => onSelect(`round:${round.id}`)}>
               <strong>{slide?.title || round.title}</strong><small>{slide ? 'Úvod kola · Automatický · Promítá se' : 'Nastavení kola'} · {round.id === 'roundless' ? 'Bez kola' : `${round.position}. kolo`} · {round.questions.length} otázek</small>
             </button>
@@ -241,6 +243,7 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
               {onMoveRound && <><button type="button" disabled={locked || roundIndex === 0} onClick={() => void move(roundItem, undefined, rounds[roundIndex - 1]?.id)}>Posunout nahoru</button>
               <button type="button" disabled={locked || roundIndex === rounds.length - 1} onClick={() => void move(roundItem, undefined, rounds[roundIndex + 2]?.id)}>Posunout dolů</button></>}
               {onDeleteRound && <EditorDeleteButton label={`Smazat kolo ${round.title}`} disabled={deleteDisabled || moving} reason={deleteDisabledReason} onClick={() => onDeleteRound(round)} />}
+              {onDeleteRound && deleteDisabledReason && <small>{deleteDisabledReason}</small>}
               {locked && <small>{lockedReason}</small>}
             </div></details>}
             {dropTarget === `end:${round.id}` && <span className="outline-round-drop-hint">Přesunout na konec kola</span>}
@@ -289,13 +292,7 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
     return activeDraft && <button id={`outline-question-${activeDraft.id}`} type="button" aria-current="true" className="outline-question selected" onClick={() => onSelect('draft')}>
       <strong>{questionSummary(activeDraft)}</strong><small>Je potřeba doplnit</small></button>;
   }
-  return <aside ref={outlineRef} className={`editor-outline editor-panel-structure quiz-outline ${dragging ? 'is-dragging' : ''}`} aria-label="Osnova kvízu" aria-busy={moving}
-    onDragOverCapture={event => {
-      if (!dragged.current) return;
-      const bounds = event.currentTarget.getBoundingClientRect();
-      if (event.clientY < bounds.top + 40) event.currentTarget.scrollTop -= 18;
-      if (event.clientY > bounds.bottom - 40) event.currentTarget.scrollTop += 18;
-    }}>
+  return <aside ref={outlineRef} className={`editor-outline editor-panel-structure quiz-outline ${dragging ? 'is-dragging' : ''}`} aria-label="Osnova kvízu" aria-busy={moving}>
     <header className="outline-heading"><div><span>Osnova kvízu</span><strong>{rounds.length} kol · {questionCount} otázek</strong></div>
       <button type="button" className={`outline-root-button ${selected('quiz')}`} aria-current={selectedKey === 'quiz' ? 'true' : undefined} onClick={() => onSelect('quiz')}>Název a nastavení kvízu</button>
       <button type="button" className="secondary-button add-round-button" disabled={createLocked} onClick={onAddRound}>+ Přidat kolo</button>
@@ -313,7 +310,13 @@ export function EditorOutline({ model, selectedKey, activeDraft, disabled, disab
             {selectedAnnouncement.position !== lastDestination && <option value={lastDestination}>Na konec programu</option>}
           </select>
         </label>}
-    <ol className="presentation-outline" aria-label="Pořadí večera">
+    <ol className="presentation-outline" aria-label="Pořadí večera"
+      onDragOverCapture={event => {
+        if (!dragged.current) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        if (event.clientY < bounds.top + 40) event.currentTarget.scrollTop -= 18;
+        if (event.clientY > bounds.bottom - 40) event.currentTarget.scrollTop += 18;
+      }}>
       {groups.map(({ round, slides }) => <li key={slides[0]!.id} className={round ? 'outline-round' : undefined} data-round-id={round?.id}>
         {round && !round.settingsSlide && round.slides[0]?.id === slides[0]?.id && round.id !== 'roundless' &&
           roundRow(undefined, round)}
