@@ -1,4 +1,4 @@
-import { validateQuestion, mapEditorSlide, directMediaKind, youtubeVideoId, parseQuizAsset, mergeStoredDesign, canHideInfoSlide, type ResultTemplates } from '@filmovy-kviz/quiz-domain';
+import { parseAnswerYoutubeClip, answerYoutubeMatchesPublicMedia, validateQuestion, mapEditorSlide, directMediaKind, youtubeVideoId, parseQuizAsset, mergeStoredDesign, canHideInfoSlide, type ResultTemplates } from '@filmovy-kviz/quiz-domain';
 import { createHash } from 'node:crypto';
 import { DocumentReference } from 'firebase-admin/firestore';
 
@@ -251,9 +251,8 @@ export function applyKnownSlideUpdate(
   }
   for (const field of ['authoringStatus','answerMode','imageLayout','answerExplanation'] as const) if (input[field] !== undefined) result[field] = input[field];
   if (result.authoringStatus !== undefined && result.isQuestion !== true) throw new QuizEditorError('invalid-argument', 'Only questions can be drafts.');
-  if (result.answerYoutubeClip && typeof result.answerYoutubeClip === 'object'
-    && typeof (result.answerYoutubeClip as { videoId?: unknown }).videoId === 'string'
-    && (result.answerYoutubeClip as { videoId?: unknown }).videoId === youtubeVideoId(mapEditorSlide('current', { position: 1, ...result }).mediaSource)) {
+  const answerClip = parseAnswerYoutubeClip(result.answerYoutubeClip);
+  if (answerClip && answerYoutubeMatchesPublicMedia(answerClip, mapEditorSlide('current', { position: 1, ...result }))) {
     throw new QuizEditorError('invalid-argument', 'Ukázka odpovědi musí používat jiné YouTube video než zadání otázky.');
   }
   const timed = ['audio', 'music', 'video', 'youtube'].includes(input.kind);

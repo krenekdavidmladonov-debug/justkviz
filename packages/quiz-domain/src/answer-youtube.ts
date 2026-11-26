@@ -1,3 +1,5 @@
+import { youtubeVideoId } from './presentation.js';
+
 export interface AnswerYoutubeClip {
   readonly videoId: string;
   readonly startSeconds?: number;
@@ -34,4 +36,13 @@ export function answerYoutubeVideoId(source: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+export function answerYoutubeMatchesPublicMedia(clip: AnswerYoutubeClip, slide: {
+  readonly mediaSource?: string;
+  readonly media?: readonly { readonly role: string; readonly source: string }[];
+}): boolean {
+  if (slide.mediaSource && youtubeVideoId(slide.mediaSource) === clip.videoId) return true;
+  return slide.media?.some(item => (item.role === 'prompt' || item.role === 'background')
+    && youtubeVideoId(item.source) === clip.videoId) ?? false;
 }

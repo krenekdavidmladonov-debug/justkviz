@@ -1,4 +1,4 @@
-import { parseAnswerYoutubeClip } from './answer-youtube.js';
+import { parseAnswerYoutubeClip, answerYoutubeMatchesPublicMedia } from './answer-youtube.js';
 import { mediaReadiness } from './media-readiness.js';
 import { parseQuizAsset } from './media-assets.js';
 import { generatedAgendaOptions, isSafeHttpUrl, youtubeVideoId, directMediaKind } from './presentation.js';
@@ -49,7 +49,7 @@ export function validateQuestion(slide: EditorSlide): readonly EditorValidationI
   if (!slide.isQuestion) return [];
   const type = semanticQuestionType(slide);
   const issues: EditorValidationIssue[] = [];
-  if (slide.answerYoutubeClip !== undefined && (!parseAnswerYoutubeClip(slide.answerYoutubeClip) || slide.answerYoutubeClip.videoId === youtubeVideoId(slide.mediaSource))) issues.push(issue('ANSWER_YOUTUBE_INVALID', 'MEDIA', 'answerYoutubeClip', 'Zadejte platný odkaz YouTube a časování ukázky odpovědi.'));
+  if (slide.answerYoutubeClip !== undefined && (!parseAnswerYoutubeClip(slide.answerYoutubeClip) || answerYoutubeMatchesPublicMedia(slide.answerYoutubeClip, slide))) issues.push(issue('ANSWER_YOUTUBE_INVALID', 'MEDIA', 'answerYoutubeClip', 'Zadejte platný odkaz YouTube a časování ukázky odpovědi.'));
   if (slide.authoringStatus === 'draft') issues.push(issue('QUESTION_DRAFT', 'STRUCTURE', 'authoringStatus', 'Otázka je uložená jako koncept.'));
   if ((slide.answerMode === 'open' && slide.options.length > 0) || (slide.answerMode === 'choice' && slide.kind === 'free')) issues.push(issue('CHOICE_OPTIONS_INVALID', 'ANSWER', 'options', 'Režim odpovědi neodpovídá uloženým možnostem.'));
   const prompt = questionPrompt(slide).trim();

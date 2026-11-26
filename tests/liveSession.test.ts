@@ -677,6 +677,9 @@ test('answer clip is private until selected for playback and is excluded from th
   const slide = { ...questionSlide(), answerYoutubeClip };
   const current = session();
   expect(JSON.stringify(buildPublicSessionState(current, slide))).not.toContain(answerYoutubeClip.videoId);
+  const ambiguousLegacy = { ...slide, kind: 'video', mediaSource: 'https://youtu.be/PromptVid01',
+    media: [{ role: 'prompt', kind: 'video', value: 'https://youtu.be/PromptVid01', url: 'https://youtu.be/AnswerVid01' }] };
+  expect(() => buildPublicSessionState(current, ambiguousLegacy)).toThrow(/question media/);
   const command = { type: 'play-media', mode: 'answer' } as const;
   expect(() => applyLiveSessionAction(current, command, 1, 'staff', now, slide)).toThrow();
   const revealed = applyLiveSessionAction(current, { type: 'reveal-answer' }, 1, 'staff', now, slide);

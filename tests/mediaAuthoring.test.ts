@@ -101,3 +101,15 @@ test('answer and prompt clips cannot share a video ID through YouTube URL aliase
     expect(() => applyKnownSlideUpdate(source, validateSlideInput(mapped))).toThrow(/jiné YouTube video/);
   }
 });
+
+
+test('retained public prompt and background media cannot expose the answer clip ID', () => {
+  for (const role of ['prompt', 'background']) for (const source of ['https://youtu.be/answer12345', 'https://youtube.com/watch?v=answer12345', 'https://youtube.com/shorts/answer12345']) {
+    const storedQuestion = { ...stored, kind: 'video', mediaSource: 'prompt12345', clipStartSeconds: 0, clipEndSeconds: 5,
+      media: [{ role, kind: 'video', source }], answerYoutubeClip: { videoId: 'answer12345' } };
+    const mapped = mapEditorSlide('q', storedQuestion);
+    expect(mapped.mediaSource).toBe('prompt12345');
+    expect(validateQuestion(mapped)).toContainEqual(expect.objectContaining({ code: 'ANSWER_YOUTUBE_INVALID' }));
+    expect(() => applyKnownSlideUpdate(storedQuestion, validateSlideInput(mapped))).toThrow(/jiné YouTube video/);
+  }
+});

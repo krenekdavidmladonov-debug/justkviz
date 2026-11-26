@@ -194,3 +194,25 @@ test('answer clip fields follow attachment permission while showing the stored c
   expect(host.querySelector('fieldset')!.disabled).toBe(true);
   expect(host.querySelector('input')!.value).toBe('https://youtu.be/answer12345');
 });
+
+
+test.each(['manual', 'button'])('removing an answer clip by %s clears timing before another video is added', async removal => {
+  const original = { ...measuredQuestion('Odpověď'), answerYoutubeClip: { videoId: 'answer12345', startSeconds: 6.125, endSeconds: 12.875 } };
+  const change = vi.fn<(slide: ReturnType<typeof measuredQuestion>) => void>();
+  const renderField = async (question: ReturnType<typeof measuredQuestion>) => act(async () => root.render(<AnswerYoutubeField slide={question} disabled={false} onChange={change} />));
+  const fill = async (input: HTMLInputElement, value: string) => act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await renderField(original);
+  if (removal === 'manual') await fill(host.querySelector('input')!, '');
+  else await act(async () => host.querySelector<HTMLButtonElement>('button')!.click());
+  const removed = change.mock.lastCall![0];
+  expect(removed).not.toHaveProperty('answerYoutubeClip');
+  await renderField(removed);
+  // Persisting removal and rereading the same question keeps its component mounted.
+  await renderField({ ...removed });
+  await fill(host.querySelector('input')!, 'https://youtu.be/changed1234');
+  expect(change.mock.lastCall![0].answerYoutubeClip).toEqual({ videoId: 'changed1234' });
+  expect([...host.querySelectorAll<HTMLInputElement>('input')].map(input => input.value)).toEqual(['https://youtu.be/changed1234', '', '']);
+});

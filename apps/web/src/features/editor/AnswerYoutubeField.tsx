@@ -1,5 +1,5 @@
 import { useContext, useEffect, useRef, useState } from 'react';
-import { answerYoutubeVideoId, parseAnswerYoutubeClip, youtubeVideoId, type EditorSlide } from '@filmovy-kviz/quiz-domain';
+import { answerYoutubeVideoId, parseAnswerYoutubeClip, answerYoutubeMatchesPublicMedia, type EditorSlide } from '@filmovy-kviz/quiz-domain';
 
 import { MediaAuthoringContext } from '../media/MediaUploadField';
 
@@ -30,10 +30,11 @@ export function AnswerYoutubeField({ slide, disabled: disabledProp, onChange }: 
     setStart(clip?.startSeconds === undefined ? '' : String(clip.startSeconds));
     setEnd(clip?.endSeconds === undefined ? '' : String(clip.endSeconds));
   }, [clip]);
-  const sameAsPrompt = clip !== undefined && clip.videoId !== '' && clip.videoId === youtubeVideoId(slide.mediaSource);
+  const sameAsPrompt = clip !== undefined && clip.videoId !== '' && answerYoutubeMatchesPublicMedia(clip, slide);
   const invalid = clip !== undefined && !parseAnswerYoutubeClip(clip);
   function update(nextUrl: string, nextStart: string, nextEnd: string) {
     if (nextUrl.trim() === '') {
+      setUrl(''); setStart(''); setEnd('');
       const { answerYoutubeClip, ...rest } = slide;
       void answerYoutubeClip;
       localClip.current = JSON.stringify(undefined);
@@ -64,7 +65,7 @@ export function AnswerYoutubeField({ slide, disabled: disabledProp, onChange }: 
     </div>}
     {sameAsPrompt && <p className="field-validation error" role="alert">Ukázka odpovědi musí používat jiné YouTube video než zadání otázky.</p>}
     {invalid && <p className="field-validation error" role="alert">Zadejte platný odkaz YouTube a časování. Konec musí být po začátku.</p>}
-    {clip && <button type="button" className="text-button" onClick={() => { setUrl(''); setStart(''); setEnd(''); update('', '', ''); }}>Odebrat ukázku odpovědi</button>}
+    {clip && <button type="button" className="text-button" onClick={() => update('', '', '')}>Odebrat ukázku odpovědi</button>}
     <p className="field-help">Moderátor ji může spustit až po odhalení odpovědi. Časy jsou volitelné.</p>
   </fieldset>;
 }

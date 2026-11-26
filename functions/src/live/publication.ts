@@ -1,5 +1,5 @@
 import { LiveSessionError } from './errors.js';
-import { mapEditorSlide, parseQuizAsset, originalYoutubeSource, resolveLegacySlideAppearance, resolveSlideDesign, normalizeResultTemplates, canHideInfoSlide, type ResultTemplate } from '@filmovy-kviz/quiz-domain';
+import { answerYoutubeMatchesPublicMedia, mapEditorSlide, parseQuizAsset, originalYoutubeSource, resolveLegacySlideAppearance, resolveSlideDesign, normalizeResultTemplates, canHideInfoSlide, type ResultTemplate } from '@filmovy-kviz/quiz-domain';
 import type {
   LiveRenderMode,
   PrivateLiveSession,
@@ -213,6 +213,10 @@ export function buildPublicSessionState(session: PrivateLiveSession, slide?: Pri
     ...(session.presentationMode === 'recap' && session.recapQuestionPosition !== undefined
       ? { recapQuestionPosition: session.recapQuestionPosition } : {}),
   };
+  // Legacy records can have several source aliases. Check the exact outgoing media too.
+  if (slide.answerYoutubeClip && answerYoutubeMatchesPublicMedia(slide.answerYoutubeClip, result)) {
+    throw new LiveSessionError('failed-precondition', 'The answer clip is also present in the question media.');
+  }
   if (session.presentationMode === 'recap' && session.recapQuestionPosition === undefined) return result;
   if (session.presentationMode !== 'recap' && !session.answerRevealed) return result;
   const revealedAnswer = displayAnswer(slide.correctAnswer, slide.kind);

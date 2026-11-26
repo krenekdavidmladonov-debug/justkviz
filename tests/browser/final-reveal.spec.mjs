@@ -10,7 +10,16 @@ async function guard(context) {
   await context.addInitScript(() => {
     window.__winnerPlayer = { starts: 0, stops: 0, active: 0, volumes: [], startsAt: [], resources: [], loads: [], deny: false };
     window.YT = { PlayerState: { PLAYING: 1, ENDED: 0 }, Player: class {
-      constructor(element, options) { window.__winnerPlayer.resources.push(options.videoId); this.options = options; this.time = 0; this.playing = false; this.element = element; window.__winnerPlayer.active++; setTimeout(() => options.events.onReady(), 0); }
+      constructor(element, options) {
+        this.options = options;
+        this.time = 0;
+        this.playing = false;
+        this.element = element;
+        window.__winnerPlayer.resources.push(options.videoId);
+        window.__winnerPlayer.finish = () => options.events.onStateChange({ data: 0 });
+        window.__winnerPlayer.active++;
+        setTimeout(() => options.events.onReady(), 0);
+      }
       cueVideoById(options) { this.time = options.startSeconds ?? 0; }
       loadVideoById(options) { window.__winnerPlayer.loads.push(options); this.time = options.startSeconds ?? 0; this.playVideo(); }
       playVideo() {
@@ -252,8 +261,18 @@ test('moderator explicitly plays a separate answer clip on direct reveal and sel
         await page.getByRole('button', { name: 'Zobrazit odpověď na otázku 2', exact: true }).click();
       }
     }
-    await go(1);
+    await page.getByRole('button', { name: 'Stop', exact: true }).click();
     await expect.poll(() => screen.evaluate(() => window.__winnerPlayer.active)).toBe(0);
+    await expect(answer).toBeVisible();
+    await page.getByRole('button', { name: 'Pustit znovu', exact: true }).click();
+    await expect.poll(() => screen.evaluate(() => window.__winnerPlayer.loads.filter(x => x.videoId === 'AnswerVid01'))).toHaveLength(3);
+    expect(await screen.evaluate(() => window.__winnerPlayer.loads.at(-1))).toEqual(clip);
+    await screen.evaluate(() => window.__winnerPlayer.finish());
+    await expect.poll(() => screen.evaluate(() => window.__winnerPlayer.active)).toBe(0);
+    await expect(answer).toBeVisible();
+    await go(1);
+    await screen.evaluate(() => window.__winnerPlayer.finish());
+    await expect(play).toHaveCount(0);
     expect(JSON.stringify(await f.rawPublic())).not.toContain(clip.videoId);
   } finally {
     await projector?.context.close();
