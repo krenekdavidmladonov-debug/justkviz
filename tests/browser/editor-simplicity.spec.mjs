@@ -13,6 +13,25 @@ const answer = page => page.getByLabel('Správná odpověď *', { exact: true })
 const round = (page, index) => page.locator('.outline-round').nth(index);
 const summary = values => { const s = [...values].sort((a,b) => a-b); return { n:s.length, medianMs:s[Math.floor(s.length/2)], p95Ms:s[Math.ceil(s.length*.95)-1], maxMs:s.at(-1) }; };
 
+// Start the native drag before scrolling to a destination outside the visible outline.
+async function dragToRound(page, handle, destination, offsetY) {
+  await handle.hover();
+  const source = await handle.boundingBox();
+  const x = source.x + source.width / 2, y = source.y + source.height / 2;
+  await page.mouse.down();
+  try {
+    await page.mouse.move(x + 10, y, { steps: 4 });
+    await expect(page.locator('.editor-outline')).toHaveClass(/is-dragging/);
+    await destination.evaluate(node => node.scrollIntoView({ block: 'center' }));
+    const target = await destination.boundingBox();
+    const targetX = target.x + target.width / 2, targetY = target.y + offsetY;
+    await page.mouse.move(targetX, targetY);
+    await page.mouse.move(targetX + 1, targetY);
+  } finally {
+    await page.mouse.up();
+  }
+}
+
 async function toggleContentCheck(page) {
   await page.getByLabel('Další akce kvízu', { exact: true }).click();
   await page.getByRole('button', { name: 'Zkontrolovat kvíz', exact: true }).click();
@@ -78,16 +97,16 @@ test('A–E real browser workflows and larger synthetic quiz comparison', async 
       if(phase==='baseline') await step('Posunout kolo nahoru',()=>page.getByRole('button',{name:'Přesunout nahoru',exact:true}).click());
       else {
         const source=round(page,2).getByRole('button',{name:/^Přetáhnout kolo/});
-        await step('Přetáhnout kolo',async()=>{await source.dragTo(round(page,1).locator('.outline-round-header'),{targetPosition:{x:50,y:5}});await expect(round(page,1).locator('.outline-round-select strong')).toHaveText('Bonusové kolo');await expect(page.locator('.editor-outline')).toHaveAttribute('aria-busy','false');});
+        await step('Přetáhnout kolo',async()=>{await dragToRound(page,source,round(page,1).locator('.outline-round-header'),5);await expect(round(page,1).locator('.outline-round-select strong')).toHaveText('Bonusové kolo');await expect(page.locator('.editor-outline')).toHaveAttribute('aria-busy','false');});
       }
       await expect(round(page,1)).toContainText('Bonusové kolo');
       await step('Vybrat otázku',async()=>{await page.locator('.outline-question').first().click();await expect(prompt(page)).toHaveValue('Kdo režíroval film Amadeus?');});
       if(phase==='baseline') await step('Přesunout otázku do jiného kola',()=>page.getByLabel('Přesunout do kola').selectOption({label:'2. kolo – Bonusové kolo'}));
-      else await step('Přetáhnout otázku do jiného kola',async()=>{await page.locator('[data-question-id]').first().getByRole('button',{name:/^Přetáhnout otázku/}).dragTo(round(page,1).locator('.outline-round-header'),{targetPosition:{x:80,y:30}});await expect(round(page,1).locator('.outline-question')).toContainText('Kdo režíroval film Amadeus?');await expect(page.locator('.editor-outline')).toHaveAttribute('aria-busy','false');});
+      else await step('Přetáhnout otázku do jiného kola',async()=>{await dragToRound(page,page.locator('[data-question-id]').first().getByRole('button',{name:/^Přetáhnout otázku/}),round(page,1).locator('.outline-round-header'),30);await expect(round(page,1).locator('.outline-question')).toContainText('Kdo režíroval film Amadeus?');await expect(page.locator('.editor-outline')).toHaveAttribute('aria-busy','false');});
       await expect(round(page,1)).toContainText('Kdo režíroval film Amadeus?');
       await page.screenshot({path:out+'/C-outline.png',fullPage:true});
     });
-    const eventId=(await identity.call('createEvent',{expectedRevision:0,event:{title:'Syntetická zkouška '+phase,startsAt:'2031-11-20T18:00:00Z',timeZone:'Europe/Prague',venue:{name:'Syntetický sál',publicLocation:'Praha'},teamCapacity:30,peopleCapacity:120,teamSizeMin:2,teamSizeMax:6}})).eventId; events.push(eventId);
+    const eventId=(await identity.call('createEvent',{expectedRevision:0,event:{title:'Syntetická zkouška '+phase,startsAt:'2031-11-20T18:00:00Z',timeZone:'Europe/Prague',venue:{name:'Syntetický sál',publicLocation:'Praha'},teamCapacity:30,peopleCapacity:120,teamSizeMin:2,teamSizeMax:4}})).eventId; events.push(eventId);
     await scenario('D-check-and-prepare-event',async()=>{
       if(phase==='baseline') await step('Zkontrolovat kvíz',()=>page.getByRole('button',{name:'Zkontrolovat kvíz',exact:true}).click());
       else await expectContentReady(page);
@@ -154,7 +173,7 @@ test('settled overview and current draft readiness, direct fix, preview and next
     await page.goto('/admin/login');await page.getByLabel('E-mail').fill(identity.email);await page.getByLabel('Heslo').fill(identity.password);await page.getByRole('button',{name:'Přihlásit se',exact:true}).click();await expect(page).toHaveURL(/\/admin$/);
     await page.goto('/admin/quizzes/'+id+'/edit');if(phase==='current')await round(page,0).locator('.outline-round-select').click();await page.locator('.outline-question').first().click();await expect(prompt(page)).toHaveValue('Kdo režíroval film Amadeus?');
     if(phase==='current')await expectContentReady(page);
-    await page.evaluate(()=>{window.scrollTo(0,0);for(const element of document.querySelectorAll('.editor-outline,.round-editor-content,.round-editor-preview'))element.scrollTop=0;});
+    await page.evaluate(()=>{window.scrollTo(0,0);for(const element of document.querySelectorAll('.editor-outline,.presentation-outline,.round-editor-content,.round-editor-preview'))element.scrollTop=0;});
     await page.screenshot({path:out+'/editor-overview.png',fullPage:true});
     await page.setViewportSize({width:390,height:844});await page.screenshot({path:out+'/editor-overview-mobile.png',fullPage:true});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
     if(phase==='current'){await page.getByRole('button',{name:'Struktura',exact:true}).click();await page.screenshot({path:out+'/editor-outline-mobile.png',fullPage:true});await page.getByRole('button',{name:'Obsah',exact:true}).click();}
