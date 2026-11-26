@@ -316,7 +316,11 @@ historical intents are not backfilled or upgraded. Selected-recipient/default-of
 stored shapes and all public registration responses remain unchanged. A rejected
 pre-cutoff create stores no email intent, delivery summary or token envelope.
 
-Contact data needs an explicit retention policy before launch. Important mutations should record server-derived actor and timestamp fields. Avoid indefinite logs containing contact data.
+The published privacy notice gives registration contacts and associated email material 90 days after completion, or after cancellation for a cancelled event. The daily private `runEventRetention` schedule defaults to off. A read-only preview counts candidates in a bounded page. Apply requires an explicit configuration change. The worker rechecks terminal state, completion or cancellation timestamp, live sessions, delivery leases and disposition transactionally. It skips future events and missing end dates.
+
+Contact cleanup seals the event with `contactRetention`, retains the canonical registration ID and roster fields, and replaces registration documents with a field allowlist. It erases email intents, encrypted link envelopes, campaign copies, operation receipts and pseudonymous abuse counters. Scores, score history, names and published rankings keep their original identities. Server-only `retentionState` cursors resume a partial batch. A `retentionAudit` entry records the opaque event ID, action, timestamp and counts for each committed change batch. Audit and summary logs omit contacts, team names, tokens and message bodies.
+
+Identifiable results have a separate 12-calendar-month period. Only their eligibility can currently be previewed. The published 30-day ordinary log policy is independent of both stages.
 
 ## Referee access extension
 

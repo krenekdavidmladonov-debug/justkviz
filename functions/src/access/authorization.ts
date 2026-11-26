@@ -93,6 +93,7 @@ export async function authorizeOperation(name: string, request: CallableRequest,
     await authorize(request.auth, ['event.read'], resource, tx);
     const ref = getFirestore().doc(`events/${resource.id}`);
     const stored = (tx ? await tx.get(ref) : await ref.get()).data();
+    if (stored && 'contactRetention' in stored && email.includes(name)) throw new HttpsError('failed-precondition', 'E-mailové podklady už nejsou dostupné.');
     if (!(stored && name === 'configureEventRegistration' && isCompletedEventHide(stored, data))) assertEventOperational(stored);
   }
   if (name === 'createQuiz') return authorize(request.auth, ['quiz.create'], undefined, tx);
@@ -111,7 +112,9 @@ export async function authorizeOperation(name: string, request: CallableRequest,
   if (email.includes(name)) {
     const member = await authorize(request.auth, ['event.manage', 'event.contacts'], event(), tx);
     if (tx && ['listEventTeamMessages', 'getEventTeamMessage'].includes(name)) {
-      assertEventReadable((await tx.get(getFirestore().doc(`events/${event().id}`))).data(), member);
+      const stored = (await tx.get(getFirestore().doc(`events/${event().id}`))).data();
+      assertEventReadable(stored, member);
+      if ('contactRetention' in stored) throw new HttpsError('not-found', 'E-mailové podklady už nejsou dostupné.');
     }
     return member;
   }

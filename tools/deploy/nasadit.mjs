@@ -139,6 +139,11 @@ export async function functionTargets(client, entryPoints) {
   const missing = [];
   const special = [];
   for (const entryPoint of entryPoints) {
+    if (entryPoint === 'runEventRetention') {
+      // Separate release owns the Scheduler job, its identity and retention mode.
+      special.push(entryPoint);
+      continue;
+    }
     const name = location + '/functions/' + entryPoint;
     const fn = deployed.get(name);
     if (entryPoint === 'lockEventQuiz' && fn?.buildConfig?.environmentVariables?.GOOGLE_NODE_RUN_SCRIPTS !== 'gcp-build') {
@@ -406,7 +411,7 @@ async function run() {
       console.log('Zdroj existujících Functions v ' + REGION + ': ' + plan.existing.map(target => target.entryPoint).join(', '));
       console.log('Chybějící Functions – vytvoří se: ' + (plan.missing.join(', ') || '(žádné)'));
       console.log('Functions navíc – ponechají se beze změny: ' + (plan.extra.join(', ') || '(žádné)'));
-      console.log('Functions s vlastním sestavením (media worker) – ponechají se beze změny: ' + (plan.special.join(', ') || '(žádné)'));
+      console.log('Functions se samostatným nasazením (vlastní build nebo Scheduler) – ponechají se beze změny: ' + (plan.special.join(', ') || '(žádné)'));
     }
     if (withRules) {
       console.log('Rules: Firestore (default).');

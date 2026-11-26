@@ -172,6 +172,7 @@ export const readAccessData = onCall({ region: 'europe-west1', cors: true, maxIn
         const { state } = await loadEventQuizState(tx, ref, root);
         return wire({ id: eventId, data: { ...eventView(root, member), quizChangeState: state } });
       }
+      if (data.operation === 'registrations' && 'contactRetention' in root) return [];
       const rows = await tx.get(ref.collection('registrations').limit(1001));
       if (rows.size > 1000) throw new HttpsError('resource-exhausted', 'Příliš mnoho týmů.');
       const ordered = data.operation === 'roster' ? registrationOrder(rows.docs) : rows.docs;

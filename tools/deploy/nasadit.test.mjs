@@ -178,6 +178,13 @@ test('function inventory asks for the first page without a pageToken and follows
 });
 
 const functionLocation = 'projects/filmovy-kviz-v2-staging/locations/europe-west1/functions/';
+test('generic deployment skips both an absent and a separately deployed private retention schedule', async () => {
+  for (const functions of [[], [activeFunction('runEventRetention')]]) {
+    const plan = await functionTargets({ get: async () => ({ body: { functions } }) }, ['runEventRetention']);
+    assert.deepEqual(plan, { existing: [], missing: [], extra: [], special: ['runEventRetention'] });
+  }
+});
+
 function activeFunction(entryPoint, overrides = {}) {
   return { name: functionLocation + entryPoint, environment: 'GEN_2', state: 'ACTIVE',
     buildConfig: { runtime: 'nodejs22', entryPoint }, updateTime: '2026-11-17T10:00:00Z', ...overrides };

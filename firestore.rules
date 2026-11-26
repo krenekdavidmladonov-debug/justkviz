@@ -49,7 +49,11 @@ service cloud.firestore {
     // Existing clients with ALL sensitive-field permissions retain complete authorized reads.
     // Event-only members use the scoped snapshot API; it grants no source-quiz permission.
     match /events/{eventId} { allow read: if fullEventRead(eventId); allow write: if false; }
-    match /events/{eventId}/registrations/{registrationId} { allow read: if fullEventRead(eventId); allow write: if false; }
+    match /events/{eventId}/registrations/{registrationId} {
+      // The worker seals the parent atomically before touching any registration.
+      allow read: if fullEventRead(eventId) && !('contactRetention' in get(/databases/$(database)/documents/events/$(eventId)).data);
+      allow write: if false;
+    }
     match /quizSnapshots/{snapshotId} {
       allow read: if fullSnapshotRead(snapshotId); allow write: if false;
       match /slides/{slideId} { allow read: if fullSnapshotRead(snapshotId); allow write: if false; }
